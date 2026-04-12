@@ -1,0 +1,148 @@
+/**
+ * future.ts — Design Guidelines: Future Family (50–59)
+ * Sci-fi & speculative. Cyberpunk, synthwave, hologram.
+ */
+import type { DesignGuideline } from '../types';
+
+export const futureFamily: DesignGuideline[] = [
+  {
+    id: 50, name: 'cyberpunk', displayName: 'Cyberpunk', family: 'future',
+    description: 'Dark purple base, electric yellow + hot magenta dual accent.',
+    tokens: {
+      bg: '#08030f', surface: '#0f0620', surfaceCard: '#160a2e',
+      surfaceHover: '#1e1040',
+      accentBlue: '#F5FF00', accentBlueBg: 'rgba(245,255,0,0.08)',
+      accentBlueSolid: '#CCDD00', accentBlueBorder: 'rgba(245,255,0,0.25)',
+      danger: '#FF00AA', dangerBg: 'rgba(255,0,170,0.1)',
+      success: '#F5FF00', border: 'rgba(245,255,0,0.08)',
+      borderAccent: 'rgba(255,0,170,0.15)',
+      '--shadow-card': '0 0 12px rgba(245,255,0,0.06)', '--radius-base': '2px',
+    },
+    meta: { radius: 'subtle', density: 'compact', shadow: 'glow', animation: 'crisp', borderWeight: 'hairline' },
+  },
+  {
+    id: 51, name: 'synthwave', displayName: 'Synthwave', family: 'future',
+    description: 'Warm dark-magenta surfaces, neon pink and cyan. Retrowave palette.',
+    tokens: {
+      bg: '#0c0414', bgDeep: '#08020e', surface: '#160820',
+      surfaceCard: '#200e2e', surfaceHover: '#2c143e',
+      accentBlue: '#FF71CE', accentBlueBg: 'rgba(255,113,206,0.1)',
+      accentBlueSolid: '#E050AA', accentBlueBorder: 'rgba(255,113,206,0.28)',
+      success: '#01CDFE', border: 'rgba(255,113,206,0.08)',
+      '--shadow-card': '0 0 14px rgba(255,113,206,0.06)', '--radius-base': '4px',
+    },
+    meta: { radius: 'subtle', density: 'default', shadow: 'glow', animation: 'smooth', borderWeight: 'subtle' },
+  },
+  {
+    id: 52, name: 'hologram', displayName: 'Hologram', family: 'future',
+    description: 'Semi-transparent layered surfaces. Iridescent, ghostly accent.',
+    tokens: {
+      bg: '#04060a', bgDeep: '#020408', surface: 'rgba(20,30,50,0.6)',
+      surfaceCard: 'rgba(30,40,70,0.5)', surfaceHover: 'rgba(40,55,90,0.5)',
+      accentBlue: '#A0E0FF', accentBlueBg: 'rgba(160,224,255,0.06)',
+      accentBlueSolid: '#70C0E8', accentBlueBorder: 'rgba(160,224,255,0.2)',
+      textPrimary: 'rgba(220,240,255,0.85)', textSecondary: 'rgba(180,210,240,0.65)',
+      border: 'rgba(160,224,255,0.08)',
+      '--shadow-card': '0 0 20px rgba(160,224,255,0.04)', '--radius-base': '8px',
+    },
+    meta: { radius: 'rounded', density: 'airy', shadow: 'glow', animation: 'slow', borderWeight: 'hairline' },
+  },
+  {
+    id: 53, name: 'neural', displayName: 'Neural', family: 'future',
+    description: 'Very dark, subtle electric-blue pulse borders. AI inner monologue.',
+    tokens: {
+      bg: '#040608', bgDeep: '#020406', surface: '#0a0e14',
+      surfaceCard: '#0e141c', surfaceHover: '#141c28',
+      accentBlue: '#3B82F6', accentBlueBg: 'rgba(59,130,246,0.06)',
+      accentBlueSolid: '#2563EB', accentBlueBorder: 'rgba(59,130,246,0.2)',
+      border: 'rgba(59,130,246,0.06)',
+      '--shadow-card': '0 0 8px rgba(59,130,246,0.04)', '--radius-base': '4px',
+      '--transition-base': 'all 200ms ease',
+    },
+    meta: { radius: 'subtle', density: 'compact', shadow: 'glow', animation: 'smooth', borderWeight: 'hairline' },
+  },
+  {
+    id: 54, name: 'matrix', displayName: 'Matrix', family: 'future',
+    description: 'Dark, cascading-green data aesthetic. #00FF41.',
+    tokens: {
+      bg: '#000300', bgDeep: '#000200', surface: '#001200',
+      surfaceCard: '#001a00', surfaceHover: '#002800',
+      accentBlue: '#00FF41', accentBlueBg: 'rgba(0,255,65,0.06)',
+      accentBlueSolid: '#00CC33', accentBlueBorder: 'rgba(0,255,65,0.2)',
+      textPrimary: '#00FF41', textSecondary: '#00CC33', textMuted: '#008020',
+      textDim: '#004A12', success: '#00FF41',
+      border: 'rgba(0,255,65,0.1)', '--radius-base': '0px',
+      '--shadow-card': '0 0 6px rgba(0,255,65,0.04)',
+    },
+    meta: { radius: 'none', density: 'compact', shadow: 'glow', animation: 'instant', borderWeight: 'hairline' },
+  },
+  {
+    id: 55, name: 'axiom', displayName: 'Axiom', family: 'future',
+    description: 'Clean white-on-dark sci-fi. Geometric, institutional.',
+    tokens: {
+      bg: '#0a0a0e', bgDeep: '#06060a', surface: '#141418',
+      surfaceCard: '#1c1c22', surfaceHover: '#26262e',
+      textPrimary: '#F0F0F8', textSecondary: '#B0B0C0', textMuted: '#707088',
+      accentBlue: '#E0E0F0', accentBlueBg: 'rgba(224,224,240,0.06)',
+      accentBlueSolid: '#C0C0D8', accentBlueBorder: 'rgba(224,224,240,0.2)',
+      border: 'rgba(224,224,240,0.08)', '--radius-base': '2px',
+    },
+    meta: { radius: 'subtle', density: 'compact', shadow: 'flat', animation: 'crisp', borderWeight: 'subtle' },
+  },
+  {
+    id: 56, name: 'void-pulse', displayName: 'Void Pulse', family: 'future',
+    description: 'Black surfaces. Single electric-blue accent that flickers on interaction.',
+    tokens: {
+      bg: '#000000', bgDeep: '#000000', surface: '#060608',
+      surfaceCard: '#0c0c10', surfaceHover: '#141418',
+      accentBlue: '#00A8FF', accentBlueBg: 'rgba(0,168,255,0.06)',
+      accentBlueSolid: '#0088DD', accentBlueBorder: 'rgba(0,168,255,0.25)',
+      border: 'rgba(0,168,255,0.05)',
+      '--shadow-card': '0 0 10px rgba(0,168,255,0.04)', '--radius-base': '2px',
+      '--transition-base': 'all 150ms ease',
+    },
+    meta: { radius: 'subtle', density: 'compact', shadow: 'glow', animation: 'crisp', borderWeight: 'hairline' },
+  },
+  {
+    id: 57, name: 'terraform', displayName: 'Terraform', family: 'future',
+    description: 'Dark cool slate, system-orange accent. Infrastructure-layer aesthetic.',
+    tokens: {
+      bg: '#0a0c10', bgDeep: '#06080c', surface: '#12161e',
+      surfaceCard: '#1a2028', surfaceHover: '#242c38',
+      accentBlue: '#F97316', accentBlueBg: 'rgba(249,115,22,0.1)',
+      accentBlueSolid: '#EA580C', accentBlueBorder: 'rgba(249,115,22,0.25)',
+      border: 'rgba(249,115,22,0.06)', '--radius-base': '4px',
+    },
+    meta: { radius: 'subtle', density: 'default', shadow: 'flat', animation: 'crisp', borderWeight: 'hairline' },
+  },
+  {
+    id: 58, name: 'hyperspace', displayName: 'Hyperspace', family: 'future',
+    description: 'Deep blue-black. Streaking white-blue accents suggest velocity.',
+    tokens: {
+      bg: '#020410', bgDeep: '#010208', surface: '#060a1e',
+      surfaceCard: '#0a102c', surfaceHover: '#10183a',
+      accentBlue: '#B0D0FF', accentBlueBg: 'rgba(176,208,255,0.06)',
+      accentBlueSolid: '#88B0E8', accentBlueBorder: 'rgba(176,208,255,0.2)',
+      textPrimary: '#E0EEFF', textSecondary: '#A0C0E8',
+      border: 'rgba(176,208,255,0.06)',
+      '--shadow-card': '0 0 12px rgba(176,208,255,0.04)', '--radius-base': '3px',
+    },
+    meta: { radius: 'subtle', density: 'compact', shadow: 'glow', animation: 'crisp', borderWeight: 'hairline' },
+  },
+  {
+    id: 59, name: 'singularity', displayName: 'Singularity', family: 'future',
+    description: 'Maximum contrast: pure black, pure white text, one neon accent. Nothing else.',
+    tokens: {
+      bg: '#000000', bgDeep: '#000000', bgApp: '#000000',
+      surface: '#050505', surfaceLight: '#0a0a0a', surfaceCard: '#0f0f0f',
+      surfaceHover: '#1a1a1a',
+      textPrimary: '#FFFFFF', textSecondary: '#FFFFFF',
+      textMuted: 'rgba(255,255,255,0.5)', textDim: 'rgba(255,255,255,0.3)',
+      accentBlue: '#00FFFF', accentBlueBg: 'rgba(0,255,255,0.06)',
+      accentBlueSolid: '#00CCCC', accentBlueBorder: 'rgba(0,255,255,0.3)',
+      border: 'rgba(255,255,255,0.05)', borderLight: 'rgba(255,255,255,0.08)',
+      '--shadow-card': 'none', '--radius-base': '0px',
+    },
+    meta: { radius: 'none', density: 'compact', shadow: 'none', animation: 'instant', borderWeight: 'hairline' },
+  },
+];

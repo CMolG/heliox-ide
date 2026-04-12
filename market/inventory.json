@@ -1,0 +1,565 @@
+{
+  "flows": [
+    {
+      "name": "auto-optimizer",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdSpeed",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously profiles and upgrades algorithmic complexity and performance in an infinite loop.",
+      "tags": [
+        "performance",
+        "algorithm",
+        "big-o",
+        "math",
+        "loop",
+        "infinite"
+      ],
+      "steps": [
+        "Profile the codebase for performance hotspots and algorithmic bottlenecks",
+        "Identify functions with suboptimal Big-O complexity",
+        "Generate optimized implementations with benchmarks",
+        "Run tests to verify correctness after optimization",
+        "Commit changes and loop to the next hotspot"
+      ]
+    },
+    {
+      "name": "auto-reducer",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdCompress",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously refactors and simplifies the codebase to reduce complexity and remove bloat.",
+      "tags": [
+        "refactor",
+        "deduplication",
+        "dry",
+        "architecture",
+        "bloat",
+        "loop",
+        "infinite"
+      ],
+      "steps": [
+        "Scan the codebase for dead code, duplication, and unnecessary complexity",
+        "Identify the highest-impact simplification opportunity",
+        "Refactor the code while preserving external behavior",
+        "Run the full test suite to verify no regressions",
+        "Commit changes and loop to the next reduction target"
+      ]
+    },
+    {
+      "name": "auto-visual-fixer",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdFormatShapes",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously audits and fixes UI/UX accessibility and layout issues without altering brand identity.",
+      "tags": [
+        "ui",
+        "ux",
+        "a11y",
+        "accessibility",
+        "css",
+        "styling",
+        "layout",
+        "loop",
+        "infinite"
+      ],
+      "steps": [
+        "Audit the UI for accessibility violations and layout inconsistencies",
+        "Prioritize issues by severity (WCAG compliance first)",
+        "Apply targeted CSS/component fixes without altering business logic",
+        "Verify fixes visually and with accessibility tooling",
+        "Commit changes and loop to the next UI issue"
+      ]
+    },
+    {
+      "name": "auto-architect",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdDesignServices",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously analyzes the project to autonomously generate and manage finite Agentic Cards in the backlog.",
+      "tags": [
+        "orchestration",
+        "planning",
+        "management",
+        "architect",
+        "backlog",
+        "markdown",
+        "loop",
+        "infinite"
+      ],
+      "steps": [
+        "Analyze project structure, dependencies, and architectural patterns",
+        "Identify areas needing refactoring, modularization, or cleanup",
+        "Generate finite Agent Sessions as backlog tasks for each improvement",
+        "Prioritize tasks by impact and dependency order",
+        "Continuously monitor for new architectural drift and create new tasks"
+      ]
+    },
+    {
+      "name": "auto-optimizer-finite",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "medium",
+      "cost": "medium",
+      "icon": "MdSpeed",
+      "iconLibrary": "react-icons/md",
+      "description": "Executes a single, targeted algorithmic or performance optimization task from the backlog and terminates.",
+      "tags": [
+        "performance",
+        "algorithm",
+        "big-o",
+        "math",
+        "task",
+        "single-shot",
+        "finite"
+      ],
+      "usableBy": [
+        "agentic-task"
+      ],
+      "steps": [
+        "Read the assigned optimization task from the backlog",
+        "Profile the target code section for performance metrics",
+        "Implement the optimization with benchmarks",
+        "Run tests to validate correctness",
+        "Mark the backlog item as complete and terminate"
+      ]
+    },
+    {
+      "name": "auto-reducer-finite",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "medium",
+      "cost": "medium",
+      "icon": "MdCompress",
+      "iconLibrary": "react-icons/md",
+      "description": "Executes a single, targeted refactoring or code reduction task from the backlog and terminates.",
+      "tags": [
+        "refactor",
+        "deduplication",
+        "dry",
+        "architecture",
+        "bloat",
+        "task",
+        "single-shot",
+        "finite"
+      ],
+      "usableBy": [
+        "agentic-task"
+      ],
+      "steps": [
+        "Read the assigned reduction task from the backlog",
+        "Analyze the target code for safe simplification opportunities",
+        "Refactor and remove unnecessary complexity",
+        "Run tests to ensure no regressions",
+        "Mark the backlog item as complete and terminate"
+      ]
+    },
+    {
+      "name": "auto-visual-fixer-finite",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "medium",
+      "cost": "medium",
+      "icon": "MdFormatShapes",
+      "iconLibrary": "react-icons/md",
+      "description": "Executes a single UI/UX accessibility or layout fix from the backlog and terminates.",
+      "tags": [
+        "ui",
+        "ux",
+        "a11y",
+        "accessibility",
+        "css",
+        "styling",
+        "layout",
+        "task",
+        "single-shot",
+        "finite"
+      ],
+      "usableBy": [
+        "agentic-task"
+      ],
+      "steps": [
+        "Read the assigned UI/UX fix from the backlog",
+        "Inspect the affected component for layout and accessibility issues",
+        "Apply the targeted fix preserving design consistency",
+        "Validate the fix with visual and a11y checks",
+        "Mark the backlog item as complete and terminate"
+      ]
+    },
+    {
+      "name": "auto-feature-engineer",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdBuild",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously consumes the backlog to build new features, write tests, and commit them sequentially in an infinite loop.",
+      "tags": [
+        "feature",
+        "engineering",
+        "build",
+        "architecture",
+        "loop",
+        "infinite",
+        "tdd"
+      ],
+      "steps": [
+        "Pull the next feature task from the backlog queue",
+        "Design the implementation approach and identify affected files",
+        "Write the feature code with proper type safety and error handling",
+        "Create or update tests covering the new functionality",
+        "Commit changes and loop to the next backlog feature"
+      ]
+    },
+    {
+      "name": "auto-feature-engineer-finite",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "medium",
+      "icon": "MdBuild",
+      "iconLibrary": "react-icons/md",
+      "description": "Executes a single, targeted feature implementation or architectural addition from the backlog and terminates.",
+      "tags": [
+        "feature",
+        "engineering",
+        "build",
+        "architecture",
+        "task",
+        "single-shot",
+        "finite"
+      ],
+      "usableBy": [
+        "agentic-task"
+      ],
+      "steps": [
+        "Read the assigned feature task from the backlog",
+        "Plan implementation approach and identify dependencies",
+        "Build the feature with tests and documentation",
+        "Run the full test suite to verify integration",
+        "Mark the backlog item as complete and terminate"
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "name": "frontend-engineer",
+      "icon": "MdWeb",
+      "iconLibrary": "react-icons/md",
+      "description": "Expert in UI/UX, reactive frameworks, DOM manipulation, advanced CSS, and browser APIs.",
+      "tags": [
+        "frontend",
+        "ui",
+        "ux",
+        "react",
+        "vue",
+        "css",
+        "browser"
+      ],
+      "color": "D90368",
+      "palette": {
+        "background": "D90368",
+        "text": "FFFFFF",
+        "accents": "E0FF4F",
+        "hover": "B00254"
+      }
+    },
+    {
+      "name": "backend-engineer",
+      "icon": "MdStorage",
+      "iconLibrary": "react-icons/md",
+      "description": "Specialist in APIs, databases, server logic, and infrastructure architecture.",
+      "tags": [
+        "backend",
+        "api",
+        "database",
+        "server",
+        "node",
+        "python"
+      ],
+      "color": "3A405A",
+      "palette": {
+        "background": "3A405A",
+        "text": "FFFFFF",
+        "accents": "FFD166",
+        "hover": "4D5575"
+      }
+    },
+    {
+      "name": "devops-engineer",
+      "icon": "MdCloud",
+      "iconLibrary": "react-icons/md",
+      "description": "Expert in CI/CD pipelines, containerization, cloud infrastructure, and automation.",
+      "tags": [
+        "devops",
+        "ci-cd",
+        "docker",
+        "kubernetes",
+        "cloud",
+        "aws"
+      ],
+      "color": "E0FF4F",
+      "palette": {
+        "background": "E0FF4F",
+        "text": "111111",
+        "accents": "D90368",
+        "hover": "C9E647"
+      }
+    },
+    {
+      "name": "security-researcher",
+      "icon": "MdSecurity",
+      "iconLibrary": "react-icons/md",
+      "description": "Paranoid focus on AppSec, cryptography, vulnerability auditing, and prevention of injections.",
+      "tags": [
+        "security",
+        "audit",
+        "owasp",
+        "crypto",
+        "appsec"
+      ],
+      "color": "D05353",
+      "palette": {
+        "background": "D05353",
+        "text": "FFFFFF",
+        "accents": "FFE66D",
+        "hover": "A64242"
+      }
+    },
+    {
+      "name": "software-architect",
+      "icon": "MdAccountTree",
+      "iconLibrary": "react-icons/md",
+      "description": "High-level systems design expert focusing on microservices, SOLID principles, scalability, and fault tolerance.",
+      "tags": [
+        "architecture",
+        "systems",
+        "design-patterns",
+        "solid",
+        "microservices"
+      ],
+      "color": "E39774",
+      "palette": {
+        "background": "E39774",
+        "text": "1A1A1A",
+        "accents": "2274A5",
+        "hover": "CC8868"
+      }
+    },
+    {
+      "name": "data-scientist",
+      "icon": "MdTimeline",
+      "iconLibrary": "react-icons/md",
+      "description": "Master of Python, mathematics, data pipelines, and AI/ML frameworks.",
+      "tags": [
+        "data",
+        "ml",
+        "ai",
+        "python",
+        "statistics",
+        "pipelines"
+      ],
+      "color": "2274A5",
+      "palette": {
+        "background": "2274A5",
+        "text": "FFFFFF",
+        "accents": "F2C94C",
+        "hover": "1A5B82"
+      }
+    },
+    {
+      "name": "qa-engineer",
+      "icon": "MdBugReport",
+      "iconLibrary": "react-icons/md",
+      "description": "Obsessed with edge cases, end-to-end testing, continuous integration, and TDD/BDD practices.",
+      "tags": [
+        "qa",
+        "testing",
+        "e2e",
+        "cypress",
+        "tdd",
+        "edge-cases"
+      ],
+      "color": "87E752",
+      "palette": {
+        "background": "87E752",
+        "text": "111111",
+        "accents": "D90368",
+        "hover": "76C947"
+      }
+    },
+    {
+      "name": "product-manager",
+      "icon": "MdAssignment",
+      "iconLibrary": "react-icons/md",
+      "description": "Focuses on user and business value, writing user stories, and defining success metrics.",
+      "tags": [
+        "product",
+        "business",
+        "planning",
+        "metrics",
+        "agile"
+      ],
+      "color": "E58F65",
+      "palette": {
+        "background": "E58F65",
+        "text": "111111",
+        "accents": "FFFFFF",
+        "hover": "CE815A"
+      }
+    },
+    {
+      "name": "technical-writer",
+      "icon": "MdMenuBook",
+      "iconLibrary": "react-icons/md",
+      "description": "Transforms complex code and architectural decisions into clear documentation and API specifications.",
+      "tags": [
+        "documentation",
+        "writing",
+        "openapi",
+        "swagger",
+        "communication"
+      ],
+      "color": "E1F4CB",
+      "palette": {
+        "background": "E1F4CB",
+        "text": "111111",
+        "accents": "2274A5",
+        "hover": "CBE0B4"
+      }
+    }
+  ],
+  "mods": [
+    {
+      "name": "strict-linting",
+      "icon": "MdFactCheck",
+      "iconLibrary": "react-icons/md",
+      "description": "Enforces strict linting rules and automatically fixes all warnings.",
+      "tags": [
+        "linting",
+        "formatting",
+        "strict",
+        "quality"
+      ],
+      "incompatibleWith": [
+        "dry-run"
+      ]
+    },
+    {
+      "name": "test-driven",
+      "icon": "MdScience",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires writing and presenting unit tests before implementing any core logic.",
+      "tags": [
+        "tdd",
+        "testing",
+        "unit-tests",
+        "reliability"
+      ],
+      "incompatibleWith": [
+        "dry-run"
+      ]
+    },
+    {
+      "name": "zero-dependencies",
+      "icon": "MdBlock",
+      "iconLibrary": "react-icons/md",
+      "description": "Strictly forbids third-party libraries; all solutions must use native code and standard libraries.",
+      "tags": [
+        "vanilla",
+        "native",
+        "no-deps",
+        "lightweight"
+      ]
+    },
+    {
+      "name": "security-hardened",
+      "icon": "MdShield",
+      "iconLibrary": "react-icons/md",
+      "description": "Applies extreme sanitization, uses parameterized queries, and flags potential security risks.",
+      "tags": [
+        "security",
+        "sanitization",
+        "safe",
+        "hardened"
+      ]
+    },
+    {
+      "name": "verbose-comments",
+      "icon": "MdComment",
+      "iconLibrary": "react-icons/md",
+      "description": "Forces detailed explanatory comments for every block of logic, function, and complex variable.",
+      "tags": [
+        "comments",
+        "documentation",
+        "verbose",
+        "learning"
+      ],
+      "incompatibleWith": [
+        "extreme-performance"
+      ]
+    },
+    {
+      "name": "dry-run",
+      "icon": "MdPreview",
+      "iconLibrary": "react-icons/md",
+      "description": "Prevents final code generation, outputting only pseudocode, flowcharts, and step-by-step explanations.",
+      "tags": [
+        "planning",
+        "pseudocode",
+        "explanation",
+        "no-code"
+      ],
+      "incompatibleWith": [
+        "strict-linting",
+        "test-driven"
+      ]
+    },
+    {
+      "name": "legacy-compat",
+      "icon": "MdHistory",
+      "iconLibrary": "react-icons/md",
+      "description": "Prioritizes safe patches and backward compatibility over massive refactors or modern syntax.",
+      "tags": [
+        "legacy",
+        "backward-compatible",
+        "safe",
+        "maintenance"
+      ],
+      "incompatibleWith": [
+        "extreme-performance"
+      ]
+    },
+    {
+      "name": "extreme-performance",
+      "icon": "MdBolt",
+      "iconLibrary": "react-icons/md",
+      "description": "Prioritizes raw execution speed and lowest Big-O complexity, even at the cost of readability.",
+      "tags": [
+        "performance",
+        "speed",
+        "optimization",
+        "hardcore"
+      ],
+      "incompatibleWith": [
+        "verbose-comments",
+        "legacy-compat"
+      ]
+    },
+    {
+      "name": "a11y-enforcer",
+      "icon": "MdAccessibility",
+      "iconLibrary": "react-icons/md",
+      "description": "Forces all generated UI elements to include ARIA labels, focus management, and pass WCAG AAA standards.",
+      "tags": [
+        "a11y",
+        "accessibility",
+        "wcag",
+        "inclusive"
+      ]
+    }
+  ]
+}

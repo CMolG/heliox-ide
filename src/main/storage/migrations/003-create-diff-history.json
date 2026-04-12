@@ -1,0 +1,16 @@
+{
+  "id": "003-create-diff-history",
+  "version": 3,
+  "author": "heliox",
+  "description": "Create diff_history table for snapshot diff records",
+  "created": "2026-04-02",
+  "up": [
+    "CREATE TABLE IF NOT EXISTS diff_history (id INTEGER PRIMARY KEY AUTOINCREMENT, flow_id TEXT NOT NULL, step_id TEXT NOT NULL, before_screenshot TEXT, after_screenshot TEXT, approved INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_diff_history_flow ON diff_history(flow_id)"
+  ],
+  "down": [
+    "DROP INDEX IF EXISTS idx_diff_history_flow",
+    "DROP TABLE IF EXISTS diff_history"
+  ],
+  "checksum": "efe046aa0ebc6113"
+}

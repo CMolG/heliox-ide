@@ -1,0 +1,18 @@
+{
+  "id": "001-create-sessions",
+  "version": 1,
+  "author": "heliox",
+  "description": "Create sessions table for persistent session history",
+  "created": "2026-04-02",
+  "up": [
+    "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, project_path TEXT NOT NULL, number INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'waiting', description TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT 'copilot', role_id TEXT, created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER, premium_requests INTEGER DEFAULT 0, total_tokens INTEGER DEFAULT 0, total_api_duration_ms INTEGER DEFAULT 0)",
+    "CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path)",
+    "CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at)"
+  ],
+  "down": [
+    "DROP INDEX IF EXISTS idx_sessions_created",
+    "DROP INDEX IF EXISTS idx_sessions_project",
+    "DROP TABLE IF EXISTS sessions"
+  ],
+  "checksum": "9f2f48e4b29137f5"
+}

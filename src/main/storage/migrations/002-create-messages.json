@@ -1,0 +1,18 @@
+{
+  "id": "002-create-messages",
+  "version": 2,
+  "author": "heliox",
+  "description": "Create messages table for chat history",
+  "created": "2026-04-02",
+  "up": [
+    "CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')), content TEXT NOT NULL, timestamp INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)"
+  ],
+  "down": [
+    "DROP INDEX IF EXISTS idx_messages_timestamp",
+    "DROP INDEX IF EXISTS idx_messages_session",
+    "DROP TABLE IF EXISTS messages"
+  ],
+  "checksum": "325f7c9a4a7b79b9"
+}
