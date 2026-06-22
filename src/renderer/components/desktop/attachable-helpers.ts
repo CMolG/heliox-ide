@@ -26,6 +26,5 @@ export function resolveMarketItem(attachable: DesktopAttachable, inventory: Mark
   if (attachable.type === 'mod') return inventory.mods.find(m => m.name === attachable.name) ?? null;
   if (attachable.type === 'flow') return inventory.flows.find(f => f.name === attachable.name) ?? null;
   if (attachable.type === 'design-system') return (inventory.designSystems ?? []).find(d => d.name === attachable.name) ?? null;
-  if (attachable.type === 'mental') return null;
   return null;
 }

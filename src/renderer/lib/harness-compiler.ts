@@ -1,0 +1,303 @@
+/**
+ * harness-compiler.ts — Visual canvas → agentic AST compiler
+ *
+ * Keeps xyflow/desktop layout concerns out of the execution contract.
+ */
+import type {
+  CanvasGraphNode,
+  MentalGraphEdge,
+  MentalGraphNode,
+  StepGraphNode,
+} from '@/types/desktop';
+import type {
+  AgenticFlow,
+  AgenticMentalContext,
+  AgenticMod,
+  AgenticRole,
+  AgenticStep,
+  AgenticStepType,
+  AgenticTool,
+} from '@/types/harness';
+
+type UnknownRecord = Record<string, unknown>;
+
+export interface CompileFlowOptions {
+  flowId?: string;
+  name?: string;
+}
+
+export class HarnessCompilerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HarnessCompilerError';
+  }
+}
+
+const VISUAL_METADATA_KEYS = new Set([
+  'icon',
+  'iconLibrary',
+  'color',
+  'position',
+  'width',
+  'height',
+  'shape',
+  'createdAt',
+]);
+
+const MOD_TYPES = new Set<AgenticMod['type']>([
+  'pre_process',
+  'post_process',
+  'system_override',
+]);
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
+  return node.type === 'step';
+}
+
+function isMentalGraphNode(node: CanvasGraphNode): node is MentalGraphNode {
+  return node.type !== 'step';
+}
+
+function stringField(record: UnknownRecord, key: string): string | null {
+  const value = record[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function cloneJsonValue(value: unknown): unknown {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(cloneJsonValue)
+      .filter((item) => item !== undefined);
+  }
+
+  if (isRecord(value)) {
+    const result: UnknownRecord = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const nextValue = cloneJsonValue(entry);
+      if (nextValue !== undefined) result[key] = nextValue;
+    }
+    return result;
+  }
+
+  return undefined;
+}
+
+function plainRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const cloned = cloneJsonValue(value);
+  if (!isRecord(cloned)) return undefined;
+  return Object.keys(cloned).length > 0 ? cloned : undefined;
+}
+
+function logicalFallbackConfig(record: UnknownRecord, reservedKeys: string[]): Record<string, unknown> | undefined {
+  const reserved = new Set([...reservedKeys, ...VISUAL_METADATA_KEYS]);
+  const config: UnknownRecord = {};
+
+  for (const [key, value] of Object.entries(record)) {
+    if (reserved.has(key)) continue;
+    const nextValue = cloneJsonValue(value);
+    if (nextValue !== undefined) config[key] = nextValue;
+  }
+
+  return Object.keys(config).length > 0 ? config : undefined;
+}
+
+function normalizeTools(value: unknown): AgenticTool[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter(isRecord).map((tool, index) => {
+    const id = stringField(tool, 'id') ?? stringField(tool, 'name') ?? `tool-${index + 1}`;
+    const name = stringField(tool, 'name') ?? id;
+    const config = plainRecord(tool.config) ?? logicalFallbackConfig(tool, ['id', 'name', 'config']);
+
+    return {
+      id,
+      name,
+      ...(config ? { config } : {}),
+    };
+  });
+}
+
+function normalizeMods(value: unknown): AgenticMod[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter(isRecord).map((mod, index) => {
+    const id = stringField(mod, 'id') ?? stringField(mod, 'name') ?? `mod-${index + 1}`;
+    const name = stringField(mod, 'name') ?? id;
+    const rawType = mod.type;
+    const type: AgenticMod['type'] = typeof rawType === 'string' && MOD_TYPES.has(rawType as AgenticMod['type'])
+      ? rawType as AgenticMod['type']
+      : 'system_override';
+    const config = plainRecord(mod.config) ?? logicalFallbackConfig(mod, ['id', 'name', 'type', 'config']);
+
+    return {
+      id,
+      name,
+      type,
+      ...(config ? { config } : {}),
+    };
+  });
+}
+
+function normalizeRoles(value: unknown): AgenticRole[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter(isRecord).map((role, index) => {
+    const id = stringField(role, 'id') ?? stringField(role, 'name') ?? `role-${index + 1}`;
+    const name = stringField(role, 'name') ?? id;
+    const roleConfig = plainRecord(role.roleConfig) ?? plainRecord(role.config);
+    const systemPrompt =
+      stringField(role, 'systemPrompt') ??
+      (roleConfig ? stringField(roleConfig, 'systemPrompt') : null) ??
+      stringField(role, 'description') ??
+      name;
+
+    return { id, name, systemPrompt };
+  });
+}
+
+function normalizeStepType(data: UnknownRecord): AgenticStepType {
+  return stringField(data, 'stepType') ?? stringField(data, 'type') ?? 'llm_call';
+}
+
+function normalizePrompt(node: StepGraphNode): string {
+  const data = node.data as UnknownRecord;
+  return stringField(data, 'prompt') ?? stringField(data, 'description') ?? stringField(data, 'title') ?? node.text;
+}
+
+function appendUnique(map: Map<string, string[]>, key: string, value: string): void {
+  const values = map.get(key);
+  if (!values) {
+    map.set(key, [value]);
+    return;
+  }
+  if (!values.includes(value)) values.push(value);
+}
+
+function assertAcyclic(stepIds: string[], nextByStepId: Map<string, string[]>): void {
+  const visitState = new Map<string, 'visiting' | 'visited'>();
+
+  const visit = (stepId: string, path: string[]): void => {
+    const state = visitState.get(stepId);
+    if (state === 'visited') return;
+    if (state === 'visiting') {
+      const cycleStart = path.indexOf(stepId);
+      const cycle = [...path.slice(Math.max(0, cycleStart)), stepId].join(' -> ');
+      throw new HarnessCompilerError(`Cannot compile step graph with a cycle: ${cycle}`);
+    }
+
+    visitState.set(stepId, 'visiting');
+    for (const nextStepId of nextByStepId.get(stepId) ?? []) {
+      visit(nextStepId, [...path, stepId]);
+    }
+    visitState.set(stepId, 'visited');
+  };
+
+  for (const stepId of stepIds) {
+    visit(stepId, []);
+  }
+}
+
+function getMentalContext(
+  stepId: string,
+  edges: MentalGraphEdge[],
+  mentalById: Map<string, MentalGraphNode>,
+): AgenticMentalContext[] {
+  const context: AgenticMentalContext[] = [];
+
+  for (const edge of edges) {
+    const incomingMentalNode = edge.targetId === stepId ? mentalById.get(edge.sourceId) : undefined;
+    if (incomingMentalNode) {
+      context.push({
+        id: incomingMentalNode.id,
+        text: incomingMentalNode.text,
+        relationToStep: 'incoming',
+      });
+      continue;
+    }
+
+    const outgoingMentalNode = edge.sourceId === stepId ? mentalById.get(edge.targetId) : undefined;
+    if (outgoingMentalNode) {
+      context.push({
+        id: outgoingMentalNode.id,
+        text: outgoingMentalNode.text,
+        relationToStep: 'outgoing',
+      });
+    }
+  }
+
+  return context;
+}
+
+export function compileFlowFromCanvas(
+  nodes: CanvasGraphNode[],
+  edges: MentalGraphEdge[],
+  options: CompileFlowOptions = {},
+): AgenticFlow {
+  const stepNodes = nodes.filter(isStepGraphNode);
+  if (stepNodes.length === 0) {
+    throw new HarnessCompilerError('Cannot compile canvas without Step nodes.');
+  }
+
+  const stepById = new Map(stepNodes.map((step) => [step.id, step]));
+  const stepIds = stepNodes.map((step) => step.id);
+  const mentalById = new Map(nodes.filter(isMentalGraphNode).map((node) => [node.id, node]));
+  const prevByStepId = new Map(stepIds.map((id) => [id, [] as string[]]));
+  const nextByStepId = new Map(stepIds.map((id) => [id, [] as string[]]));
+
+  for (const edge of edges) {
+    if (!stepById.has(edge.sourceId) || !stepById.has(edge.targetId)) continue;
+    appendUnique(nextByStepId, edge.sourceId, edge.targetId);
+    appendUnique(prevByStepId, edge.targetId, edge.sourceId);
+  }
+
+  assertAcyclic(stepIds, nextByStepId);
+
+  const rootStepIds = stepIds.filter((stepId) => (prevByStepId.get(stepId) ?? []).length === 0);
+  if (rootStepIds.length === 0) {
+    throw new HarnessCompilerError('Cannot compile flow without a root Step node.');
+  }
+  if (rootStepIds.length > 1) {
+    throw new HarnessCompilerError(`Cannot compile flow with multiple root Step nodes: ${rootStepIds.join(', ')}`);
+  }
+
+  const rootStepId = rootStepIds[0];
+  const rootStep = stepById.get(rootStepId)!;
+  const flowName = options.name ?? rootStep.data.title ?? rootStep.text ?? 'Agentic Flow';
+  const stepsRecord: Record<string, AgenticStep> = {};
+
+  for (const step of stepNodes) {
+    const data = step.data as UnknownRecord;
+    stepsRecord[step.id] = {
+      id: step.id,
+      type: normalizeStepType(data),
+      prompt: normalizePrompt(step),
+      tools: normalizeTools(data.tools),
+      prevStepIds: [...(prevByStepId.get(step.id) ?? [])],
+      nextStepIds: [...(nextByStepId.get(step.id) ?? [])],
+      mods: normalizeMods(data.mods),
+      roles: normalizeRoles(data.roles),
+      mentalContext: getMentalContext(step.id, edges, mentalById),
+    };
+  }
+
+  return {
+    id: options.flowId ?? `flow-${rootStepId}`,
+    name: flowName,
+    rootStepId,
+    stepsRecord,
+  };
+}

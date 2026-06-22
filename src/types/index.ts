@@ -6,6 +6,8 @@
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
 // src/types/index.ts — Heliox IDE shared types
+import type { AgenticFlow } from './harness';
+import type { HarnessEventPayload } from './ipc-events';
 
 export interface PerformanceMetrics {
   lcp: number;            // Largest Contentful Paint (ms)
@@ -108,11 +110,8 @@ export interface AiOutputEvent {
   usage?: Record<string, unknown>;
 }
 
-/** @deprecated Use AiOutputEvent instead */
-export type CopilotOutputEvent = AiOutputEvent;
-
-/** Supported AI adapter identifiers */
-export type AiAdapterName = 'copilot' | 'claude' | 'openai' | 'openrouter' | 'opencode';
+/** The only supported AI adapter — OpenCode handles every provider. */
+export type AiAdapterName = 'opencode';
 
 // Normalized event types we care about
 // Feedback payload sent back to the agent for auto-correction
@@ -135,10 +134,12 @@ export interface MetricViolation {
 // ─── App Settings ───────────────────────────────────────────────
 
 export interface AppSettings {
+  /** Pinned to 'opencode' — kept on the schema so callers can stay generic. */
   aiAdapter: AiAdapterName;
-  /** @deprecated Use aiAdapter instead */
-  cliAdapter?: AiAdapterName;
-  customCliPath: string;
+  /** Provider id selected in the picker (matches auth.json key). */
+  selectedProvider: string;
+  /** Full `provider/model` string passed to `opencode run --model`. */
+  selectedModel: string;
   autoCommit: boolean;
   runE2E: boolean;
   sendOnEnter: boolean;
@@ -188,7 +189,8 @@ export interface Session {
   completedAt?: number;
   endedAt?: number;
   messages: ChatMessage[];
-  copilotSessionId?: string;
+  /** OpenCode session id used to resume a conversation (`--session`). */
+  opencodeSessionId?: string;
   tokenUsage?: {
     premiumRequests?: number;
     totalTokens?: number;
@@ -220,10 +222,8 @@ export interface RunAgentParams {
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
   resumeSessionId?: string;
+  /** Reserved for the IPC contract — only 'opencode' is honored. */
   aiAdapter?: AiAdapterName;
-  /** @deprecated Use aiAdapter instead */
-  cliAdapter?: AiAdapterName;
-  customCliPath?: string;
   autoCommit?: boolean;
   runE2E?: boolean;
   /** Role system prompt content (injected by renderer from market/store) */
@@ -311,11 +311,21 @@ export interface FileEntry {
 }
 
 export interface CliStatus {
-  copilotInstalled: boolean;
-  ghInstalled: boolean;
-  ghCopilotInstalled: boolean;
+  opencodeInstalled: boolean;
+  opencodeVersion: string | null;
   nodeInstalled: boolean;
   gitInstalled: boolean;
+}
+
+/** Provider metadata exposed to the renderer for the picker. */
+export interface OpencodeProvider {
+  id: string;
+  label: string;
+  description: string;
+  accent: string;
+  authorized: boolean;
+  authHint?: string;
+  keyPrefix?: string;
 }
 
 export interface GitStatusInfo {
@@ -328,6 +338,7 @@ export interface GitStatusInfo {
 export interface HelioxAPI {
   initBaselines: (flows: Flow[]) => Promise<IpcResult>;
   runAgent: (params: RunAgentParams) => Promise<IpcResult>;
+  startHarness: (flow: AgenticFlow) => Promise<IpcResult>;
   readMarketInventory: (projectPath: string) => Promise<import('./market').MarketInventory | null>;
   readMarketPrompt: (projectPath: string, category: string, name: string) => Promise<string | null>;
   readBacklog: (projectPath: string) => Promise<import('./market').BacklogCard[]>;
@@ -350,6 +361,7 @@ export interface HelioxAPI {
   rejectDiff: (diffId: string, feedback: string) => Promise<IpcResult>;
   shutdown: () => Promise<IpcResult>;
   onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
+  onHarnessEvent: (callback: (event: HarnessEventPayload) => void) => () => void;
   openFolderDialog: () => Promise<string | null>;
   readDirectory: (dirPath: string) => Promise<FileEntry[]>;
   checkCli: () => Promise<CliStatus>;
@@ -383,6 +395,12 @@ export interface HelioxAPI {
   openFileDialog: (cwd: string) => Promise<string | null>;
   listModels: () => Promise<string[]>;
   invalidateModelsCache: () => Promise<void>;
+  // ── OpenCode providers ─────────────────────────────────────────
+  opencodeListProviders: () => Promise<OpencodeProvider[]>;
+  opencodeListProviderModels: (providerId: string) => Promise<string[]>;
+  opencodeSaveCredential: (providerId: string, key: string) => Promise<{ success: boolean; error?: string }>;
+  opencodeRemoveCredential: (providerId: string) => Promise<{ success: boolean; error?: string }>;
+  opencodeStatus: () => Promise<{ installed: boolean; version: string | null; path: string | null }>;
   getConfigDir: (projectPath: string) => Promise<string>;
   listProjectFiles: (projectPath: string) => Promise<string[]>;
   saveFile: (defaultPath: string, content: string) => Promise<boolean>;

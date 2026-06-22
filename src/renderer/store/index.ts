@@ -24,7 +24,7 @@ const DEFAULT_ROLES: Role[] = [
     name: 'UI Engineer',
     description: 'Frontend components, layouts, styles, animations',
     systemPrompt: 'You are an expert UI engineer specializing in React, TypeScript, CSS, and component architecture. Focus on visual quality, accessibility, and rendering performance. When modifying components, preserve existing design system tokens and patterns.',
-    model: 'copilot',
+    model: 'opencode/claude-sonnet-4-6',
     temperature: 0.3,
     maxTokens: 4096,
     icon: 'palette',
@@ -35,7 +35,7 @@ const DEFAULT_ROLES: Role[] = [
     name: 'Backend Engineer',
     description: 'APIs, databases, server logic, infrastructure',
     systemPrompt: 'You are an expert backend engineer. Focus on API design, data modeling, security, and scalability. Follow REST conventions, validate inputs, handle errors gracefully, and write efficient database queries.',
-    model: 'copilot',
+    model: 'opencode/claude-sonnet-4-6',
     temperature: 0.2,
     maxTokens: 4096,
     icon: 'gear',
@@ -46,7 +46,7 @@ const DEFAULT_ROLES: Role[] = [
     name: 'Code Reviewer',
     description: 'Review changes for bugs, security, and best practices',
     systemPrompt: 'You are a thorough code reviewer. Focus on bugs, security vulnerabilities, performance issues, and adherence to best practices. Be specific and actionable in your feedback. Flag potential regressions.',
-    model: 'copilot',
+    model: 'opencode/claude-sonnet-4-6',
     temperature: 0.1,
     maxTokens: 4096,
     icon: 'search',
@@ -57,7 +57,7 @@ const DEFAULT_ROLES: Role[] = [
     name: 'Test Engineer',
     description: 'Unit tests, integration tests, E2E flow validation',
     systemPrompt: 'You are an expert test engineer. Write comprehensive tests with good coverage of edge cases. Prefer testing behavior over implementation details. Use descriptive test names and follow arrange-act-assert patterns.',
-    model: 'copilot',
+    model: 'opencode/claude-sonnet-4-6',
     temperature: 0.2,
     maxTokens: 4096,
     icon: 'beaker',
@@ -87,7 +87,7 @@ interface HelioxState {
   setSelectedSessionId: (id: string | null) => void;
   addSessionMessage: (sessionId: string, msg: ChatMessage) => void;
   updateSessionMessages: (sessionId: string, messages: ChatMessage[]) => void;
-  setCopilotSessionId: (sessionId: string, copilotId: string) => void;
+  setOpencodeSessionId: (sessionId: string, opencodeId: string) => void;
   setSessionTokenUsage: (sessionId: string, usage: { premiumRequests?: number; totalTokens?: number; totalApiDurationMs?: number }) => void;
   setSessionModel: (sessionId: string, model: string) => void;
   updateSessionRole: (sessionId: string, roleId: string | undefined) => void;
@@ -271,7 +271,7 @@ export const useHelioxStore = create<HelioxState>()(
           number: num,
           status: 'waiting',
           description: '',
-          model: 'copilot',
+          model: 'opencode/claude-sonnet-4-6',
           projectId: projectPath ?? undefined,
           createdAt: Date.now(),
           messages: [],
@@ -313,7 +313,7 @@ export const useHelioxStore = create<HelioxState>()(
         ),
       })),
       updateSessionMessages: (sessionId, messages) => get()._updateSession(sessionId, { messages }),
-      setCopilotSessionId: (sessionId, copilotId) => get()._updateSession(sessionId, { copilotSessionId: copilotId }),
+      setOpencodeSessionId: (sessionId, opencodeId) => get()._updateSession(sessionId, { opencodeSessionId: opencodeId }),
       setSessionTokenUsage: (sessionId, usage) => set((s) => {
         const session = s.sessions.find(ses => ses.id === sessionId);
         const prevPremium = session?.tokenUsage?.premiumRequests ?? 0;
@@ -336,7 +336,7 @@ export const useHelioxStore = create<HelioxState>()(
         startedAt: undefined,
         completedAt: undefined,
         endedAt: undefined,
-        copilotSessionId: undefined,
+        opencodeSessionId: undefined,
         tokenUsage: undefined,
       }),
 
@@ -561,8 +561,9 @@ export const useHelioxStore = create<HelioxState>()(
 
       // ─── App Settings ───────────────────────────────────
       appSettings: {
-        aiAdapter: 'copilot',
-        customCliPath: '',
+        aiAdapter: 'opencode',
+        selectedProvider: 'opencode',
+        selectedModel: 'opencode/claude-sonnet-4-6',
         autoCommit: false,
         runE2E: false,
         sendOnEnter: false,
@@ -591,7 +592,7 @@ export const useHelioxStore = create<HelioxState>()(
       totalApiDuration: 0,
 
       // ─── Models ──────────────────────────────────────────
-      availableModels: ['copilot'],
+      availableModels: ['opencode/claude-sonnet-4-6'],
       setAvailableModels: (models) => set({ availableModels: models }),
 
       // ─── Git Status ─────────────────────────────────────

@@ -76,11 +76,9 @@ export function attachableToNode(att: DesktopAttachable): Node<AttachableNodeDat
   };
 }
 
-/** Batch-convert all attachables (excluding mental type) to React Flow nodes. */
+/** Batch-convert all attachables to React Flow nodes. */
 export function attachablesToNodes(attachables: DesktopAttachable[]): Node<AttachableNodeData>[] {
-  return attachables
-    .filter((att) => att.type !== 'mental')
-    .map(attachableToNode);
+  return attachables.map(attachableToNode);
 }
 
 // ─── MentalGraphNode → Node ─────────────────────────────────────

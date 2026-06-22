@@ -93,6 +93,7 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
     initialLeft: 0, initialTop: 0, initialWidth: 0, initialHeight: 0, rafId: 0,
   });
   const elRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const [shaking, setShaking] = useState(false);
   const [interacting, setInteracting] = useState(false);
   const dragArmRef = useRef<{ startX: number; startY: number } | null>(null);
@@ -292,30 +293,53 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
 
     const isMultiDrag = type === 'drag' && selectedWindowIds.includes(windowId) && selectedWindowIds.length > 1;
 
+    // Track the latest drag position for final commit (avoids store updates during drag)
+    let lastDragPos: WindowPosition | null = null;
+    // Cache zoom to avoid getState() on every mousemove
+    let cachedZoom = useDesktopStore.getState().canvasZoom;
+    let zoomCacheTime = performance.now();
+
     const onMouseMove = (ev: MouseEvent) => {
       if (!inter.type) return;
-      cancelAnimationFrame(inter.rafId);
-      inter.rafId = requestAnimationFrame(() => {
-        const zoom = useDesktopStore.getState().canvasZoom;
-        const dx = (ev.clientX - inter.startX) / zoom;
-        const dy = (ev.clientY - inter.startY) / zoom;
 
-        if (inter.type === 'drag') {
-          if (isMultiDrag) {
+      // Refresh zoom cache every 500ms (zoom rarely changes mid-drag)
+      const now = performance.now();
+      if (now - zoomCacheTime > 500) {
+        cachedZoom = useDesktopStore.getState().canvasZoom;
+        zoomCacheTime = now;
+      }
+
+      const dx = (ev.clientX - inter.startX) / cachedZoom;
+      const dy = (ev.clientY - inter.startY) / cachedZoom;
+
+      if (inter.type === 'drag') {
+        if (isMultiDrag) {
+          // Multi-drag still needs store updates for other windows
+          cancelAnimationFrame(inter.rafId);
+          inter.rafId = requestAnimationFrame(() => {
             moveSelectedWindows(dx, dy, inter.startX, inter.startY, ev.clientX, ev.clientY);
             inter.startX = ev.clientX;
             inter.startY = ev.clientY;
-          } else {
-            const newPos: WindowPosition = {
-              x: inter.initialLeft + dx,
-              y: inter.initialTop + dy,
-            };
-            const { guides, snappedPos } = calculateSnapGuides(windowId, newPos, win.size);
-            setActiveSnapGuides(guides);
-            moveWindow(windowId, snappedPos);
+          });
+        } else {
+          // Single drag: pure DOM transform — zero React, zero Zustand, zero RAF
+          const rawPos: WindowPosition = {
+            x: inter.initialLeft + dx,
+            y: inter.initialTop + dy,
+          };
+          lastDragPos = rawPos;
+
+          const shell = shellRef.current;
+          if (shell) {
+            const offsetX = rawPos.x - inter.initialLeft;
+            const offsetY = rawPos.y - inter.initialTop;
+            shell.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
           }
-        } else if (inter.type?.startsWith('resize-')) {
-          const dir = inter.type.replace('resize-', '') as ResizeDir;
+        }
+      } else if (inter.type?.startsWith('resize-')) {
+        cancelAnimationFrame(inter.rafId);
+        inter.rafId = requestAnimationFrame(() => {
+          const dir = inter.type!.replace('resize-', '') as ResizeDir;
           let newW = inter.initialWidth;
           let newH = inter.initialHeight;
           let newX = inter.initialLeft;
@@ -327,14 +351,35 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
           if (dir.includes('n')) { newH = inter.initialHeight - dy; newY = inter.initialTop + dy; }
 
           resizeWindow(windowId, { width: newW, height: newH }, { x: newX, y: newY });
-        }
-      });
+        });
+      }
     };
 
     const onMouseUp = () => {
       cancelAnimationFrame(inter.rafId);
 
       const wasDrag = inter.type === 'drag';
+      const shell = shellRef.current;
+
+      // ── 1. Commit final drag position instantly (zero transitions) ──
+      if (wasDrag && lastDragPos && !isMultiDrag) {
+        const { snappedPos } = calculateSnapGuides(windowId, lastDragPos, win.size);
+        if (shell) {
+          // Force-kill transitions so the position commit is instant.
+          // The CSS rule [data-interacting="true"]{transition:none} would
+          // normally handle this, but React batches setInteracting(false)
+          // with the position change — re-enabling the 300ms ease-out
+          // transition in the SAME render that changes left/top → bounce.
+          shell.style.transition = 'none';
+          shell.style.transform = '';
+          shell.style.left = `${snappedPos.x}px`;
+          shell.style.top = `${snappedPos.y}px`;
+          // Force synchronous reflow — browser paints the final position
+          // before anything else runs. No frame can show the old position.
+          void shell.offsetHeight;
+        }
+        moveWindow(windowId, snappedPos);
+      }
 
       if (inter.type?.startsWith('resize-')) {
         const state = useDesktopStore.getState();
@@ -355,7 +400,6 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
           let absorbed = false;
 
           // ── File-viewer → file-explorer absorption ────────────
-          // If a file-viewer was dropped overlapping a file-explorer, absorb it as a tab.
           if (droppedWin.type === 'file-viewer' && droppedWin.filePath) {
             const explorer = state.windows.find(w =>
               w.type === 'file-explorer' && w.id !== windowId && w.state !== 'minimized' &&
@@ -376,7 +420,6 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
           if (!absorbed) {
             const centerX = droppedWin.position.x + droppedWin.size.width / 2;
             const centerY = droppedWin.position.y + droppedWin.size.height / 2;
-            // Convert canvas-space coords to canvas-local via pan offset
             const pan = state.canvasPan;
             window.dispatchEvent(new CustomEvent('heliox:canvas-wave', {
               detail: { x: centerX + pan.x, y: centerY + pan.y },
@@ -385,11 +428,22 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
         }
       }
 
+      // ── 2. Synchronous cleanup ──
       inter.type = null;
-      setInteracting(false);
-      setActiveSnapGuides([]);
+      lastDragPos = null;
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
+
+      // ── 3. Deferred state reset ──
+      // Wait one frame so the browser has PAINTED the committed position
+      // before we flip data-interacting→false (which re-enables the
+      // 300ms CSS transition). By then left/top are settled — nothing
+      // to animate.
+      requestAnimationFrame(() => {
+        setInteracting(false);
+        setActiveSnapGuides([]);
+        if (shellRef.current) shellRef.current.style.transition = '';
+      });
     };
 
     window.addEventListener('mousemove', onMouseMove);
@@ -484,6 +538,7 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
 
   const windowNode = (
     <div
+      ref={shellRef}
       className="desktop-window-shell"
       data-state={win.state}
       data-interacting={interacting}
@@ -497,14 +552,9 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
             <div
               style={{
                 position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '50%',
-                transform: 'translateY(-60%)',
+                inset: 0,
                 pointerEvents: 'none',
                 zIndex: -1,
-                overflow: 'hidden',
                 cursor: 'pointer',
               }}
               data-testid={`top-role-attach-${win.roleId}`}
@@ -512,19 +562,11 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
               role="button"
               aria-label={`Role: ${kebabToTitle(inventoryRole.name)}. Click for details.`}
             >
-              <div style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                width: '100%',
-                pointerEvents: 'auto',
-              }}>
-                <TopRoleAttachment
-                  roles={[inventoryRole]}
-                  activeRoleName={win.roleId!}
-                  onSelectRole={() => {}}
-                />
-              </div>
+              <TopRoleAttachment
+                roles={[inventoryRole]}
+                activeRoleName={win.roleId!}
+                onSelectRole={() => {}}
+              />
             </div>
           )}
 

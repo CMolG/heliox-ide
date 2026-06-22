@@ -17,7 +17,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useHelioxStore } from '../../store';
 import { useDesktopStore } from '../../store/desktop-store';
 import { ToggleSetting } from './ToggleSetting';
-import type { CliProvider } from '@/types/desktop';
+import { ProvidersSection } from './ProvidersSection';
 import type { TutorialScenarioId } from '@/types/tutorial';
 import { TUTORIAL_SCENARIOS } from '../desktop/tutorial/TutorialScenarios';
 
@@ -172,14 +172,6 @@ const TUTORIAL_GROUPS: { label: string; ids: TutorialScenarioId[] }[] = [
   { label: 'Apps', ids: ['chat', 'file-explorer', 'backlog', 'marketplace', 'design-system-editor', 'diff-viewer', 'file-viewer'] },
 ];
 
-const AI_ADAPTERS = [
-  { id: 'copilot' as const, label: 'GitHub Copilot', description: 'Uses the `copilot` binary for autonomous coding' },
-  { id: 'claude' as const, label: 'Anthropic Claude', description: 'Uses the `claude` CLI from Anthropic' },
-  { id: 'openai' as const, label: 'OpenAI Codex', description: 'Uses the `codex` CLI from OpenAI' },
-  { id: 'openrouter' as const, label: 'OpenRouter', description: 'Uses the OpenRouter API gateway for any model' },
-  { id: 'opencode' as const, label: 'OpenCode', description: 'Uses the `opencode` CLI from opencode.ai' },
-];
-
 export function SettingsModal() {
   const { appSettings, updateAppSettings, showSettings, setShowSettings, addToast } = useHelioxStore();
   const desktopSettings = useDesktopStore(s => s.settings);
@@ -228,49 +220,15 @@ export function SettingsModal() {
           </button>
         </div>
 
-        {/* AI Adapter */}
-        <div className="settings-section">
-          <span className="settings-section-label">AI Adapter</span>
-          <div className="settings-adapter-group" role="radiogroup" aria-label="AI Adapter">
-            {AI_ADAPTERS.map((adapter) => {
-              const selected = (appSettings.aiAdapter ?? appSettings.cliAdapter) === adapter.id;
-              return (
-                <button
-                  key={adapter.id}
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => {
-                    updateAppSettings({ aiAdapter: adapter.id });
-                    const providerMap: Record<string, CliProvider> = { copilot: 'copilot', claude: 'claude', openai: 'copilot', openrouter: 'copilot', opencode: 'copilot' };
-                    useDesktopStore.getState().setCliProvider(providerMap[adapter.id] || 'copilot');
-                  }}
-                  className={`settings-adapter-btn ${selected ? 'selected' : ''}`}
-                >
-                  <div className="settings-adapter-radio">
-                    {selected && <div className="settings-adapter-radio-dot" />}
-                  </div>
-                  <div className="settings-adapter-text">
-                    <span className="settings-adapter-name">{adapter.label}</span>
-                    <span className="settings-adapter-desc">{adapter.description}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {(appSettings.aiAdapter ?? appSettings.cliAdapter) === 'openrouter' && (
-            <div className="settings-custom-cli">
-              <span className="settings-section-label">OpenRouter API Key</span>
-              <input
-                value={appSettings.customCliPath}
-                onChange={(e) => updateAppSettings({ customCliPath: e.target.value })}
-                placeholder="sk-or-..."
-                className="settings-input"
-                type="password"
-              />
-            </div>
-          )}
-        </div>
+        {/* Provider Picker — runs through OpenCode */}
+        <ProvidersSection
+          selectedProvider={appSettings.selectedProvider ?? 'opencode'}
+          selectedModel={appSettings.selectedModel ?? 'opencode/claude-sonnet-4-6'}
+          onSelect={(providerId, model) => {
+            updateAppSettings({ selectedProvider: providerId, selectedModel: model });
+            useDesktopStore.getState().setCliProvider(providerId);
+          }}
+        />
 
         <div className="settings-divider" />
 

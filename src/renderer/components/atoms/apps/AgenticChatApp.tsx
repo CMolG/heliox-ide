@@ -24,6 +24,12 @@ import { INFINITY_LOOP_PROMPT } from '../../../logic/flow-prompts';
 import { theme } from '../../../logic/theme';
 import { LucideIcon } from '../../desktop/LucideIcon';
 import { HelioxDropdown } from '../../ui/HelioxDropdown';
+import { FlowQuickRail } from './FlowQuickRail';
+import { MentalAttachmentChips } from './MentalAttachmentChips';
+import {
+  mentalAttachmentsToDigest,
+  pickMentalSubgraph,
+} from '../../../logic/ai/mental-digest';
 
 
 /**
@@ -59,8 +65,8 @@ const MODEL_EFFORT_SUPPORT: Record<string, readonly EffortLevel[]> = Object.from
 );
 const DEFAULT_EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh'];
 
-/** Copilot CLI has no --effort flag; effort is only configurable via config.json. */
-const ADAPTERS_WITHOUT_EFFORT: readonly string[] = ['copilot'];
+/** OpenCode maps effort → `--variant` (minimal/medium/high/max), so all adapters support it. */
+const ADAPTERS_WITHOUT_EFFORT: readonly string[] = [];
 
 function getEffortLevels(model: string, adapter?: string): readonly EffortLevel[] {
   if (adapter && ADAPTERS_WITHOUT_EFFORT.includes(adapter)) return [];
@@ -77,7 +83,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
   const addSessionMessage = useHelioxStore(s => s.addSessionMessage);
   const updateSessionStatus = useHelioxStore(s => s.updateSessionStatus);
   const updateSessionDescription = useHelioxStore(s => s.updateSessionDescription);
-  const setCopilotSessionId = useHelioxStore(s => s.setCopilotSessionId);
+  const setOpencodeSessionId = useHelioxStore(s => s.setOpencodeSessionId);
   const setSessionModel = useHelioxStore(s => s.setSessionModel);
   const setSessionTokenUsage = useHelioxStore(s => s.setSessionTokenUsage);
   const addLogEntry = useHelioxStore(s => s.addLogEntry);
@@ -255,7 +261,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
             updateSessionStatus(sessionId, 'completed', Date.now());
           }
           if (event.sessionId) {
-            setCopilotSessionId(sessionId, event.sessionId);
+            setOpencodeSessionId(sessionId, event.sessionId);
           }
           if (event.premiumRequests !== undefined || event.totalApiDurationMs !== undefined) {
             setSessionTokenUsage(sessionId, {
@@ -277,10 +283,10 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
       unsubscribe();
       resetStreaming();
     };
-  }, [sessionId, addSessionMessage, updateSessionStatus, setCopilotSessionId, setSessionTokenUsage, resetStreaming]);
+  }, [sessionId, addSessionMessage, updateSessionStatus, setOpencodeSessionId, setSessionTokenUsage, resetStreaming]);
 
   // Reset effort when model/adapter doesn't support current level
-  const currentAdapter = appSettings.aiAdapter ?? (appSettings as any).cliAdapter;
+  const currentAdapter = appSettings.aiAdapter;
   useEffect(() => {
     if (session) {
       const supported = getEffortLevels(session.model, currentAdapter);
@@ -363,7 +369,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
         availableModels: store.availableModels,
         currentEffort: store.appSettings.effort,
         getState: () => ({
-          sessions: store.sessions.map(s => ({ id: s.id, model: s.model, copilotSessionId: s.copilotSessionId, number: s.number, tokenUsage: s.tokenUsage, roleId: s.roleId })),
+          sessions: store.sessions.map(s => ({ id: s.id, model: s.model, opencodeSessionId: s.opencodeSessionId, number: s.number, tokenUsage: s.tokenUsage, roleId: s.roleId })),
           roles: store.roles.map(r => ({ id: r.id, name: r.name, icon: r.icon })),
           totalPremiumRequests: store.totalPremiumRequests,
           totalApiDuration: store.totalApiDuration,
@@ -475,10 +481,41 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
       instruction = `${INFINITY_LOOP_PROMPT}\n\n${instruction}`;
     }
 
-    const model = rolePlugin?.roleConfig?.model ?? session?.model ?? 'copilot';
+    const model = rolePlugin?.roleConfig?.model ?? session?.model ?? 'opencode/claude-sonnet-4-6';
 
     // Resolve CWD: if instruction references ../sibling-project, use parent dir
     const agentCwd = resolveCwdForCrossProjectRefs(instruction, effectiveCwd);
+
+    // Build the live mental-map digest for every attached subgraph (Phase 6).
+    // The serialization happens here, on each send, so edits to the graph
+    // between messages are reflected without re-attaching.
+    let mentalDigest = '';
+    if (win?.mentalAttachments?.length) {
+      const storeState = useDesktopStore.getState();
+      const subgraphs = win.mentalAttachments.map(att =>
+        pickMentalSubgraph(storeState.mentalNodes, storeState.mentalEdges, att.nodeIds)
+      );
+      mentalDigest = mentalAttachmentsToDigest(subgraphs);
+    }
+
+    // If we're injecting a mental digest, we must precompute the project
+    // context-map digest here too (otherwise our explicit `contextDigest`
+    // would suppress agent-manager's auto-computed one). Skip the call when
+    // there's no mental block — let the main process handle it as before.
+    let combinedDigest: string | undefined = undefined;
+    if (mentalDigest) {
+      let projectDigest = '';
+      if (projectPath) {
+        try {
+          projectDigest = await window.helioxAPI.contextMapExportText(projectPath, {
+            roleId: win?.roleId,
+            sessionId,
+            limit: 10,
+          });
+        } catch { /* non-critical */ }
+      }
+      combinedDigest = [projectDigest, mentalDigest].filter(s => s && s.trim()).join('\n\n');
+    }
 
     try {
       await window.helioxAPI.runAgent({
@@ -489,15 +526,15 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
         contextProjectPath: projectPath ?? undefined,
         model,
         effort: appSettings.effort,
-        resumeSessionId: session?.copilotSessionId,
-        aiAdapter: appSettings.aiAdapter ?? appSettings.cliAdapter,
-        customCliPath: appSettings.customCliPath,
+        resumeSessionId: session?.opencodeSessionId,
+        aiAdapter: 'opencode',
         autoCommit: appSettings.autoCommit,
         runE2E: appSettings.runE2E,
         rolePrompt,
         modPrompts: modPrompts.length > 0 ? modPrompts : undefined,
         designSystemPrompt,
         roleId: win?.roleId,
+        contextDigest: combinedDigest,
       });
     } catch (err) {
       updateSessionStatus(sessionId, 'error');
@@ -562,7 +599,22 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
   const accentBorder = roleAccent ? `${roleAccent}55` : theme.accentBlueBorder;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: theme.bg, position: 'relative' }}>
+    <div style={{ display: 'flex', flexDirection: 'row', height: '100%', background: theme.bg, position: 'relative' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, height: '100%' }}>
+      {/* Mental attachment chips — visible whenever this chat has subgraphs attached */}
+      {(win?.mentalAttachments?.length ?? 0) > 0 && (
+        <div
+          data-testid="mental-attachments-row"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 10px', borderBottom: `1px solid ${theme.border}`,
+            background: theme.surface, flexShrink: 0,
+          }}
+        >
+          <MentalAttachmentChips windowId={windowId} accent={roleAccent ?? undefined} />
+        </div>
+      )}
+
       {/* Session status frame */}
       {(isRunning || session?.status === 'completed' || session?.status === 'error' || (session && session.messages.length > 0)) && (
         <div
@@ -581,7 +633,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
                 animation: 'pulse 1.5s ease-in-out infinite', flexShrink: 0,
               }} />
               <span style={{ fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.06em', color: accent }}>
-                Running in {session?.model ?? 'Copilot'}
+                Running in {session?.model ?? 'OpenCode'}
               </span>
             </>
           )}
@@ -603,7 +655,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
           )}
           {!isRunning && session?.status !== 'completed' && session?.status !== 'error' && session?.messages && session.messages.length > 0 && (
             <span style={{ fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.06em', color: theme.textGhost }}>
-              {session.messages.length} messages · {session.model ?? 'Copilot'}
+              {session.messages.length} messages · {session.model ?? 'OpenCode'}
             </span>
           )}
           {session?.tokenUsage?.premiumRequests !== undefined && (
@@ -611,8 +663,8 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
               · {session.tokenUsage.premiumRequests} req
             </span>
           )}
-          {/* Copilot session resumable badge */}
-          {session?.copilotSessionId && !isRunning && (
+          {/* OpenCode session resumable badge */}
+          {session?.opencodeSessionId && !isRunning && (
             <span style={{
               padding: '1px 6px', borderRadius: 10, fontSize: 9, fontWeight: 700,
               textTransform: 'uppercase' as const, letterSpacing: '0.06em',
@@ -748,7 +800,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, opacity: 0.6, animation: 'bounce 1s infinite 0.15s' }} />
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, opacity: 0.6, animation: 'bounce 1s infinite 0.3s' }} />
             <span style={{ fontFamily: theme.fontInter, fontSize: 10, color: theme.textGhost, textTransform: 'uppercase' as const }}>
-              Thinking in {session?.model ?? 'Copilot'}
+              Thinking in {session?.model ?? 'OpenCode'}
             </span>
           </div>
         )}
@@ -822,7 +874,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
               }}
             >
               <span style={{ fontFamily: theme.fontMono, fontSize: 10 }}>
-                {session?.model ?? 'copilot'}
+                {session?.model ?? 'opencode/claude-sonnet-4-6'}
               </span>
               {MODEL_COSTS[session?.model ?? ''] && (
                 <span style={{ fontSize: 9, opacity: 0.5 }}>({MODEL_COSTS[session?.model ?? '']})</span>
@@ -843,22 +895,22 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
                     key={m}
                     onClick={() => { setSessionModel(sessionId, m); setShowModelDropdown(false); }}
                     role="option"
-                    aria-selected={(session?.model ?? 'copilot') === m}
+                    aria-selected={(session?.model ?? 'opencode/claude-sonnet-4-6') === m}
                     style={{
                       display: 'block', width: '100%', textAlign: 'left',
                       padding: '5px 12px', border: 'none', cursor: 'pointer',
-                      background: (session?.model ?? 'copilot') === m ? `${accent}18` : 'transparent',
+                      background: (session?.model ?? 'opencode/claude-sonnet-4-6') === m ? `${accent}18` : 'transparent',
                       fontFamily: theme.fontMono, fontSize: 11,
-                      color: (session?.model ?? 'copilot') === m ? accent : theme.textDim,
+                      color: (session?.model ?? 'opencode/claude-sonnet-4-6') === m ? accent : theme.textDim,
                     }}
                     onMouseEnter={e => { (e.target as HTMLElement).style.background = `${accent}12`; }}
-                    onMouseLeave={e => { (e.target as HTMLElement).style.background = (session?.model ?? 'copilot') === m ? `${accent}18` : 'transparent'; }}
+                    onMouseLeave={e => { (e.target as HTMLElement).style.background = (session?.model ?? 'opencode/claude-sonnet-4-6') === m ? `${accent}18` : 'transparent'; }}
                   >
                     {m}
                     {MODEL_COSTS[m] && (
                       <span style={{ marginLeft: 8, fontSize: 9, opacity: 0.5 }}>({MODEL_COSTS[m]})</span>
                     )}
-                    {(session?.model ?? 'copilot') === m && <span style={{ marginLeft: 6, fontSize: 9, color: accent }}>●</span>}
+                    {(session?.model ?? 'opencode/claude-sonnet-4-6') === m && <span style={{ marginLeft: 6, fontSize: 9, color: accent }}>●</span>}
                   </button>
                 ))}
               </div>
@@ -889,10 +941,10 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
           )}
 
           {/* Effort selector (model/adapter-aware) — electric blue active state */}
-          {getEffortLevels(session?.model ?? 'copilot', currentAdapter).length > 0 && (
+          {getEffortLevels(session?.model ?? 'opencode/claude-sonnet-4-6', currentAdapter).length > 0 && (
           <>
           <span>Effort:</span>
-          {getEffortLevels(session?.model ?? 'copilot', currentAdapter).map(e => (
+          {getEffortLevels(session?.model ?? 'opencode/claude-sonnet-4-6', currentAdapter).map(e => (
             <button
               key={e}
               onClick={() => useHelioxStore.getState().updateAppSettings({ effort: e })}
@@ -926,6 +978,8 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
           )}
         </div>
       </div>
+    </div>
+      <FlowQuickRail windowId={windowId} accent={roleAccent ?? undefined} />
     </div>
   );
 }

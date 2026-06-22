@@ -27,7 +27,7 @@ const CANVAS_ACTIONS: CanvasContextMenuAction[] = [
   { label: 'New Chat Window', icon: 'MessageSquare', action: 'new-chat' },
   { label: 'New File Explorer', icon: 'FileText', action: 'file-explorer' },
   { label: 'New Backlog Board', icon: 'KanbanSquare', action: 'backlog' },
-  { label: 'Mental Card', icon: 'Square', action: 'mental-square-mode' },
+  { label: 'Enable Mental Authoring', icon: 'PenTool', action: 'mental-draw-toggle' },
   { label: 'New Grid Layout', icon: 'LayoutGrid', action: 'grid', dividerAfter: true },
   { label: 'Open Marketplace', icon: 'Store', action: 'marketplace', dividerAfter: true },
   ...(import.meta.env.DEV ? [

@@ -12,13 +12,16 @@ import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { PublisherGithub } from '@electron-forge/publisher-github';
+import { existsSync } from 'fs';
+
+const playwrightBrowsersPath = './node_modules/playwright/.local-browsers';
 
 const config: ForgeConfig = {
   packagerConfig: {
     name: 'Heliox IDE',
     icon: './assets/icon',
     extraResource: [
-      './node_modules/playwright/.local-browsers',
+      ...(existsSync(playwrightBrowsersPath) ? [playwrightBrowsersPath] : []),
       './assets/icon.png',
     ],
     asar: true,

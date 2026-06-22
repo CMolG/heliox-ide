@@ -9,6 +9,8 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import type { Flow, RunAgentParams, AgentEvent, HelioxAPI } from '../types';
 import type { ContextMapNode, ContextMapEdge } from '../types/context-map';
+import type { AgenticFlow } from '../types/harness';
+import type { HarnessEventPayload } from '../types/ipc-events';
 
 const helioxAPI: HelioxAPI = {
   initBaselines: (flows: Flow[]) =>
@@ -16,6 +18,9 @@ const helioxAPI: HelioxAPI = {
 
   runAgent: (params: RunAgentParams) =>
     ipcRenderer.invoke('heliox:run-agent', params),
+
+  startHarness: (flow: AgenticFlow) =>
+    ipcRenderer.invoke('heliox:start-harness', flow),
 
   approveDiff: (diffId: string) =>
     ipcRenderer.invoke('heliox:approve-diff', diffId),
@@ -30,6 +35,12 @@ const helioxAPI: HelioxAPI = {
     const handler = (_event: IpcRendererEvent, data: AgentEvent) => callback(data);
     ipcRenderer.on('heliox:agent-event', handler);
     return () => { ipcRenderer.removeListener('heliox:agent-event', handler); };
+  },
+
+  onHarnessEvent: (callback: (event: HarnessEventPayload) => void) => {
+    const handler = (_event: IpcRendererEvent, data: HarnessEventPayload) => callback(data);
+    ipcRenderer.on('heliox:harness-event', handler);
+    return () => { ipcRenderer.removeListener('heliox:harness-event', handler); };
   },
 
   openFolderDialog: () =>
@@ -92,6 +103,18 @@ const helioxAPI: HelioxAPI = {
 
   invalidateModelsCache: () =>
     ipcRenderer.invoke('heliox:invalidate-models-cache'),
+
+  // ── OpenCode providers ──────────────────────────────────────────
+  opencodeListProviders: () =>
+    ipcRenderer.invoke('opencode:list-providers'),
+  opencodeListProviderModels: (providerId: string) =>
+    ipcRenderer.invoke('opencode:list-provider-models', providerId),
+  opencodeSaveCredential: (providerId: string, key: string) =>
+    ipcRenderer.invoke('opencode:save-credential', providerId, key),
+  opencodeRemoveCredential: (providerId: string) =>
+    ipcRenderer.invoke('opencode:remove-credential', providerId),
+  opencodeStatus: () =>
+    ipcRenderer.invoke('opencode:status'),
 
   getConfigDir: (projectPath: string) =>
     ipcRenderer.invoke('heliox:get-config-dir', projectPath),

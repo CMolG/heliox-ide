@@ -24,8 +24,8 @@ describe('Window CRUD', () => {
     const win = getWindow(id)!;
     expect(win).toBeDefined();
     expect(win.type).toBe('chat');
-    expect(win.title).toMatch(/^(Copilot|claude|google|openai|custom)/);
-    expect(win.iconName).toBe('Github');
+    expect(win.title).toMatch(/^(OpenCode|Xiaomi|OpenRouter|Anthropic|OpenAI|Google|Provider)/);
+    expect(win.iconName).toBe('Zap');
     expect(win.state).toBe('normal');
     expect(win.modifierIds).toEqual([]);
     expect(win.position).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
@@ -201,7 +201,8 @@ describe('Mind map migration cleanup', () => {
     expect(migrated.installedPlugins.some((plugin: { id: string }) => plugin.id === 'tool-mind-map')).toBe(false);
     expect(migrated.windows.some((w: { pluginId?: string }) => w.pluginId === 'tool-mind-map')).toBe(false);
     expect(migrated.mentalMode).toBeUndefined();
-    expect(Array.isArray(migrated.mentalConnections)).toBe(true);
+    // v11+ removes legacy mentalConnections entirely (xyflow is the only source).
+    expect(migrated.mentalConnections).toBeUndefined();
   });
 });
 
@@ -327,8 +328,8 @@ describe('Plugins / Marketplace', () => {
 // ─── CLI Theming ─────────────────────────────────────────────────
 
 describe('CLI theming', () => {
-  it('defaults to copilot', () => {
-    expect(useDesktopStore.getState().cliProvider).toBe('copilot');
+  it('defaults to opencode', () => {
+    expect(useDesktopStore.getState().cliProvider).toBe('opencode');
   });
 
   it('setCliProvider changes the provider', () => {
@@ -689,68 +690,19 @@ describe('removeAttachedItem', () => {
     expect(useDesktopStore.getState().attachables[0].name).toBe('frontend-engineer');
   });
 
-  it('spawnAttachable stores mental shape dimensions and keeps it detached from windows', () => {
-    const store = useDesktopStore.getState();
-    const id = store.spawnAttachable(
-      'mental',
-      'mental-note',
-      { x: 40, y: 80 },
-      { mental: { width: 300, height: 140 } }
-    );
-    const mental = useDesktopStore.getState().attachables.find(a => a.id === id);
-    expect(mental).toBeDefined();
-    expect(mental!.type).toBe('mental');
-    expect(mental!.mental).toEqual({
-      width: 300,
-      height: 140,
-      text: '',
-      color: '#EDE9FE',
-      shape: 'square',
-    });
-
-    const chatId = addChat();
-    const attached = useDesktopStore.getState().attachToWindow(id, chatId);
-    expect(attached).toBe(false);
-  });
 });
 
-describe('Mental cards and line connections', () => {
+describe('Mental authoring mode', () => {
   it('defaults to off mental mode', () => {
     expect(useDesktopStore.getState().mentalMode).toBe('off');
   });
 
-  it('updates mental card text and color', () => {
+  it('setMentalMode toggles authoring shape', () => {
     const store = useDesktopStore.getState();
-    const id = store.spawnAttachable('mental', 'mental-note', { x: 20, y: 30 }, { mental: { width: 260, height: 130 } });
-    store.updateMentalAttachableText(id, 'Architecture note');
-    store.updateMentalAttachableColor(id, '#A855F7');
-    const mental = useDesktopStore.getState().attachables.find((a) => a.id === id);
-    expect(mental?.mental?.text).toBe('Architecture note');
-    expect(mental?.mental?.color).toBe('#A855F7');
-  });
-
-  it('creates undirected connections and rejects duplicates/self-links', () => {
-    const store = useDesktopStore.getState();
-    const a = store.spawnAttachable('mental', 'a', { x: 0, y: 0 });
-    const b = store.spawnAttachable('mental', 'b', { x: 200, y: 100 });
-    const first = store.addMentalConnection(a, b);
-    expect(first).toBeTruthy();
-    const duplicateReverse = store.addMentalConnection(b, a);
-    const self = store.addMentalConnection(a, a);
-    expect(duplicateReverse).toBeNull();
-    expect(self).toBeNull();
-    expect(useDesktopStore.getState().mentalConnections).toHaveLength(1);
-  });
-
-  it('removes touching lines when removing a mental card', () => {
-    const store = useDesktopStore.getState();
-    const a = store.spawnAttachable('mental', 'a', { x: 0, y: 0 });
-    const b = store.spawnAttachable('mental', 'b', { x: 200, y: 100 });
-    const connId = store.addMentalConnection(a, b);
-    expect(connId).toBeTruthy();
-    expect(useDesktopStore.getState().mentalConnections).toHaveLength(1);
-    store.removeAttachable(a);
-    expect(useDesktopStore.getState().mentalConnections).toHaveLength(0);
+    store.setMentalMode('square');
+    expect(useDesktopStore.getState().mentalMode).toBe('square');
+    store.setMentalMode('off');
+    expect(useDesktopStore.getState().mentalMode).toBe('off');
   });
 });
 
@@ -759,6 +711,85 @@ describe('Mental cards and line connections', () => {
 describe('Mental Graph nodes and directed edges', () => {
   it('defaults to select mental tool', () => {
     expect(useDesktopStore.getState().mentalTool).toBe('select');
+  });
+
+  it('addModToStep replaces the step data object and mods array immutably', () => {
+    const store = useDesktopStore.getState();
+    const stepId = store.addStepNode({
+      position: { x: 100, y: 120 },
+      title: 'Plan step',
+    });
+
+    const beforeNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    const beforeData = beforeNode.data;
+    const beforeMods = beforeNode.data.mods;
+
+    const mod = {
+      name: 'strict-linting',
+      icon: 'MdRule',
+      iconLibrary: 'md',
+      description: 'Fail fast on lint drift',
+      tags: ['quality'],
+    };
+
+    store.addModToStep(stepId, mod);
+
+    const afterNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(afterNode).not.toBe(beforeNode);
+    expect(afterNode.data).not.toBe(beforeData);
+    expect(afterNode.data.mods).not.toBe(beforeMods);
+    expect(afterNode.data.mods).toEqual([mod]);
+
+    const dataWithMod = afterNode.data;
+    const modsWithMod = afterNode.data.mods;
+
+    store.removeModFromStep(stepId, mod.name);
+
+    const afterRemoveNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(afterRemoveNode).not.toBe(afterNode);
+    expect(afterRemoveNode.data).not.toBe(dataWithMod);
+    expect(afterRemoveNode.data.mods).not.toBe(modsWithMod);
+    expect(afterRemoveNode.data.mods).toEqual([]);
+  });
+
+  it('addRoleToStep and removeRoleFromStep update step roles immutably', () => {
+    const store = useDesktopStore.getState();
+    const stepId = store.addStepNode({
+      position: { x: 100, y: 120 },
+      title: 'Role step',
+    });
+
+    const beforeNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    const beforeData = beforeNode.data;
+    const beforeRoles = beforeNode.data.roles;
+
+    const role = {
+      name: 'frontend-engineer',
+      icon: 'MdCode',
+      iconLibrary: 'md',
+      description: 'Builds frontend systems',
+      tags: ['frontend'],
+      color: '#E87040',
+    };
+
+    store.addRoleToStep(stepId, role);
+
+    const afterNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(afterNode).not.toBe(beforeNode);
+    expect(afterNode.data).not.toBe(beforeData);
+    expect(afterNode.data.roles).not.toBe(beforeRoles);
+    expect(afterNode.data.roles).toEqual([role]);
+
+    const dataWithRole = afterNode.data;
+    const rolesWithRole = afterNode.data.roles;
+
+    store.removeRoleFromStep(stepId, role.name);
+
+    const afterRemoveNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(afterRemoveNode).not.toBe(afterNode);
+    expect(afterRemoveNode.data).not.toBe(dataWithRole);
+    expect(afterRemoveNode.data.roles).not.toBe(rolesWithRole);
+    expect(afterRemoveNode.data.roles).toEqual([]);
   });
 
   it('addMentalNode creates a graph node with defaults', () => {
@@ -1016,5 +1047,103 @@ describe('Mental map mode switching (Square / Circle / Triangle)', () => {
     expect(useDesktopStore.getState().mentalTool).toBe('ramification');
     store.setMentalMode('square');
     expect(useDesktopStore.getState().mentalTool).toBe('ramification');
+  });
+});
+
+// ─── Mental → Chat attachments (matrix per window) ──────────────────
+
+describe('Mental → Chat attachments', () => {
+  it('defaults to empty selection and no attachments', () => {
+    const state = useDesktopStore.getState();
+    expect(state.selectedMentalNodeIds).toEqual([]);
+    const winId = addChat();
+    expect(getWindow(winId)?.mentalAttachments).toBeUndefined();
+  });
+
+  it('setSelectedMentalNodeIds tracks the xyflow selection', () => {
+    useDesktopStore.getState().setSelectedMentalNodeIds(['n1', 'n2']);
+    expect(useDesktopStore.getState().selectedMentalNodeIds).toEqual(['n1', 'n2']);
+  });
+
+  it('setSelectedMentalNodeIds skips no-op writes (referential stability)', () => {
+    const setter = useDesktopStore.getState().setSelectedMentalNodeIds;
+    setter(['n1', 'n2']);
+    const firstRef = useDesktopStore.getState().selectedMentalNodeIds;
+    setter(['n1', 'n2']);
+    const secondRef = useDesktopStore.getState().selectedMentalNodeIds;
+    expect(secondRef).toBe(firstRef);
+  });
+
+  it('attachMentalToWindow stores a subgraph as a matrix entry', () => {
+    const winId = addChat();
+    useDesktopStore.getState().attachMentalToWindow(winId, ['n1', 'n2', 'n3']);
+    const w = getWindow(winId)!;
+    expect(w.mentalAttachments).toHaveLength(1);
+    expect(w.mentalAttachments![0].nodeIds).toEqual(['n1', 'n2', 'n3']);
+    expect(w.mentalAttachments![0].attachedAt).toBeGreaterThan(0);
+  });
+
+  it('attachMentalToWindow accepts multiple distinct attachments', () => {
+    const winId = addChat();
+    const store = useDesktopStore.getState();
+    store.attachMentalToWindow(winId, ['n1', 'n2']);
+    store.attachMentalToWindow(winId, ['n3']);
+    store.attachMentalToWindow(winId, []); // whole map
+    expect(getWindow(winId)!.mentalAttachments).toHaveLength(3);
+  });
+
+  it('attachMentalToWindow dedupes attachments with identical membership', () => {
+    const winId = addChat();
+    const store = useDesktopStore.getState();
+    store.attachMentalToWindow(winId, ['n1', 'n2']);
+    store.attachMentalToWindow(winId, ['n2', 'n1']); // same set, different order
+    expect(getWindow(winId)!.mentalAttachments).toHaveLength(1);
+  });
+
+  it('detachMentalAttachment removes only the targeted index', () => {
+    const winId = addChat();
+    const store = useDesktopStore.getState();
+    store.attachMentalToWindow(winId, ['a']);
+    store.attachMentalToWindow(winId, ['b']);
+    store.attachMentalToWindow(winId, ['c']);
+    useDesktopStore.getState().detachMentalAttachment(winId, 1);
+    const remaining = getWindow(winId)!.mentalAttachments!.map(a => a.nodeIds[0]);
+    expect(remaining).toEqual(['a', 'c']);
+  });
+
+  it('detachMentalAttachment is a no-op for out-of-range indices', () => {
+    const winId = addChat();
+    const store = useDesktopStore.getState();
+    store.attachMentalToWindow(winId, ['a']);
+    useDesktopStore.getState().detachMentalAttachment(winId, 99);
+    useDesktopStore.getState().detachMentalAttachment(winId, -1);
+    expect(getWindow(winId)!.mentalAttachments).toHaveLength(1);
+  });
+
+  it('clearMentalAttachments wipes all attachments on a window', () => {
+    const winId = addChat();
+    const store = useDesktopStore.getState();
+    store.attachMentalToWindow(winId, ['a']);
+    store.attachMentalToWindow(winId, ['b']);
+    useDesktopStore.getState().clearMentalAttachments(winId);
+    expect(getWindow(winId)!.mentalAttachments).toEqual([]);
+  });
+
+  it('attachments survive when other windows mutate', () => {
+    const chatA = addChat();
+    const chatB = addChat();
+    const store = useDesktopStore.getState();
+    store.attachMentalToWindow(chatA, ['a1', 'a2']);
+    store.attachMentalToWindow(chatB, ['b1']);
+    useDesktopStore.getState().clearMentalAttachments(chatB);
+    expect(getWindow(chatA)!.mentalAttachments).toHaveLength(1);
+    expect(getWindow(chatB)!.mentalAttachments).toEqual([]);
+  });
+
+  it('attaching with an empty nodeIds array represents the whole-map sentinel', () => {
+    const winId = addChat();
+    useDesktopStore.getState().attachMentalToWindow(winId, []);
+    expect(getWindow(winId)!.mentalAttachments).toHaveLength(1);
+    expect(getWindow(winId)!.mentalAttachments![0].nodeIds).toEqual([]);
   });
 });

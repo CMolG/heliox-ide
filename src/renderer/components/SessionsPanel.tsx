@@ -177,7 +177,7 @@ export function SessionsPanel() {
 
   const filteredSessions = projectSessions.filter((s) =>
     !sessionFilter || s.description.toLowerCase().includes(sessionFilter.toLowerCase())
-    || `${s.number}: ${s.model ?? 'copilot'}`.toLowerCase().includes(sessionFilter.toLowerCase())
+    || `${s.number}: ${s.model ?? 'opencode/claude-sonnet-4-6'}`.toLowerCase().includes(sessionFilter.toLowerCase())
   );
 
   const handleNewSession = useCallback(() => {
@@ -188,7 +188,7 @@ export function SessionsPanel() {
   const handleStartRename = useCallback((session: Session, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingSessionId(session.id);
-    setEditingName(session.description || `${session.number}: ${session.model ?? 'copilot'}`);
+    setEditingName(session.description || `${session.number}: ${session.model ?? 'opencode/claude-sonnet-4-6'}`);
     requestAnimationFrame(() => renameInputRef.current?.select());
   }, []);
 
@@ -210,8 +210,8 @@ export function SessionsPanel() {
 
     const role = session.roleId ? roles.find(r => r.id === session.roleId) : null;
     const lines: string[] = [
-      `# Session ${session.number}: ${session.model ?? 'copilot'} — ${session.description || '(untitled)'}`,
-      `Model: ${session.model ?? 'copilot'} | Effort: ${session.effort ?? 'medium'} | Role: ${role ? `${role.icon} ${role.name}` : 'None'}`,
+      `# Session ${session.number}: ${session.model ?? 'opencode/claude-sonnet-4-6'} — ${session.description || '(untitled)'}`,
+      `Model: ${session.model ?? 'opencode/claude-sonnet-4-6'} | Effort: ${session.effort ?? 'medium'} | Role: ${role ? `${role.icon} ${role.name}` : 'None'}`,
       `Started: ${new Date(session.createdAt).toLocaleString()}`,
       '',
       '---',
@@ -305,7 +305,7 @@ export function SessionsPanel() {
           const isSelected = selectedSessionId === session.id;
           const cfg = STATUS_CONFIG[session.status];
           const elapsed = computeElapsed(session, now);
-          const sessionTitle = `${session.number}: ${session.model ?? 'copilot'}`;
+          const sessionTitle = `${session.number}: ${session.model ?? 'opencode/claude-sonnet-4-6'}`;
 
           return (
             <div key={session.id} className="relative group">

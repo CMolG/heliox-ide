@@ -11,6 +11,12 @@
  *
  * Architectural role:
  * - UI boundary module in the renderer process (presentation + local interaction).
+ *
+ * TODO(design): The board + card visuals are scheduled for a full redesign.
+ * Keep this widget's behavior layer (filters, DnD wiring, store hooks) stable;
+ * the redesign should land as a pure styling/layout swap on top of the
+ * existing data flow. Coupled files: DraggableCard, FlowDeckCard,
+ * KanbanColumn, BacklogCardModal.
  */
 // src/renderer/components/atoms/widgets/BacklogKanbanWidget.tsx — Multi-project Kanban with DnD & animations
 import React, { useEffect, useState, useCallback, useRef } from 'react';
@@ -433,7 +439,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
     });
     dStore.connectFlow(windowId, card.targetAgent);
 
-    const model = flowMeta.betterOn || 'copilot';
+    const model = flowMeta.betterOn || 'opencode/claude-sonnet-4-6';
     store.setSessionModel(sessionId, model);
 
     const createdSession = useHelioxStore.getState().sessions.find(s => s.id === sessionId);
@@ -479,8 +485,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
         contextProjectPath: projectPath,
         model,
         effort,
-        aiAdapter: store.appSettings.aiAdapter ?? store.appSettings.cliAdapter,
-        customCliPath: store.appSettings.customCliPath,
+        aiAdapter: store.appSettings.aiAdapter,
         autoCommit: store.appSettings.autoCommit,
         runE2E: store.appSettings.runE2E,
       });
@@ -563,8 +568,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
         contextProjectPath: projectPath,
         model,
         effort: 'high',
-        aiAdapter: store.appSettings.aiAdapter ?? store.appSettings.cliAdapter,
-        customCliPath: store.appSettings.customCliPath,
+        aiAdapter: store.appSettings.aiAdapter,
         autoCommit: store.appSettings.autoCommit,
         runE2E: store.appSettings.runE2E,
       });

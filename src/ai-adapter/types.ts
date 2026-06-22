@@ -2,40 +2,46 @@
  * types.ts — AI Adapter
  *
  * Responsibility:
- * - Defines the universal contract for all AI provider adapters
- * - Shared option types, output event shape, and adapter identifier union
+ * - Defines the contract for the OpenCode adapter and shared event shape.
+ * - OpenCode is the single execution surface: it handles every provider
+ *   (Anthropic, OpenAI, OpenRouter, Xiaomi MiMo, OpenCode Zen, etc.) via
+ *   its own credential store.
  *
  * Boundaries:
- * - Owns: interface definitions only — no implementation logic
- * - Consumed by: every adapter, adapter-registry, agent-manager
+ * - Owns: adapter interface, run options, normalized output event shape.
+ * - Does NOT own: provider catalog (lives in main/opencode-providers).
  */
 import { EventEmitter } from 'events';
 
 // ─── Adapter Identifier ──────────────────────────────────────────
 
-/** Supported AI provider names used across IPC, settings, and adapter registry */
-export type AiAdapterName = 'copilot' | 'claude' | 'openai' | 'openrouter' | 'opencode';
+/** The only supported adapter — OpenCode multiplexes every provider. */
+export type AiAdapterName = 'opencode';
 
 // ─── Run Options ─────────────────────────────────────────────────
 
-/** Options passed to any adapter's runPrompt() method */
+/** Options passed to the adapter's runPrompt() method. */
 export interface AdapterRunOptions {
   prompt: string;
   cwd: string;
+  /** Full `provider/model` string (e.g. `opencode/claude-sonnet-4-6`, `xiaomi-token-plan-ams/mimo-v2-pro`). */
   model?: string;
+  /** Provider-specific reasoning effort — maps to opencode's `--variant`. */
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  /** Resume a previous opencode session by id. */
   resumeSessionId?: string;
   timeoutMs?: number;
-  /** OpenRouter API key — only used by OpenRouterAdapter */
-  apiKey?: string;
+  /** Optional agent name to run with (opencode --agent). */
+  agent?: string;
 }
 
 // ─── Output Event ────────────────────────────────────────────────
 
 /**
- * Normalized output event emitted by all adapters.
- * Every provider's raw format is normalized into this shape
- * so agent-manager can consume events uniformly.
+ * Normalized output event emitted by the adapter.
+ *
+ * Provider-specific event shapes are mapped into this canonical form so the
+ * renderer chat surface stays decoupled from CLI internals.
  */
 export interface AiOutputEvent {
   type: string;
@@ -52,14 +58,10 @@ export interface AiOutputEvent {
 // ─── Adapter Interface ───────────────────────────────────────────
 
 /**
- * Universal AI adapter contract.
+ * The adapter contract. Agent-manager consumes this exclusively, remaining
+ * agnostic to the underlying CLI invocation details.
  *
- * Every adapter (CLI-based or HTTP-based) implements this interface.
- * The agent-manager works exclusively through this contract,
- * remaining agnostic to whether the backend is a spawned process
- * or an HTTP stream.
- *
- * Emitted events (same across all adapters):
+ * Emitted events:
  *   'event'          — every parsed AiOutputEvent
  *   'thinking_delta' — streaming reasoning chunk
  *   'message_delta'  — streaming text chunk
@@ -67,28 +69,17 @@ export interface AiOutputEvent {
  *   'tool_request'   — tool invocation
  *   'tool_result'    — tool execution result
  *   'file_changed'   — file modification metadata
- *   'turn_start'     — assistant turn started
- *   'turn_end'       — assistant turn ended
- *   'result'         — final summary with usage stats
+ *   'turn_start' / 'turn_end' — assistant turn boundaries
+ *   'result'         — final summary with usage + sessionId
  *   'raw_line'       — unparsed output for debugging
  *   'stderr'         — error/warning output
- *   'done'           — adapter finished (exit code)
- *   'close'          — underlying resource closed
+ *   'done' / 'close' — adapter finished (exit code)
  *   'error'          — fatal error
  */
 export interface AiAdapter extends EventEmitter {
-  /** Human-readable adapter name (e.g. 'GitHub Copilot') */
   readonly displayName: string;
-
-  /** Machine identifier matching AiAdapterName */
   readonly name: AiAdapterName;
-
-  /** Start processing a prompt — resolves when the adapter finishes */
   runPrompt(options: AdapterRunOptions): Promise<void>;
-
-  /** Abort the current run (kill process or cancel HTTP request) */
   abort(): void;
-
-  /** Whether the adapter is currently processing a prompt */
   readonly isRunning: boolean;
 }

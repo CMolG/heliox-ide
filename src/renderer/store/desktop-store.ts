@@ -8,14 +8,14 @@
 // src/renderer/store/desktop-store.ts — Zustand store for seamless desktop state
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { DEFAULT_MENTAL_COLOR } from '@/types/desktop';
+import { CLI_THEME_COLORS } from '@/types/desktop';
 import type {
   DesktopWindow, WindowPosition, WindowSize, WindowConnection,
   DockItem, Plugin, PluginCategory, SnapGuide, CliProvider, ConnectionPort, CanvasPan,
-  DesktopAttachable, AttachableType, DesktopGrid, MentalMode, MentalShape, MentalConnection,
-  MentalTool, MentalGraphNode, MentalGraphEdge,
+  DesktopAttachable, AttachableType, DesktopGrid, MentalMode, MentalShape,
+  MentalTool, MentalGraphNode, MentalGraphEdge, StepGraphNode, CanvasGraphNode,
 } from '@/types/desktop';
-import type { MarketInventory, MarketMod, BacklogCard } from '@/types/market';
+import type { MarketInventory, MarketMod, MarketRole, BacklogCard } from '@/types/market';
 import type { TutorialScenarioId, TutorialProgress } from '@/types/tutorial';
 
 
@@ -60,12 +60,19 @@ function repositionGridWindows(grid: DesktopGrid, windows: DesktopWindow[]): Des
 
 // ─── CLI icon names (Lucide) per provider ────────────────────────
 
-export const CLI_ICON_NAMES: Record<CliProvider, string> = {
-  copilot: 'Github',
-  claude: 'Bot',
-  google: 'Sparkles',
-  openai: 'Cpu',
-  custom: 'Terminal',
+/** Provider-id → Lucide icon mapping for chat window decoration. */
+export const CLI_ICON_NAMES: Record<string, string> = {
+  opencode:                'Zap',
+  'xiaomi-token-plan-ams': 'Cpu',
+  'xiaomi-token-plan-cn':  'Cpu',
+  openrouter:              'Network',
+  anthropic:               'Bot',
+  openai:                  'Brain',
+  google:                  'Sparkles',
+  groq:                    'Zap',
+  deepseek:                'Compass',
+  xai:                     'Wand',
+  custom:                  'Terminal',
 };
 
 // ─── Default Dock Items (minimal) ────────────────────────────────
@@ -116,13 +123,9 @@ const MIN_WINDOW_SIZE: WindowSize = { width: 320, height: 250 };
 const SNAP_THRESHOLD = 8; // px
 const DEFAULT_MENTAL_WIDTH = 220;
 const DEFAULT_MENTAL_HEIGHT = 120;
-const DEFAULT_MENTAL_LINE_COLOR = '#6D28D9';
 const DEFAULT_MENTAL_EDGE_COLOR = '#7C3AED';
-
-/** Legacy helper for undirected pair normalization (v6 compat). */
-function normalizeMentalPair(a: string, b: string): [string, string] {
-  return a < b ? [a, b] : [b, a];
-}
+const DEFAULT_STEP_WIDTH = 300;
+const DEFAULT_STEP_HEIGHT = 190;
 
 // ─── Notification type ───────────────────────────────────────────
 
@@ -132,6 +135,17 @@ export interface DesktopNotification {
   timestamp: number;
   sessionId?: string;
   read: boolean;
+}
+
+interface AddStepNodeInput {
+  id?: string;
+  position?: WindowPosition;
+  width?: number;
+  height?: number;
+  title?: string;
+  description?: string;
+  mods?: MarketMod[];
+  roles?: MarketRole[];
 }
 
 // ─── Store Interface ─────────────────────────────────────────────
@@ -202,15 +216,6 @@ interface DesktopStore {
     type: AttachableType,
     name: string,
     position?: WindowPosition,
-    options?: {
-      mental?: {
-        width?: number;
-        height?: number;
-        text?: string;
-        color?: string;
-        shape?: MentalShape;
-      };
-    }
   ) => string;
   removeAttachable: (attachableId: string) => void;
   moveAttachable: (attachableId: string, position: WindowPosition) => void;
@@ -258,19 +263,12 @@ interface DesktopStore {
   setCanvasPan: (pan: CanvasPan) => void;
   canvasZoom: number;
   setCanvasZoom: (zoom: number) => void;
+  /** xyflow authoring gate — 'off' = read-only; otherwise the default shape for new nodes. */
   mentalMode: MentalMode;
   setMentalMode: (mode: MentalMode) => void;
-  mentalConnections: MentalConnection[];
-  mentalLineSourceId: string | null;
-  setMentalLineSourceId: (attachableId: string | null) => void;
-  updateMentalAttachableText: (attachableId: string, text: string) => void;
-  updateMentalAttachableColor: (attachableId: string, color: string) => void;
-  addMentalConnection: (fromAttachableId: string, toAttachableId: string) => string | null;
-  removeMentalConnection: (connectionId: string) => void;
-  updateMentalConnectionColor: (connectionId: string, color: string) => void;
 
-  // ─── Mental Graph (React Flow surface) ─────────────
-  mentalNodes: MentalGraphNode[];
+  // ─── Mental Graph (xyflow source of truth) ─────────────
+  mentalNodes: CanvasGraphNode[];
   mentalEdges: MentalGraphEdge[];
   mentalTool: MentalTool;
   mentalEditingNodeId: string | null;
@@ -278,11 +276,28 @@ interface DesktopStore {
   setMentalEditingNodeId: (nodeId: string | null) => void;
   addMentalNode: (node: Omit<MentalGraphNode, 'id' | 'createdAt'> & { id?: string }) => string;
   updateMentalNode: (nodeId: string, patch: Partial<Pick<MentalGraphNode, 'position' | 'width' | 'height' | 'text' | 'color'>>) => void;
+  addStepNode: (node?: AddStepNodeInput) => string;
+  addModToStep: (stepId: string, modData: MarketMod) => boolean;
+  removeModFromStep: (stepId: string, modId: string) => void;
+  addRoleToStep: (stepId: string, roleData: MarketRole) => boolean;
+  removeRoleFromStep: (stepId: string, roleId: string) => void;
   removeMentalNode: (nodeId: string) => void;
   addMentalEdge: (sourceId: string, targetId: string, edgeType?: MentalGraphEdge['type'], sourceHandle?: string, targetHandle?: string) => string | null;
   removeMentalEdge: (edgeId: string) => void;
   updateMentalEdgeColor: (edgeId: string, color: string) => void;
   createRamificationFromDrop: (sourceId: string, flowPosition: { x: number; y: number }) => { nodeId: string; edgeId: string } | null;
+
+  // ─── Mental Graph selection (mirrors xyflow's selected nodes) ─
+  selectedMentalNodeIds: string[];
+  setSelectedMentalNodeIds: (ids: string[]) => void;
+
+  // ─── Mental → Chat attachments ───────────────────────────────
+  // Each chat window keeps a matrix of attached subgraphs: each inner
+  // array is one attachment (list of node ids). An empty inner array
+  // means "the entire mental graph at send-time".
+  attachMentalToWindow: (windowId: string, nodeIds: string[]) => void;
+  detachMentalAttachment: (windowId: string, index: number) => void;
+  clearMentalAttachments: (windowId: string) => void;
 
   // Notifications
   notifications: DesktopNotification[];
@@ -366,6 +381,14 @@ function getViewportCenteredSpawnPosition(pan: CanvasPan, zoom: number): WindowP
   };
 }
 
+function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
+  return node.type === 'step';
+}
+
+function marketEntityId(entity: MarketMod | MarketRole): string {
+  return entity.name;
+}
+
 // ─── Store ───────────────────────────────────────────────────────
 
 export const useDesktopStore = create<DesktopStore>()(
@@ -384,7 +407,7 @@ export const useDesktopStore = create<DesktopStore>()(
         const zIndex = state.nextZIndex;
         const cliProv = opts?.cliProvider ?? state.cliProvider;
         const defaultTitle = type === 'chat'
-          ? `${CLI_ICON_NAMES[cliProv] === 'Github' ? 'Copilot' : cliProv}`
+          ? (CLI_THEME_COLORS[cliProv]?.label ?? cliProv)
           : type === 'file-explorer' ? 'Files'
           : type === 'backlog' ? 'Backlog'
           : type === 'file-viewer' ? (opts?.title ?? 'File')
@@ -739,7 +762,7 @@ export const useDesktopStore = create<DesktopStore>()(
       // ─── Desktop Attachables ────────────────────────────
       attachables: [],
 
-      spawnAttachable: (type, name, position, options) => {
+      spawnAttachable: (type, name, position) => {
         const state = get();
         const id = `att-${type}-${name}-${Date.now()}`;
         const pos = position ?? getViewportCenteredSpawnPosition(state.canvasPan, state.canvasZoom);
@@ -750,17 +773,6 @@ export const useDesktopStore = create<DesktopStore>()(
           name,
           position: pos,
           zIndex: z,
-          ...(type === 'mental'
-            ? {
-                mental: {
-                  width: options?.mental?.width ?? DEFAULT_MENTAL_WIDTH,
-                  height: options?.mental?.height ?? DEFAULT_MENTAL_HEIGHT,
-                  text: options?.mental?.text ?? '',
-                  color: options?.mental?.color ?? DEFAULT_MENTAL_COLOR,
-                  shape: options?.mental?.shape ?? 'square',
-                },
-              }
-            : {}),
         };
         set({
           attachables: [
@@ -774,10 +786,6 @@ export const useDesktopStore = create<DesktopStore>()(
 
       removeAttachable: (attachableId) => set((s) => ({
         attachables: s.attachables.filter(a => a.id !== attachableId),
-        mentalConnections: s.mentalConnections.filter((conn) =>
-          conn.fromAttachableId !== attachableId && conn.toAttachableId !== attachableId
-        ),
-        mentalLineSourceId: s.mentalLineSourceId === attachableId ? null : s.mentalLineSourceId,
       })),
 
       moveAttachable: (attachableId, position) => set((s) => ({
@@ -790,8 +798,8 @@ export const useDesktopStore = create<DesktopStore>()(
         const win = state.windows.find(w => w.id === windowId);
         if (!att || !win || win.type !== 'chat') return false;
 
-        // Flows/mental notes are independent — they cannot be linked to windows
-        if (att.type === 'flow' || att.type === 'mental') return false;
+        // Flows are independent — they cannot be linked to windows.
+        if (att.type === 'flow') return false;
 
         let success = false;
         if (att.type === 'role') {
@@ -1197,7 +1205,7 @@ export const useDesktopStore = create<DesktopStore>()(
       },
 
       // ─── CLI Theming ───────────────────────────────────
-      cliProvider: 'copilot',
+      cliProvider: 'opencode',
       setCliProvider: (p) => set({ cliProvider: p }),
 
       // ─── Canvas Pan + Zoom ─────────────────────────────
@@ -1206,84 +1214,9 @@ export const useDesktopStore = create<DesktopStore>()(
       canvasZoom: 1,
       setCanvasZoom: (zoom) => set({ canvasZoom: Math.max(0.25, Math.min(3, zoom)) }),
       mentalMode: 'off',
-      setMentalMode: (mode) => set((s) => ({
-        mentalMode: mode,
-      })),
-      mentalConnections: [],
-      mentalLineSourceId: null,
-      setMentalLineSourceId: (attachableId) => set({ mentalLineSourceId: attachableId }),
-      updateMentalAttachableText: (attachableId, text) => set((s) => ({
-        attachables: s.attachables.map((a) => {
-          if (a.id !== attachableId || a.type !== 'mental') return a;
-          return {
-            ...a,
-            mental: {
-              width: a.mental?.width ?? DEFAULT_MENTAL_WIDTH,
-              height: a.mental?.height ?? DEFAULT_MENTAL_HEIGHT,
-              shape: a.mental?.shape ?? 'square',
-              color: a.mental?.color ?? DEFAULT_MENTAL_COLOR,
-              text,
-            },
-          };
-        }),
-      })),
-      updateMentalAttachableColor: (attachableId, color) => set((s) => ({
-        attachables: s.attachables.map((a) => {
-          if (a.id !== attachableId || a.type !== 'mental') return a;
-          return {
-            ...a,
-            mental: {
-              width: a.mental?.width ?? DEFAULT_MENTAL_WIDTH,
-              height: a.mental?.height ?? DEFAULT_MENTAL_HEIGHT,
-              shape: a.mental?.shape ?? 'square',
-              text: a.mental?.text ?? '',
-              color,
-            },
-          };
-        }),
-      })),
-      addMentalConnection: (fromAttachableId, toAttachableId) => {
-        if (!fromAttachableId || !toAttachableId || fromAttachableId === toAttachableId) {
-          return null;
-        }
-        const state = get();
-        const from = state.attachables.find((a) => a.id === fromAttachableId && a.type === 'mental');
-        const to = state.attachables.find((a) => a.id === toAttachableId && a.type === 'mental');
-        if (!from || !to) return null;
+      setMentalMode: (mode) => set({ mentalMode: mode }),
 
-        const [normalizedFrom, normalizedTo] = normalizeMentalPair(fromAttachableId, toAttachableId);
-        const duplicate = state.mentalConnections.some((conn) => {
-          const [existingFrom, existingTo] = normalizeMentalPair(conn.fromAttachableId, conn.toAttachableId);
-          return existingFrom === normalizedFrom && existingTo === normalizedTo;
-        });
-        if (duplicate) return null;
-
-        const id = `mconn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        const createdAt = Date.now();
-        set((s) => ({
-          mentalConnections: [
-            ...s.mentalConnections,
-            {
-              id,
-              fromAttachableId: normalizedFrom,
-              toAttachableId: normalizedTo,
-              color: DEFAULT_MENTAL_LINE_COLOR,
-              createdAt,
-            },
-          ],
-        }));
-        return id;
-      },
-      removeMentalConnection: (connectionId) => set((s) => ({
-        mentalConnections: s.mentalConnections.filter((conn) => conn.id !== connectionId),
-      })),
-      updateMentalConnectionColor: (connectionId, color) => set((s) => ({
-        mentalConnections: s.mentalConnections.map((conn) =>
-          conn.id === connectionId ? { ...conn, color } : conn
-        ),
-      })),
-
-      // ─── Mental Graph (React Flow surface) ─────────────
+      // ─── Mental Graph (xyflow source of truth) ─────────────
       mentalNodes: [],
       mentalEdges: [],
       mentalTool: 'select',
@@ -1296,6 +1229,7 @@ export const useDesktopStore = create<DesktopStore>()(
         const id = input.id ?? `mn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const node: MentalGraphNode = {
           id,
+          type: 'mental',
           position: input.position,
           width: input.width,
           height: input.height,
@@ -1311,7 +1245,110 @@ export const useDesktopStore = create<DesktopStore>()(
       updateMentalNode: (nodeId, patch) => set((s) => ({
         mentalNodes: s.mentalNodes.map((n) => {
           if (n.id !== nodeId) return n;
+          if (isStepGraphNode(n)) {
+            const { position, width, height } = patch;
+            return {
+              ...n,
+              ...(position ? { position } : {}),
+              ...(width !== undefined ? { width } : {}),
+              ...(height !== undefined ? { height } : {}),
+            };
+          }
           return { ...n, ...patch };
+        }),
+      })),
+
+      addStepNode: (input = {}) => {
+        const state = get();
+        const id = input.id ?? `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const node: StepGraphNode = {
+          id,
+          type: 'step',
+          position: input.position ?? getViewportCenteredSpawnPosition(state.canvasPan, state.canvasZoom),
+          width: input.width ?? DEFAULT_STEP_WIDTH,
+          height: input.height ?? DEFAULT_STEP_HEIGHT,
+          text: input.title ?? 'Pipeline step',
+          color: '#1a1a1a',
+          shape: 'square',
+          data: {
+            title: input.title ?? 'Pipeline step',
+            description: input.description,
+            mods: [...(input.mods ?? [])],
+            roles: [...(input.roles ?? [])],
+          },
+          createdAt: Date.now(),
+        };
+        set((s) => ({ mentalNodes: [...s.mentalNodes, node] }));
+        return id;
+      },
+
+      addModToStep: (stepId, modData) => {
+        let didAdd = false;
+        const modId = marketEntityId(modData);
+        set((s) => ({
+          mentalNodes: s.mentalNodes.map((node) => {
+            if (node.id !== stepId || !isStepGraphNode(node)) return node;
+            if (node.data.mods.some((mod) => marketEntityId(mod) === modId)) return node;
+            didAdd = true;
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                mods: [...node.data.mods, { ...modData }],
+              },
+            };
+          }),
+        }));
+        return didAdd;
+      },
+
+      removeModFromStep: (stepId, modId) => set((s) => ({
+        mentalNodes: s.mentalNodes.map((node) => {
+          if (node.id !== stepId || !isStepGraphNode(node)) return node;
+          const nextMods = node.data.mods.filter((mod) => marketEntityId(mod) !== modId);
+          if (nextMods.length === node.data.mods.length) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              mods: nextMods,
+            },
+          };
+        }),
+      })),
+
+      addRoleToStep: (stepId, roleData) => {
+        let didAdd = false;
+        const roleId = marketEntityId(roleData);
+        set((s) => ({
+          mentalNodes: s.mentalNodes.map((node) => {
+            if (node.id !== stepId || !isStepGraphNode(node)) return node;
+            if (node.data.roles.some((role) => marketEntityId(role) === roleId)) return node;
+            didAdd = true;
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                roles: [...node.data.roles, { ...roleData }],
+              },
+            };
+          }),
+        }));
+        return didAdd;
+      },
+
+      removeRoleFromStep: (stepId, roleId) => set((s) => ({
+        mentalNodes: s.mentalNodes.map((node) => {
+          if (node.id !== stepId || !isStepGraphNode(node)) return node;
+          const nextRoles = node.data.roles.filter((role) => marketEntityId(role) !== roleId);
+          if (nextRoles.length === node.data.roles.length) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              roles: nextRoles,
+            },
+          };
         }),
       })),
 
@@ -1363,6 +1400,7 @@ export const useDesktopStore = create<DesktopStore>()(
         const nodeId = `mn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const node: MentalGraphNode = {
           id: nodeId,
+          type: 'mental',
           position: flowPosition,
           width: DEFAULT_MENTAL_WIDTH,
           height: DEFAULT_MENTAL_HEIGHT,
@@ -1389,6 +1427,48 @@ export const useDesktopStore = create<DesktopStore>()(
         }));
         return { nodeId, edgeId };
       },
+
+      // ─── Mental Graph selection (mirrors xyflow) ───────
+      selectedMentalNodeIds: [],
+      setSelectedMentalNodeIds: (ids) => {
+        // Avoid spurious re-renders when xyflow re-emits the same selection.
+        const current = get().selectedMentalNodeIds;
+        if (current.length === ids.length && current.every((v, i) => v === ids[i])) return;
+        set({ selectedMentalNodeIds: ids });
+      },
+
+      // ─── Mental → Chat attachments ──────────────────────
+      attachMentalToWindow: (windowId, nodeIds) => set((s) => ({
+        windows: s.windows.map((w) => {
+          if (w.id !== windowId) return w;
+          const existing = w.mentalAttachments ?? [];
+          // Skip if an attachment with the exact same membership already exists.
+          const key = [...nodeIds].sort().join('|');
+          const dup = existing.some(att => [...att.nodeIds].sort().join('|') === key);
+          if (dup) return w;
+          return {
+            ...w,
+            mentalAttachments: [
+              ...existing,
+              { nodeIds: [...nodeIds], attachedAt: Date.now() },
+            ],
+          };
+        }),
+      })),
+      detachMentalAttachment: (windowId, index) => set((s) => ({
+        windows: s.windows.map((w) => {
+          if (w.id !== windowId) return w;
+          const existing = w.mentalAttachments ?? [];
+          if (index < 0 || index >= existing.length) return w;
+          return {
+            ...w,
+            mentalAttachments: existing.filter((_, i) => i !== index),
+          };
+        }),
+      })),
+      clearMentalAttachments: (windowId) => set((s) => ({
+        windows: s.windows.map((w) => w.id === windowId ? { ...w, mentalAttachments: [] } : w),
+      })),
 
       // ─── Notifications ─────────────────────────────────
       notifications: [],
@@ -1485,7 +1565,7 @@ export const useDesktopStore = create<DesktopStore>()(
     }),
     {
       name: 'heliox-desktop',
-      version: 10,
+      version: 13,
       partialize: (state) => ({
         windows: state.windows,
         connections: state.connections,
@@ -1497,7 +1577,6 @@ export const useDesktopStore = create<DesktopStore>()(
         canvasPan: state.canvasPan,
         canvasZoom: state.canvasZoom,
         // mentalMode intentionally NOT persisted — always boots as 'off'
-        mentalConnections: state.mentalConnections,
         mentalNodes: state.mentalNodes,
         mentalEdges: state.mentalEdges,
         mentalTool: state.mentalTool,
@@ -1664,26 +1743,61 @@ export const useDesktopStore = create<DesktopStore>()(
           }
         }
 
-        if (persisted && Array.isArray(persisted.attachables)) {
-          persisted.attachables = persisted.attachables.map((attachable: any) => {
-            if (attachable?.type !== 'mental') return attachable;
-            const width = attachable?.mental?.width ?? attachable?.mentalShape?.width ?? DEFAULT_MENTAL_WIDTH;
-            const height = attachable?.mental?.height ?? attachable?.mentalShape?.height ?? DEFAULT_MENTAL_HEIGHT;
-            const rawShape = attachable?.mental?.shape;
-            const shape = (rawShape === 'square' || rawShape === 'circle' || rawShape === 'triangle')
-              ? rawShape : 'square';
-            return {
-              ...attachable,
-              mental: {
-                width,
-                height,
-                text: typeof attachable?.mental?.text === 'string' ? attachable.mental.text : '',
-                color: typeof attachable?.mental?.color === 'string' ? attachable.mental.color : DEFAULT_MENTAL_COLOR,
-                shape,
-              },
-            };
-          });
+        // v10 → v11: xyflow is now the only mental source of truth.
+        // Strip every legacy attachable of type 'mental', remove the
+        // undirected `mentalConnections` array, and clear `mentalLineSourceId`.
+        // Existing mentalNodes / mentalEdges (xyflow) are preserved.
+        if (version < 11 && persisted) {
+          if (Array.isArray(persisted.attachables)) {
+            persisted.attachables = persisted.attachables.filter(
+              (a: any) => a?.type !== 'mental',
+            );
+          }
+          delete persisted.mentalConnections;
+          delete persisted.mentalLineSourceId;
         }
+
+        // v11 → v12: introduce DesktopWindow.mentalAttachments (matrix of
+        // attached subgraphs per chat). Default to undefined for older windows;
+        // store treats missing as zero attachments. Nothing else to migrate.
+        if (version < 12 && persisted) {
+          if (Array.isArray(persisted.windows)) {
+            persisted.windows = persisted.windows.map((w: any) =>
+              w?.mentalAttachments === undefined ? w : { ...w, mentalAttachments: w.mentalAttachments }
+            );
+          }
+        }
+
+        // v12 → v13: mentalNodes now hosts both legacy mental cards and
+        // StepNode containers. Existing nodes are marked as mental; any
+        // pre-release step nodes get normalized data arrays.
+        if (version < 13 && persisted) {
+          if (Array.isArray(persisted.mentalNodes)) {
+            persisted.mentalNodes = persisted.mentalNodes.map((n: any) => {
+              if (n?.type === 'step') {
+                return {
+                  ...n,
+                  width: typeof n.width === 'number' ? n.width : DEFAULT_STEP_WIDTH,
+                  height: typeof n.height === 'number' ? n.height : DEFAULT_STEP_HEIGHT,
+                  text: typeof n.text === 'string' ? n.text : n?.data?.title ?? 'Pipeline step',
+                  color: typeof n.color === 'string' ? n.color : '#1a1a1a',
+                  shape: n.shape ?? 'square',
+                  data: {
+                    title: n?.data?.title ?? n.text ?? 'Pipeline step',
+                    description: n?.data?.description,
+                    mods: Array.isArray(n?.data?.mods) ? n.data.mods : [],
+                    roles: Array.isArray(n?.data?.roles) ? n.data.roles : [],
+                  },
+                };
+              }
+              return {
+                ...n,
+                type: 'mental',
+              };
+            });
+          }
+        }
+
         return persisted ?? {};
       },
     }

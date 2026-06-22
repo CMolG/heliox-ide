@@ -8,7 +8,7 @@
 // src/renderer/utils/theme.ts — Single source of truth for Heliox IDE theme tokens
 // All color values used in inline styles should reference these constants.
 
-import { CliProvider, CLI_THEME_COLORS } from '../../types/desktop';
+import { CliProvider, getCliTheme } from '../../types/desktop';
 
 export const theme = {
   // Surfaces
@@ -62,9 +62,9 @@ export const theme = {
 } as const;
 
 /** Apply CLI theme as CSS custom properties on an element or :root */
-export function applyCliTheme(provider: CliProvider, el?: HTMLElement) {
+export function applyCliTheme(provider: CliProvider | undefined, el?: HTMLElement) {
   const target = el ?? document.documentElement;
-  const colors = CLI_THEME_COLORS[provider] ?? CLI_THEME_COLORS.copilot;
+  const colors = getCliTheme(provider);
   target.style.setProperty('--cli-accent', colors.accent);
   target.style.setProperty('--cli-accent-rgb', colors.accentRgb);
 }

@@ -14,12 +14,19 @@ import { ipcMain, BrowserWindow, dialog, app, Notification } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 import { AgentManager } from './agent-manager';
 import { Flow, FileEntry, CliStatus, RunAgentParams, errMsg } from '../types';
+import type { AgenticFlow } from '../types/harness';
 import { execFile } from 'child_process';
 import { readdir, stat, readFile, writeFile, mkdir, unlink, rm, rename, access } from 'fs/promises';
 import { join, basename, relative } from 'path';
 import { promisify } from 'util';
 import { createHash } from 'crypto';
 import { log } from './logger';
+import {
+  listProviders, listModels as opencodeListModels, saveProviderCredential,
+  removeProviderCredential, opencodeStatus,
+} from './opencode-providers';
+import { executeAgenticFlow } from './harness-engine/executor';
+import { setHarnessEventWindow } from './harness-engine/event-bus';
 
 const execFileAsync = promisify(execFile);
 
@@ -153,6 +160,7 @@ function sendToRenderer(channel: string, payload: unknown): void {
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   currentIpcWindow = mainWindow;
+  setHarnessEventWindow(mainWindow);
   if (ipcHandlersRegistered) return;
   ipcHandlersRegistered = true;
 
@@ -186,6 +194,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         agentManager.removeListener(eventName, handler);
       }
     }
+  });
+
+  ipcMain.handle('heliox:start-harness', async (_event, flow: AgenticFlow) => {
+    if (!flow || typeof flow !== 'object') {
+      return { success: false, error: 'Invalid AgenticFlow payload.' };
+    }
+
+    setTimeout(() => {
+      void executeAgenticFlow(flow).catch((err) => {
+        const message = errMsg(err);
+        log.error(`[Heliox Harness] execution failed: ${message}`);
+      });
+    }, 0);
+
+    return { success: true };
   });
 
   ipcMain.handle('heliox:approve-diff', async (_event, diffId: string) => {
@@ -259,9 +282,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle('heliox:check-cli', async (): Promise<CliStatus> => {
-    const NONE: CliStatus = { copilotInstalled: false, ghInstalled: false, ghCopilotInstalled: false, nodeInstalled: false, gitInstalled: false };
-    // Process checks are best-effort and isolated so one missing executable
-    // doesn't prevent reporting the others.
+    const NONE: CliStatus = { opencodeInstalled: false, opencodeVersion: null, nodeInstalled: false, gitInstalled: false };
     const check = async (cmd: string, args: string[]): Promise<boolean> => {
       try {
         await execFileAsync(cmd, args, { timeout: 5000 });
@@ -272,22 +293,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     };
 
     try {
-      const [copilotInstalled, ghInstalled, nodeInstalled, gitInstalled] = await Promise.all([
-        check('copilot', ['--version']),
-        check('gh', ['--version']),
+      const [oc, nodeInstalled, gitInstalled] = await Promise.all([
+        opencodeStatus(),
         check('node', ['--version']),
         check('git', ['--version']),
       ]);
-
-      let ghCopilotInstalled = false;
-      if (ghInstalled) {
-        ghCopilotInstalled = await check('gh', ['copilot', '--help']);
-      }
-
       return {
-        copilotInstalled,
-        ghInstalled,
-        ghCopilotInstalled: copilotInstalled || ghCopilotInstalled,
+        opencodeInstalled: oc.installed,
+        opencodeVersion: oc.version,
         nodeInstalled,
         gitInstalled,
       };
@@ -295,6 +308,33 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return NONE;
     }
   });
+
+  // ── OpenCode provider catalog & credentials ────────────────────────────────
+  ipcMain.handle('opencode:list-providers', async () => listProviders());
+
+  ipcMain.handle('opencode:list-provider-models', async (_e, providerId: string) =>
+    opencodeListModels(providerId)
+  );
+
+  ipcMain.handle('opencode:save-credential', async (_e, providerId: string, key: string) => {
+    try {
+      await saveProviderCredential(providerId, key);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('opencode:remove-credential', async (_e, providerId: string) => {
+    try {
+      await removeProviderCredential(providerId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('opencode:status', async () => opencodeStatus());
 
   ipcMain.handle('heliox:get-project-name', async (_event, projectPath: string): Promise<string> => {
     try {
@@ -459,117 +499,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return result.filePaths[0] ?? null;
   });
 
-  // ── Models cache (disk-backed, 24 h TTL) ────────────────────────────────────
-  const MODELS_CACHE_PATH = join(app.getPath('userData'), 'models-cache.json');
-  const MODELS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-  // Cheapest model available — used only for the listModels query (near-zero cost).
-  // Users can override with HELIOX_LIST_MODEL env var.
-  const LIST_MODEL = process.env.HELIOX_LIST_MODEL ?? 'gpt-4.1';
-
-  const FALLBACK_MODELS = [
-    'claude-sonnet-4.6', 'claude-sonnet-4.5', 'claude-haiku-4.5',
-    'claude-opus-4.6', 'claude-opus-4.6-fast', 'claude-opus-4.5', 'claude-sonnet-4',
-    'gemini-3-pro-preview',
-    'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.2',
-    'gpt-5.1-codex-max', 'gpt-5.1-codex', 'gpt-5.1',
-    'gpt-5.4-mini', 'gpt-5.1-codex-mini', 'gpt-5-mini', 'gpt-4.1',
-  ];
-
-  interface ModelsCache { models: string[]; fetchedAt: number; }
-
-  async function readModelsCache(): Promise<ModelsCache | null> {
-    try {
-      const raw = await readFile(MODELS_CACHE_PATH, 'utf-8');
-      const parsed = JSON.parse(raw) as ModelsCache;
-      if (Array.isArray(parsed.models) && typeof parsed.fetchedAt === 'number') return parsed;
-    } catch { /* missing or corrupt */ }
-    return null;
-  }
-
-  async function writeModelsCache(models: string[]): Promise<void> {
-    try {
-      await writeFile(MODELS_CACHE_PATH, JSON.stringify({ models, fetchedAt: Date.now() }), 'utf-8');
-    } catch (err) {
-      log.warn('[Heliox] Could not write models cache:', (err as Error).message);
-    }
-  }
-
-  async function fetchModelsFromCli(): Promise<string[] | null> {
-    try {
-      const { stdout } = await execFileAsync('copilot', [
-        '-p', 'Respond ONLY with a JSON array of all available model IDs. No markdown, no explanation, just the raw JSON array.',
-        '--output-format', 'json',
-        '--model', LIST_MODEL,
-      ], { timeout: 30_000, env: { ...process.env, PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin` } });
-
-      // CLI emits JSONL events; aggregate assistant deltas then extract the
-      // first JSON array payload produced by the prompt contract.
-      let content = '';
-      for (const line of stdout.split('\n')) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.type === 'assistant.message_delta' && event.data?.deltaContent) {
-            content += event.data.deltaContent;
-          }
-        } catch { /* non-JSON line */ }
-      }
-
-      const jsonMatch = content.match(/\[[\s\S]*?\]/);
-      if (jsonMatch) {
-        const models = JSON.parse(jsonMatch[0]) as string[];
-        if (Array.isArray(models) && models.length > 0 && models.every(m => typeof m === 'string')) {
-          return models;
-        }
-      }
-    } catch (err) {
-      log.warn('[Heliox] Failed to fetch models from copilot CLI:', (err as Error).message);
-    }
-    return null;
-  }
-
+  // ── Model list (delegated to opencode CLI) ─────────────────────────────────
+  // Disk cache lives in opencode-providers; this IPC handler is a thin wrapper.
   ipcMain.handle('heliox:list-models', async (): Promise<string[]> => {
-    // HELIOX_MODELS env var: bypass everything (used in E2E tests and custom setups)
     const envModels = process.env.HELIOX_MODELS;
     if (envModels) {
-      const models = envModels.split(',').map(m => m.trim()).filter(Boolean);
-      log.info('[Heliox] Using HELIOX_MODELS env override:', models);
-      return models;
+      return envModels.split(',').map(m => m.trim()).filter(Boolean);
     }
-
-    // Check disk cache — use it if still fresh (< 24 h)
-    const cached = await readModelsCache();
-    if (cached && Date.now() - cached.fetchedAt < MODELS_CACHE_TTL_MS) {
-      log.info('[Heliox] Using cached models (age:', Math.round((Date.now() - cached.fetchedAt) / 60_000), 'min)');
-      return cached.models;
+    const models = await opencodeListModels();
+    if (models.length === 0) {
+      log.warn('[Heliox] opencode returned no models — verify a provider is authorized');
     }
-
-    // Cache missing or stale — fetch from CLI with the cheap model
-    log.info('[Heliox] Fetching model list via copilot CLI with model:', LIST_MODEL);
-    const fetched = await fetchModelsFromCli();
-    if (fetched) {
-      await writeModelsCache(fetched);
-      return fetched;
-    }
-
-    // Keep serving stale cache rather than showing hardcoded fallback
-    if (cached) {
-      log.warn('[Heliox] CLI fetch failed — serving stale cache');
-      return cached.models;
-    }
-
-    log.warn('[Heliox] No cache and CLI fetch failed — using built-in fallback list');
-    return FALLBACK_MODELS;
+    return models;
   });
 
-  // Called when an agent fails with a model error — forces a fresh fetch next time
   ipcMain.handle('heliox:invalidate-models-cache', async (): Promise<void> => {
-    try {
-      const { unlink } = await import('fs/promises');
-      await unlink(MODELS_CACHE_PATH);
-      log.info('[Heliox] Models cache invalidated');
-    } catch { /* file may not exist */ }
+    // Force a refresh on the next call by passing { refresh: true }.
+    await opencodeListModels(undefined, { refresh: true });
   });
 
   ipcMain.handle('heliox:list-project-files', async (_event, projectPath: string): Promise<string[]> => {

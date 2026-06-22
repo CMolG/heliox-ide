@@ -121,7 +121,7 @@ export class AgentManager extends EventEmitter {
           contextDigest,
           attachedDirectives,
         });
-        const parser = createAdapter(params.cliAdapter ?? params.aiAdapter ?? 'copilot');
+        const parser = createAdapter(params.aiAdapter ?? 'opencode');
         this.activeParser = parser;
         this.activeAgentId = agentId;
 
@@ -130,7 +130,7 @@ export class AgentManager extends EventEmitter {
           devLog?.start({
             model: params.model,
             effort: params.effort,
-            aiAdapter: params.aiAdapter ?? params.cliAdapter,
+            aiAdapter: params.aiAdapter,
             resumeSessionId: params.resumeSessionId,
             prompt,
           });

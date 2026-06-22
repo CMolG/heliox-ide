@@ -18,6 +18,7 @@ import { test, expect, type Page, type ElectronApplication } from '@playwright/t
 import { _electron as electron } from 'playwright';
 import path from 'path';
 import fs from 'fs';
+import { getElectronLaunchArgs, getE2EEnv } from './test-helpers';
 
 // ─── Load the real inventory.json ────────────────────────────────────
 
@@ -40,15 +41,9 @@ const E2E_MODELS = process.env.HELIOX_E2E_MODELS ?? 'copilot';
 
 test.beforeAll(async () => {
   app = await electron.launch({
-    args: [path.join(__dirname, '..')],
+    args: getElectronLaunchArgs(),
     cwd: path.join(__dirname, '..'),
-    env: {
-      ...process.env,
-      NODE_ENV: 'development',
-      ELECTRON_IS_DEV: '1',
-      // Prevents the main process from calling copilot CLI to list models (saves tokens).
-      HELIOX_MODELS: E2E_MODELS,
-    },
+    env: getE2EEnv(),
     timeout: 30_000,
   });
 

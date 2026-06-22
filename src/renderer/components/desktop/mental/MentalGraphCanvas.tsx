@@ -32,11 +32,14 @@ import type {
 import '@xyflow/react/dist/style.css';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { MentalNode } from './MentalNode';
+import { StepNode } from './StepNode';
 import { MentalEdge } from './MentalEdge';
+import { MentalAttachActionBubble } from './MentalAttachActionBubble';
+import type { CanvasGraphNode, StepGraphNode } from '@/types/desktop';
 
 // ─── Custom node/edge type registrations ─────────────────────────
 
-const nodeTypes = { mental: MentalNode };
+const nodeTypes = { mental: MentalNode, step: StepNode };
 const edgeTypes = { mental: MentalEdge };
 
 // ─── Declarative handle positions ────────────────────────────────
@@ -64,6 +67,10 @@ function buildHandles(width: number, height: number, shape: string) {
   ];
 }
 
+function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
+  return node.type === 'step';
+}
+
 // ─── Inner component (requires ReactFlowProvider ancestor) ───────
 // Also owns the container div so it can access useReactFlow() for
 // the pane double-click → new node handler.
@@ -78,6 +85,7 @@ function MentalGraphCanvasInner() {
   const addMentalEdge = useDesktopStore((s) => s.addMentalEdge);
   const createRamificationFromDrop = useDesktopStore((s) => s.createRamificationFromDrop);
   const setMentalEditingNodeId = useDesktopStore((s) => s.setMentalEditingNodeId);
+  const setSelectedMentalNodeIds = useDesktopStore((s) => s.setSelectedMentalNodeIds);
 
   const { screenToFlowPosition } = useReactFlow();
   const connectingSourceRef = useRef<string | null>(null);
@@ -95,6 +103,19 @@ function MentalGraphCanvasInner() {
 
   const rfNodes: Node[] = useMemo(() =>
     mentalNodes.map((n) => {
+      if (isStepGraphNode(n)) {
+        return {
+          id: n.id,
+          type: 'step',
+          position: n.position,
+          data: n.data,
+          width: n.width,
+          height: n.height,
+          style: { width: n.width, height: n.height },
+          dragHandle: '.step-node-drag-handle',
+        };
+      }
+
       const shape = n.shape ?? 'square';
       return {
         id: n.id,
@@ -218,6 +239,9 @@ function MentalGraphCanvasInner() {
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
+        onSelectionChange={({ nodes }) => setSelectedMentalNodeIds(nodes.map(n => n.id))}
+        selectionOnDrag
+        multiSelectionKeyCode="Shift"
         connectionMode={ConnectionMode.Loose}
         connectOnClick={true}
         fitView={false}
@@ -241,6 +265,7 @@ function MentalGraphCanvasInner() {
       >
         <Background color="rgba(255,255,255,0.03)" gap={24} />
       </ReactFlow>
+      <MentalAttachActionBubble />
     </div>
   );
 }

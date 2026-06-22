@@ -199,7 +199,7 @@ function handleResult(event: AgentEvent) {
     }
   }
   if (event.sessionId) {
-    store.setCopilotSessionId(event.agentId, event.sessionId);
+    store.setOpencodeSessionId(event.agentId, event.sessionId);
   }
   if (event.premiumRequests !== undefined || event.totalApiDurationMs !== undefined) {
     store.setSessionTokenUsage(event.agentId, {
@@ -291,7 +291,7 @@ export function useAgentEvents() {
   const {
     setPendingDiffs, updateAgentStatus, setIsRunningAgent,
     addToast, addLogEntry, addSessionMessage, updateSessionStatus,
-    setCopilotSessionId, setSessionTokenUsage, addRawOutputLine,
+    setOpencodeSessionId, setSessionTokenUsage, addRawOutputLine,
     addSessionChangedFile, clearSessionChangedFiles,
   } = useHelioxStore();
 
@@ -365,5 +365,5 @@ export function useAgentEvents() {
     });
 
     return unsubscribe;
-  }, [setPendingDiffs, updateAgentStatus, setIsRunningAgent, addToast, addLogEntry, addSessionMessage, updateSessionStatus, setCopilotSessionId, setSessionTokenUsage, addRawOutputLine, addSessionChangedFile, clearSessionChangedFiles]);
+  }, [setPendingDiffs, updateAgentStatus, setIsRunningAgent, addToast, addLogEntry, addSessionMessage, updateSessionStatus, setOpencodeSessionId, setSessionTokenUsage, addRawOutputLine, addSessionChangedFile, clearSessionChangedFiles]);
 }

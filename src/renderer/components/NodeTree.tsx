@@ -25,7 +25,6 @@ const TYPE_META: Record<AttachableType, { color: string; icon: string; label: st
   mod:  { color: '#4285F4', icon: 'Wrench', label: 'Mod' },
   flow: { color: '#A78BFA', icon: 'Route', label: 'Flow' },
   'design-system': { color: '#10B981', icon: 'Palette', label: 'Design System' },
-  mental: { color: '#A78BFA', icon: 'Shapes', label: 'Mental' },
 };
 
 function kebabToTitle(str: string): string {
@@ -47,8 +46,6 @@ export function NodeTree() {
   const detachFromWindow = useDesktopStore(s => s.detachFromWindow);
   const removeAttachedItem = useDesktopStore(s => s.removeAttachedItem);
   const removeAttachable = useDesktopStore(s => s.removeAttachable);
-  const mentalConnections = useDesktopStore(s => s.mentalConnections);
-  const removeMentalConnection = useDesktopStore(s => s.removeMentalConnection);
   const mentalNodes = useDesktopStore(s => s.mentalNodes);
   const mentalEdges = useDesktopStore(s => s.mentalEdges);
   const removeMentalNode = useDesktopStore(s => s.removeMentalNode);
@@ -658,9 +655,7 @@ export function NodeTree() {
               </div>
               {attachables.map(att => {
                 const meta = TYPE_META[att.type];
-                const attachableTitle = att.type === 'mental'
-                  ? (att.mental?.text.trim() || kebabToTitle(att.name))
-                  : kebabToTitle(att.name);
+                const attachableTitle = kebabToTitle(att.name);
                 return (
                   <div
                     key={att.id}
@@ -736,8 +731,8 @@ export function NodeTree() {
                 <span>Mental Cards ({mentalNodes.length})</span>
                 {mentalMode === 'off' && (
                   <button
-                    onClick={() => setMentalMode('shapes')}
-                    title="Show mental cards on canvas"
+                    onClick={() => setMentalMode('square')}
+                    title="Enable mental authoring"
                     style={{
                       background: 'none', border: 'none', cursor: 'pointer',
                       color: theme.textMuted, fontSize: 9, padding: '0 2px',
@@ -812,9 +807,9 @@ export function NodeTree() {
                     {edgeCount > 0 && (
                       <span style={{
                         fontSize: 8, padding: '0px 3px', borderRadius: 3,
-                        background: `${TYPE_META.mental.color}15`,
-                        color: TYPE_META.mental.color,
-                        border: `1px solid ${TYPE_META.mental.color}30`,
+                        background: '#A78BFA15',
+                        color: '#A78BFA',
+                        border: '1px solid #A78BFA30',
                         flexShrink: 0, fontWeight: 600,
                       }}>
                         {edgeCount}
@@ -839,85 +834,6 @@ export function NodeTree() {
             </div>
           )}
 
-          {mentalConnections.length > 0 && (
-            <div>
-              <div style={{
-                padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
-                textTransform: 'uppercase', letterSpacing: '0.05em',
-                color: theme.textGhost,
-              }}>
-                Mental Lines ({mentalConnections.length})
-              </div>
-              {mentalConnections.map((conn) => {
-                const from = attachables.find((att) => att.id === conn.fromAttachableId && att.type === 'mental');
-                const to = attachables.find((att) => att.id === conn.toAttachableId && att.type === 'mental');
-                const fromLabel = from ? kebabToTitle(from.name) : 'Missing node';
-                const toLabel = to ? kebabToTitle(to.name) : 'Missing node';
-                return (
-                  <div
-                    key={conn.id}
-                    className="nav-child-item"
-                    data-testid={`nav-mental-line-${conn.id}`}
-                    style={{
-                      width: '100%', display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '4px 12px 4px 20px',
-                      cursor: 'pointer',
-                      color: theme.textDim,
-                      fontSize: 11,
-                      transition: 'background 0.1s ease',
-                      borderLeft: '2px solid transparent',
-                    }}
-                    onClick={() => {
-                      if (!from || !to) return;
-                      const fromW = from.mental?.width ?? 220;
-                      const fromH = from.mental?.height ?? 120;
-                      const toW = to.mental?.width ?? 220;
-                      const toH = to.mental?.height ?? 120;
-                      const midpointX = (from.position.x + fromW / 2 + to.position.x + toW / 2) / 2;
-                      const midpointY = (from.position.y + fromH / 2 + to.position.y + toH / 2) / 2;
-                      const viewportW = window.innerWidth - 280;
-                      const viewportH = window.innerHeight - 60;
-                      const centerX = -(midpointX * canvasZoom) + viewportW / 2;
-                      const centerY = -(midpointY * canvasZoom) + viewportH / 2;
-                      setCanvasPan({ x: centerX, y: centerY });
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: '999px',
-                        background: conn.color,
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span style={{
-                      flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap', fontSize: 11,
-                    }}>
-                      {fromLabel} ↔ {toLabel}
-                    </span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeMentalConnection(conn.id);
-                      }}
-                      title="Delete line"
-                      aria-label={`Delete mental line ${fromLabel} to ${toLabel}`}
-                      data-testid={`nav-mental-line-delete-${conn.id}`}
-                      style={{
-                        background: 'none', border: 'none', color: theme.textGhost,
-                        cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                        display: 'flex', alignItems: 'center',
-                      }}
-                    >
-                      <LucideIcon name="X" size={10} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </>
       )}
 

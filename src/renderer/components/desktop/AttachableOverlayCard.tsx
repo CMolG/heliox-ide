@@ -26,7 +26,7 @@ interface Props {
 export function AttachableOverlayCard({ attachable }: Props) {
   const marketInventory = useDesktopStore(s => s.marketInventory);
   const marketItem = resolveMarketItem(attachable, marketInventory);
-  const cardWidth = attachable.type === 'flow' ? 280 : (attachable.type === 'mental' ? (attachable.mental?.width ?? 220) : 220);
+  const cardWidth = attachable.type === 'flow' ? 280 : 220;
 
   return (
     <div style={{

@@ -78,7 +78,7 @@ export function App() {
       addSession();
     }
 
-    // Load available models from copilot CLI
+    // Load available models from opencode (provider/model format)
     window.helioxAPI.listModels().then((models) => {
       if (models && models.length > 0) setAvailableModels(models);
     }).catch(() => {
@@ -108,20 +108,13 @@ export function App() {
     if (!projectPath || !window.helioxAPI) return;
 
     window.helioxAPI.checkCli().then((status) => {
-      if (!status.copilotInstalled && !status.ghInstalled) {
+      if (!status.opencodeInstalled) {
         addLogEntry({
           timestamp: Date.now(),
           level: 'warn',
-          message: 'GitHub CLI (gh) not found. Install it: https://cli.github.com/',
+          message: 'opencode CLI not found. Install it: https://opencode.ai/docs/installation',
         });
-        addToast('GitHub CLI not installed — agent commands will fail', 'error');
-      } else if (!status.ghCopilotInstalled) {
-        addLogEntry({
-          timestamp: Date.now(),
-          level: 'warn',
-          message: 'GitHub Copilot CLI extension not found. Install: gh extension install github/gh-copilot',
-        });
-        addToast('Copilot CLI extension missing — run: gh extension install github/gh-copilot', 'error');
+        addToast('opencode CLI not installed — agent commands will fail', 'error');
       }
       if (!status.gitInstalled) {
         addLogEntry({
@@ -133,7 +126,7 @@ export function App() {
       addLogEntry({
         timestamp: Date.now(),
         level: 'info',
-        message: `CLI status: copilot=${status.copilotInstalled ? '✓' : '✗'} gh=${status.ghInstalled ? '✓' : '✗'} copilot-ext=${status.ghCopilotInstalled ? '✓' : '✗'} git=${status.gitInstalled ? '✓' : '✗'} node=${status.nodeInstalled ? '✓' : '✗'}`,
+        message: `CLI status: opencode=${status.opencodeInstalled ? `✓ ${status.opencodeVersion ?? ''}` : '✗'} git=${status.gitInstalled ? '✓' : '✗'} node=${status.nodeInstalled ? '✓' : '✗'}`,
       });
     }).catch(() => {
       // Non-critical — silently ignore check failures

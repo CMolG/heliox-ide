@@ -14,6 +14,8 @@ export default defineConfig({
   retries: 1,
   workers: 1, // Electron tests must run serially
   reporter: [['html', { open: 'never' }], ['list']],
+  globalSetup: './e2e/global-setup.ts',
+  globalTeardown: './e2e/global-teardown.ts',
   use: {
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',

@@ -21,8 +21,8 @@ import { DesktopWindow } from './DesktopWindow';
 import { DesktopAttachable, AttachableOverlayCard } from './DesktopAttachable';
 import { SnapGuides } from './SnapGuides';
 import { WindowConnections } from './WindowConnections';
-import { MentalConnectionsLayer } from './MentalConnectionsLayer';
 import { MentalGraphCanvas } from './mental/MentalGraphCanvas';
+import { StepHarnessDock } from './mental/StepHarnessDock';
 import { Dock } from './Dock';
 import { TutorialEngine } from './tutorial/TutorialEngine';
 import { MarketplaceApp } from '@/renderer/components/atoms/apps/MarketplaceApp';
@@ -40,9 +40,35 @@ import { DesktopCanvasBg } from './DesktopCanvasBg';
 import { BacklogCardModal } from './BacklogCardModal';
 import { CanvasContextMenu } from './CanvasContextMenu';
 import { DesktopGridComponent } from './DesktopGridComponent';
+import type { MarketMod, MarketRole } from '@/types/market';
 
 /** Canvas container dimensions — consumed by DesktopWindow for maximized viewport calc */
 export const CanvasSizeContext = createContext<{ width: number; height: number }>({ width: 1200, height: 800 });
+
+interface DraggedAtomData {
+  type?: string;
+  name?: string;
+  mod?: MarketMod;
+  role?: MarketRole;
+}
+
+function isStepNodeDropTarget(overId: string): boolean {
+  return useDesktopStore.getState().mentalNodes.some((node) => node.id === overId && node.type === 'step');
+}
+
+function resolveDraggedMod(data: DraggedAtomData): MarketMod | null {
+  if (data.type !== 'mod') return null;
+  if (data.mod) return data.mod;
+  if (!data.name) return null;
+  return useDesktopStore.getState().marketInventory?.mods.find((mod) => mod.name === data.name) ?? null;
+}
+
+function resolveDraggedRole(data: DraggedAtomData): MarketRole | null {
+  if (data.type !== 'role') return null;
+  if (data.role) return data.role;
+  if (!data.name) return null;
+  return useDesktopStore.getState().marketInventory?.roles.find((role) => role.name === data.name) ?? null;
+}
 
 export function SeamlessCanvas() {
   const windows = useDesktopStore(s => s.windows);
@@ -78,6 +104,24 @@ export function SeamlessCanvas() {
     setActiveDragId(null);
 
     const attachableId = active.id as string;
+
+    if (over && isStepNodeDropTarget(String(over.id))) {
+      const stepId = String(over.id);
+      const data = (active.data.current ?? {}) as DraggedAtomData;
+      const mod = resolveDraggedMod(data);
+      if (mod) {
+        useDesktopStore.getState().addModToStep(stepId, mod);
+        return;
+      }
+
+      const role = resolveDraggedRole(data);
+      if (role) {
+        useDesktopStore.getState().addRoleToStep(stepId, role);
+        return;
+      }
+
+      return;
+    }
 
     // Dropped on a window drop zone?
     if (over && (over.id as string).startsWith('window-drop-')) {
@@ -350,11 +394,8 @@ export function SeamlessCanvas() {
         break;
       }
       case 'mental-draw-toggle': {
-        store.setMentalMode('square');
-        break;
-      }
-      case 'mental-square-mode': {
-        store.setMentalMode('square');
+        const current = store.mentalMode;
+        store.setMentalMode(current === 'off' ? 'square' : 'off');
         break;
       }
       case 'mental-select-tool': {
@@ -493,13 +534,12 @@ export function SeamlessCanvas() {
         >
           {/* Connection arrows layer */}
           <WindowConnections />
-          <MentalConnectionsLayer />
 
           {/* Snap guide overlay */}
           <SnapGuides />
 
-          {/* Desktop Attachables (non-mental draggable market items) */}
-          {attachables.filter(att => att.type !== 'mental').map(att => (
+          {/* Desktop Attachables (role / mod / flow / design-system) */}
+          {attachables.map(att => (
             <DesktopAttachable key={att.id} attachable={att} />
           ))}
 
@@ -572,6 +612,7 @@ export function SeamlessCanvas() {
         )}
 
         {/* Dock (fixed, not affected by pan/zoom) — includes attachables */}
+        <StepHarnessDock />
         <Dock />
 
         {/* Session status dock — vertical left side */}

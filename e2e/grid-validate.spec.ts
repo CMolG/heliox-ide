@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { _electron as electron } from 'playwright';
 import path from 'path';
+import { getElectronLaunchArgs, getE2EEnv } from './test-helpers';
 
 let app: any;
 let page: any;
@@ -42,9 +43,9 @@ async function createWindow(title: string, x?: number) {
 
 test.beforeAll(async () => {
   app = await electron.launch({
-    args: [path.join(__dirname, '..')],
+    args: getElectronLaunchArgs(),
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, NODE_ENV: 'development', ELECTRON_IS_DEV: '1', HELIOX_MODELS: 'copilot' },
+    env: getE2EEnv(),
     timeout: 30_000,
   });
   page = await app.firstWindow();

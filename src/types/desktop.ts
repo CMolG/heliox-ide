@@ -6,18 +6,40 @@
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
 // src/types/desktop.ts — Types for the seamless desktop window system
+import type { MarketMod, MarketRole } from './market';
 
-// ─── CLI Provider Theming ────────────────────────────────────────
+// ─── OpenCode Provider Theming ───────────────────────────────────
+//
+// `CliProvider` is now an opaque string id matching the provider keys in
+// `~/.local/share/opencode/auth.json` (e.g. 'opencode', 'openrouter',
+// 'xiaomi-token-plan-ams', 'anthropic'). We keep a small table for theming
+// the chat windows; unknown ids fall back to a neutral gray.
 
-export type CliProvider = 'copilot' | 'claude' | 'google' | 'openai' | 'custom';
+export type CliProvider = string;
 
-export const CLI_THEME_COLORS: Record<CliProvider, { accent: string; accentRgb: string; label: string }> = {
-  copilot: { accent: '#000000', accentRgb: '0,0,0', label: 'GitHub Copilot' },
-  claude:  { accent: '#E87040', accentRgb: '232,112,64', label: 'Claude' },
-  google:  { accent: '#4285F4', accentRgb: '66,133,244', label: 'Google' },
-  openai:  { accent: '#FFFFFF', accentRgb: '255,255,255', label: 'OpenAI' },
-  custom:  { accent: '#888888', accentRgb: '136,136,136', label: 'Custom' },
+export interface CliThemeColors { accent: string; accentRgb: string; label: string }
+
+export const CLI_THEME_COLORS: Record<string, CliThemeColors> = {
+  opencode:                 { accent: '#FF6B35', accentRgb: '255,107,53',  label: 'OpenCode Zen' },
+  'xiaomi-token-plan-ams':  { accent: '#FF5A1F', accentRgb: '255,90,31',   label: 'Xiaomi MiMo (EU)' },
+  'xiaomi-token-plan-cn':   { accent: '#E04F2E', accentRgb: '224,79,46',   label: 'Xiaomi MiMo (CN)' },
+  openrouter:               { accent: '#7C3AED', accentRgb: '124,58,237',  label: 'OpenRouter' },
+  anthropic:                { accent: '#E87040', accentRgb: '232,112,64',  label: 'Anthropic' },
+  openai:                   { accent: '#10A37F', accentRgb: '16,163,127',  label: 'OpenAI' },
+  google:                   { accent: '#4285F4', accentRgb: '66,133,244',  label: 'Google Gemini' },
+  groq:                     { accent: '#F55036', accentRgb: '245,80,54',   label: 'Groq' },
+  deepseek:                 { accent: '#1F77FF', accentRgb: '31,119,255',  label: 'DeepSeek' },
+  xai:                      { accent: '#0EA5E9', accentRgb: '14,165,233',  label: 'xAI Grok' },
 };
+
+export const DEFAULT_CLI_THEME: CliThemeColors = {
+  accent: '#9CA3AF', accentRgb: '156,163,175', label: 'Provider',
+};
+
+export function getCliTheme(provider: CliProvider | undefined): CliThemeColors {
+  if (!provider) return DEFAULT_CLI_THEME;
+  return CLI_THEME_COLORS[provider] ?? DEFAULT_CLI_THEME;
+}
 
 // ─── Window System ───────────────────────────────────────────────
 
@@ -75,6 +97,18 @@ export interface DesktopWindow {
   preGridRect?: { position: WindowPosition; size: WindowSize };
   /** Creation timestamp */
   createdAt: number;
+  /**
+   * For chat windows — subgraphs of the mental map attached as context.
+   * Each entry is one attachment (list of node ids at attach-time).
+   * An empty `nodeIds` array means "the entire mental graph at send-time".
+   * Serialized live on each send; we keep only ids, not snapshots.
+   */
+  mentalAttachments?: MentalAttachment[];
+}
+
+export interface MentalAttachment {
+  nodeIds: string[];
+  attachedAt: number;
 }
 
 // ─── Snap Guides ─────────────────────────────────────────────────
@@ -113,8 +147,6 @@ export interface DockItem {
     | 'file-explorer'
     | 'backlog'
     | 'mental-draw-toggle'
-    | 'mental-shapes-mode'
-    | 'mental-lines-mode'
     | 'mental-select-tool'
     | 'mental-ramification-tool'
     | 'prompt-dev-zone'
@@ -170,34 +202,25 @@ export interface CanvasPan {
 
 // ─── Desktop Attachable (draggable market items on the canvas) ───
 
-export type AttachableType = 'role' | 'mod' | 'flow' | 'design-system' | 'mental';
+export type AttachableType = 'role' | 'mod' | 'flow' | 'design-system';
+
+// ─── Mental Graph (xyflow source of truth) ──────────────────────
+//
+// Mental nodes/edges are first-class entities backed by @xyflow/react.
+// The previous "attachable mental card + undirected line" path has been
+// removed — everything mental flows through MentalGraphNode/Edge.
 
 export type MentalShape = 'square' | 'circle' | 'triangle';
+/** 'off' = read-only mode. Any shape value = authoring with that shape as default. */
 export type MentalMode = 'off' | MentalShape;
 export type MentalTool = 'select' | 'ramification';
 export const DEFAULT_MENTAL_COLOR = '#EDE9FE';
-
-export interface MentalAttachableData {
-  text: string;
-  color: string;
-  shape: MentalShape;
-  width: number;
-  height: number;
-}
-
-/** Legacy undirected connection (kept for v6 migration compat). */
-export interface MentalConnection {
-  id: string;
-  fromAttachableId: string;
-  toAttachableId: string;
-  color: string;
-  createdAt: number;
-}
 
 // ─── Mental Graph (React Flow surface) ──────────────────────────
 
 export interface MentalGraphNode {
   id: string;
+  type?: 'mental';
   position: { x: number; y: number };
   width: number;
   height: number;
@@ -206,6 +229,33 @@ export interface MentalGraphNode {
   shape: MentalShape;
   createdAt: number;
 }
+
+export interface StepNodeData {
+  title: string;
+  description?: string;
+  mods: MarketMod[];
+  roles: MarketRole[];
+  [key: string]: unknown;
+}
+
+export interface StepGraphNode {
+  id: string;
+  type: 'step';
+  position: { x: number; y: number };
+  width: number;
+  height: number;
+  /**
+   * Compatibility fields keep existing mental graph consumers stable while
+   * StepNode reads from `data`.
+   */
+  text: string;
+  color: string;
+  shape: MentalShape;
+  data: StepNodeData;
+  createdAt: number;
+}
+
+export type CanvasGraphNode = MentalGraphNode | StepGraphNode;
 
 export interface MentalGraphEdge {
   id: string;
@@ -225,7 +275,6 @@ export interface DesktopAttachable {
   name: string;
   position: WindowPosition;
   zIndex: number;
-  mental?: MentalAttachableData;
 }
 
 // ─── Desktop Grid (top-level layout container on the canvas) ─────

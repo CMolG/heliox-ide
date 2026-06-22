@@ -32,8 +32,11 @@ export interface SettingsSchema {
     fetchedAt: number;
   };
   appConfig: {
-    aiAdapter: string;
-    customCliPath: string;
+    aiAdapter: 'opencode';
+    /** Provider id matching the key in opencode's auth.json. */
+    selectedProvider: string;
+    /** Full provider/model string for `opencode run --model`. */
+    selectedModel: string;
     autoCommit: boolean;
     runE2E: boolean;
     sendOnEnter: boolean;
@@ -49,8 +52,9 @@ const DEFAULTS: SettingsSchema = {
   windowState: { width: 1440, height: 900 },
   modelsCache: { models: [], fetchedAt: 0 },
   appConfig: {
-    aiAdapter: 'copilot',
-    customCliPath: '',
+    aiAdapter: 'opencode',
+    selectedProvider: 'opencode',
+    selectedModel: 'opencode/claude-sonnet-4-6',
     autoCommit: false,
     runE2E: true,
     sendOnEnter: true,

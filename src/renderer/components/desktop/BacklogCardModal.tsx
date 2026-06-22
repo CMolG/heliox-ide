@@ -11,6 +11,10 @@
  *
  * Architectural role:
  * - UI boundary module in the renderer process (presentation + local interaction).
+ *
+ * TODO(design): The current modal styling is a known weak point and will be
+ * replaced as part of the backlog-card redesign. Don't pile on more inline
+ * styles here — the redesign will rewrite this view from scratch.
  */
 // src/renderer/components/desktop/BacklogCardModal.tsx — Canvas-level backlog card detail modal
 import React, { useEffect, useCallback } from 'react';
@@ -80,7 +84,7 @@ export function BacklogCardModal() {
     });
     dStore.connectFlow(windowId, modalCard.targetAgent);
 
-    const model = flowMeta.betterOn || 'copilot';
+    const model = flowMeta.betterOn || 'opencode/claude-sonnet-4-6';
     store.setSessionModel(sessionId, model);
 
     const createdSession = useHelioxStore.getState().sessions.find(s => s.id === sessionId);
@@ -123,8 +127,7 @@ export function BacklogCardModal() {
         contextProjectPath: projectPath,
         model,
         effort,
-        aiAdapter: store.appSettings.aiAdapter ?? store.appSettings.cliAdapter,
-        customCliPath: store.appSettings.customCliPath,
+        aiAdapter: store.appSettings.aiAdapter,
         autoCommit: store.appSettings.autoCommit,
         runE2E: store.appSettings.runE2E,
       });

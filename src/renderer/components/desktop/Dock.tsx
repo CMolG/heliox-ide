@@ -19,6 +19,7 @@ import { LucideIcon } from './LucideIcon';
 import { ProjectPickerModal } from './ProjectPickerModal';
 import { DockPopover } from './DockPopover';
 import type { AttachableType, MentalMode, MentalShape, MentalTool } from '@/types/desktop';
+import { getCliTheme } from '@/types/desktop';
 
 const ATTACHABLE_TYPE_COLORS: Record<string, string> = {
   flows: '#A78BFA',
@@ -106,10 +107,10 @@ export function Dock() {
   const spawnChat = useCallback((childProjectPath: string, position?: { x: number; y: number }) => {
     const childName = childProjectPath.split('/').pop() ?? 'project';
     const sessionId = addSession();
-    const provLabel = cliProvider === 'copilot' ? 'Copilot' : cliProvider;
+    const provLabel = getCliTheme(cliProvider).label;
     addWindow('chat', {
       title: `${provLabel} / ${childName}`,
-      iconName: CLI_ICON_NAMES[cliProvider],
+      iconName: CLI_ICON_NAMES[cliProvider] ?? CLI_ICON_NAMES.opencode ?? 'Terminal',
       sessionId,
       childProjectPath,
       ...(position ? { position } : {}),

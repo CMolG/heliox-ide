@@ -44,8 +44,8 @@ const MODEL_EFFORT_SUPPORT: Record<string, readonly EffortLevel[]> = Object.from
 
 const DEFAULT_EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh'];
 
-/** Copilot CLI has no --effort flag; effort is only configurable via config.json. */
-const ADAPTERS_WITHOUT_EFFORT: readonly string[] = ['copilot'];
+/** OpenCode maps effort → `--variant` (minimal/medium/high/max), so all adapters support it. */
+const ADAPTERS_WITHOUT_EFFORT: readonly string[] = [];
 
 function getEffortLevels(model: string, adapter?: string): readonly EffortLevel[] {
   if (adapter && ADAPTERS_WITHOUT_EFFORT.includes(adapter)) return [];
@@ -137,7 +137,7 @@ export function AgentChatPanel() {
   }, []);
 
   // Reset effort when model/adapter doesn't support current level
-  const currentAdapter = appSettings.aiAdapter ?? appSettings.cliAdapter;
+  const currentAdapter = appSettings.aiAdapter;
   useEffect(() => {
     if (selectedSession) {
       const supported = getEffortLevels(selectedSession.model, currentAdapter);
@@ -247,7 +247,7 @@ export function AgentChatPanel() {
             updateSessionStatus(selectedSessionId, 'completed', Date.now());
           }
           if ((event as any).sessionId) {
-            useHelioxStore.getState().setCopilotSessionId(selectedSessionId, (event as any).sessionId);
+            useHelioxStore.getState().setOpencodeSessionId(selectedSessionId, (event as any).sessionId);
           }
           if ((event as any).premiumRequests !== undefined || (event as any).totalApiDurationMs !== undefined) {
             useHelioxStore.getState().setSessionTokenUsage(selectedSessionId, {
@@ -375,14 +375,12 @@ export function AgentChatPanel() {
       ? `${INFINITY_LOOP_PROMPT}\n\n---\n\nUser: ${baseInstruction}`
       : baseInstruction;
 
-    const effectiveModel = sessionRole && sessionRole.model !== 'copilot'
-      ? sessionRole.model
-      : currentSession.model;
+    const effectiveModel = sessionRole?.model ?? currentSession.model ?? appSettings.selectedModel;
 
     log('info', currentSessionId, `User instruction: ${text.slice(0, 100)}${text.length > 100 ? '\u2026' : ''}`);
 
     if (!window.helioxAPI) {
-      addSessionMessage(currentSessionId, sysMsg('ipc', 'IPC bridge not available. Running outside Electron — connect via the desktop app to execute agent commands against GitHub Copilot CLI.'));
+      addSessionMessage(currentSessionId, sysMsg('ipc', 'IPC bridge not available. Running outside Electron — connect via the desktop app to execute agent commands through OpenCode.'));
       log('warn', currentSessionId, 'IPC bridge unavailable (development mode)');
       return;
     }
@@ -401,11 +399,10 @@ export function AgentChatPanel() {
         flows,
         cwd: agentCwd,
         contextProjectPath: projectPath ?? undefined,
-        model: effectiveModel !== 'copilot' ? effectiveModel : undefined,
+        model: effectiveModel,
         effort: appSettings.effort,
-        resumeSessionId: currentSession.copilotSessionId,
-        aiAdapter: appSettings.aiAdapter ?? appSettings.cliAdapter,
-        customCliPath: appSettings.customCliPath,
+        resumeSessionId: currentSession.opencodeSessionId,
+        aiAdapter: 'opencode',
         autoCommit: appSettings.autoCommit,
         runE2E: appSettings.runE2E,
         rolePrompt,
@@ -431,7 +428,7 @@ export function AgentChatPanel() {
       log('error', currentSessionId, `Agent exception: ${errorStr}`);
       addToast(`Agent error: ${errorStr}`, 'error');
     }
-  }, [input, selectedSessionId, addSession, updateSessionDescription, addSessionMessage, updateSessionStatus, roles, flows, projectPath, addLogEntry, addToast, appSettings.effort, appSettings.aiAdapter, appSettings.customCliPath, appSettings.autoCommit, appSettings.runE2E, handleSlashCommand, infiniteLoopEnabled]);
+  }, [input, selectedSessionId, addSession, updateSessionDescription, addSessionMessage, updateSessionStatus, roles, flows, projectPath, addLogEntry, addToast, appSettings.effort, appSettings.aiAdapter, appSettings.autoCommit, appSettings.runE2E, handleSlashCommand, infiniteLoopEnabled]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (showAtAutocomplete && atSuggestions.length > 0) {
@@ -560,10 +557,10 @@ export function AgentChatPanel() {
             {selectedSession?.status === 'running' && <span className="w-1.5 h-1.5 rounded-full dot-pulse" style={{ background: theme.accentBlue }} />}
             <span className="text-neutral-500 text-[10px] font-normal uppercase leading-4" style={{ fontFamily: theme.fontInter }}>
               {selectedSession
-                ? ({ running: `Thinking in ${selectedSession.model ?? 'Copilot'}`, waiting: 'Awaiting input', completed: 'Session complete', error: 'Session failed' } as Record<string, string>)[selectedSession.status] ?? 'Session stopped'
+                ? ({ running: `Thinking in ${selectedSession.model ?? 'OpenCode'}`, waiting: 'Awaiting input', completed: 'Session complete', error: 'Session failed' } as Record<string, string>)[selectedSession.status] ?? 'Session stopped'
                 : 'Ready'}
             </span>
-            {selectedSession?.copilotSessionId && selectedSession.status !== 'running' && (
+            {selectedSession?.opencodeSessionId && selectedSession.status !== 'running' && (
               <span className="text-[10px] font-bold uppercase leading-4 ml-1.5 px-1.5 py-0.5 rounded-full" style={{ background: theme.accentBlueBg, color: theme.accentBlue }}>Resumable</span>
             )}
           </div>
@@ -684,7 +681,7 @@ export function AgentChatPanel() {
             </div>
             <div className="flex flex-col gap-0.5">
               <span className="text-neutral-500 text-[10px] font-normal uppercase leading-4" style={{ fontFamily: theme.fontInter }}>
-                Thinking in {selectedSession.model ?? 'Copilot'}
+                Thinking in {selectedSession.model ?? 'OpenCode'}
               </span>
               <span className="text-[9px] font-normal" style={{ fontFamily: theme.fontManrope, color: theme.textGhost }}>
                 {appSettings.effort === 'xhigh' ? 'Extended reasoning' : appSettings.effort === 'high' ? 'Deep analysis' : appSettings.effort === 'medium' ? 'Standard reasoning' : 'Quick response'}
@@ -921,11 +918,11 @@ export function AgentChatPanel() {
             )}
           </div>
 
-          {(selectedSession.copilotSessionId || selectedSession.tokenUsage) && (
+          {(selectedSession.opencodeSessionId || selectedSession.tokenUsage) && (
             <div className="flex items-center gap-3 flex-wrap">
-              {selectedSession.copilotSessionId && (
-                <span className="text-[9px] font-normal tracking-wide" style={{ fontFamily: theme.fontMono, color: theme.textGhost }} title={`Copilot Session: ${selectedSession.copilotSessionId}`}>
-                  session:{selectedSession.copilotSessionId.slice(0, 8)}…
+              {selectedSession.opencodeSessionId && (
+                <span className="text-[9px] font-normal tracking-wide" style={{ fontFamily: theme.fontMono, color: theme.textGhost }} title={`OpenCode Session: ${selectedSession.opencodeSessionId}`}>
+                  session:{selectedSession.opencodeSessionId.slice(0, 8)}…
                 </span>
               )}
               {selectedSession.tokenUsage?.premiumRequests !== undefined && (

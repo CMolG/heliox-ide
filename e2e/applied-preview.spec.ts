@@ -16,6 +16,7 @@ import { test, expect, type Page, type ElectronApplication } from '@playwright/t
 import { _electron as electron } from 'playwright';
 import path from 'path';
 import fs from 'fs';
+import { getElectronLaunchArgs, getE2EEnv } from './test-helpers';
 
 const INVENTORY_PATH = path.join(__dirname, '..', 'market', 'inventory.json');
 const INVENTORY = JSON.parse(fs.readFileSync(INVENTORY_PATH, 'utf-8'));
@@ -82,14 +83,9 @@ let page: Page;
 
 test.beforeAll(async () => {
   app = await electron.launch({
-    args: [path.join(__dirname, '..')],
+    args: getElectronLaunchArgs(),
     cwd: path.join(__dirname, '..'),
-    env: {
-      ...process.env,
-      NODE_ENV: 'development',
-      ELECTRON_IS_DEV: '1',
-      HELIOX_MODELS: 'copilot',
-    },
+    env: getE2EEnv(),
     timeout: 30_000,
   });
 
