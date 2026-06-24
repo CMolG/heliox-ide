@@ -195,6 +195,15 @@ interface DesktopStore {
   removeModifier: (windowId: string, modifierId: string) => void;
   updateWindowTitle: (windowId: string, title: string) => void;
 
+  // ── M2 Agent surface linking ───────────────────────────────────
+  /**
+   * Mark `windowId` as the active agent surface (sets `agentLinked: true`).
+   * If `linked` is false, clears the link on that window only.
+   * Only one web-preview window can be agent-linked at a time — enabling one
+   * automatically clears any previous agent-linked window.
+   */
+  linkWindowToAgent: (windowId: string, linked: boolean) => void;
+
   // Multi-selection
   selectedWindowIds: string[];
   setSelectedWindowIds: (ids: string[]) => void;
@@ -473,6 +482,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'file-viewer' ? (opts?.title ?? 'File')
           : type === 'diff-viewer' ? (opts?.title ?? 'Diff Viewer')
           : type === 'prompt-dev-zone' ? 'Prompt Dev Zone'
+          : type === 'web-preview' ? (opts?.title ?? 'Preview')
           : 'Plugin';
         const defaultIcon = type === 'chat'
           ? CLI_ICON_NAMES[cliProv]
@@ -481,6 +491,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'file-viewer' ? 'FileCode2'
           : type === 'diff-viewer' ? 'GitCompareArrows'
           : type === 'prompt-dev-zone' ? 'FlaskConical'
+          : type === 'web-preview' ? 'Globe'
           : 'Blocks';
         const win: DesktopWindow = {
           id,
@@ -498,6 +509,10 @@ export const useDesktopStore = create<DesktopStore>()(
           modifierIds: opts?.modifierIds ?? [],
           childProjectPath: opts?.childProjectPath,
           filePath: opts?.filePath,
+          // M1 web-preview fields — passed through from addWindow opts
+          url: opts?.url,
+          boundPort: opts?.boundPort,
+          agentLinked: opts?.agentLinked,
           createdAt: Date.now(),
         };
         set({
@@ -620,6 +635,16 @@ export const useDesktopStore = create<DesktopStore>()(
       })),
 
       updateWindowTitle: (windowId, title) => get()._updateWindow(windowId, { title }),
+
+      // ─── M2 Agent surface linking ─────────────────────────────
+      linkWindowToAgent: (windowId, linked) => set((s) => ({
+        windows: s.windows.map(w => {
+          if (w.id === windowId) return { ...w, agentLinked: linked };
+          // Clear the link on all other web-preview windows when enabling
+          if (linked && w.type === 'web-preview' && w.agentLinked) return { ...w, agentLinked: false };
+          return w;
+        }),
+      })),
 
       // ─── Multi-selection ────────────────────────────────
       selectedWindowIds: [],
@@ -1966,3 +1991,22 @@ export const useDesktopStore = create<DesktopStore>()(
     }
   )
 );
+
+// ─── M2 selector — agent-linked surface (RENDERER-ONLY) ───────────────────────
+//
+// Returns the Electron webContentsId of the currently agent-linked web-preview
+// window, or null if none is linked. For RENDERER UI use only (e.g. indicating
+// which preview is linked).
+//
+// IMPORTANT: M3's browser toolset runs in the MAIN process and must NOT import
+// this store (separate process — it would read empty state). The main-side
+// source of truth is `browserController.getActiveAgentSurfaceId()`, kept in sync
+// by the 'browser:set-agent-surface' IPC that the link toggle sends.
+//
+export function getAgentSurfaceWebContentsId(): number | null {
+  const { windows } = useDesktopStore.getState();
+  const linked = windows.find(
+    (w) => w.type === 'web-preview' && w.agentLinked && w.webContentsId != null,
+  );
+  return linked?.webContentsId ?? null;
+}

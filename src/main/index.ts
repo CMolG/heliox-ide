@@ -21,8 +21,11 @@ import { app, BrowserWindow, Menu, nativeImage } from 'electron';
 import path from 'path';
 import { registerIpcHandlers } from './ipc-handlers';
 import { registerContextMapIpcHandlers } from './context-map';
+import { registerDevServerIpcHandlers } from './browser/dev-server-watcher';
+import { registerBrowserIpcHandlers } from './browser/browser-ipc';
 import { initializeStorage, shutdownStorage } from './storage';
 import { settingsGet, settingsSet } from './storage/settings-store';
+import { browserController } from './browser/browser-controller';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -86,6 +89,8 @@ function createWindow(): BrowserWindow {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // M1 — required to allow <webview> tags in the renderer for embedded preview windows
+      webviewTag: true,
     },
   });
 
@@ -107,9 +112,39 @@ function createWindow(): BrowserWindow {
 
   registerIpcHandlers(mainWindow);
   registerContextMapIpcHandlers(mainWindow);
+  registerDevServerIpcHandlers(mainWindow);
+  // M2 — native CDP browser control (no mainWindow needed — no push events)
+  registerBrowserIpcHandlers();
 
   return mainWindow;
 }
+
+// ── M1/M4 Security guard — harden every <webview> that the renderer mounts ───
+// Strips any preload the page tries to set, and enforces context isolation so
+// guest content can never escape into Node.js. Called once at app level, before
+// any window is created, so it covers all BrowserWindows including future ones.
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-attach-webview', (_evt, wp) => {
+    // Remove any preload the page tried to inject — only our controlled
+    // renderer is allowed to run privileged code.
+    delete (wp as Record<string, unknown>).preload;
+    delete (wp as Record<string, unknown>).preloadURL;
+    wp.nodeIntegration = false;
+    wp.contextIsolation = true;
+  });
+
+  // M4 — after the guest WebContents is live, lock down navigation and popups.
+  // Guest preview content may only navigate http/https (or stay at about:blank);
+  // file:, chrome:, data: etc. are blocked, and window.open is fully denied.
+  contents.on('did-attach-webview', (_e, guest) => {
+    guest.setWindowOpenHandler(() => ({ action: 'deny' }));
+    guest.on('will-navigate', (evt, navUrl) => {
+      if (!/^https?:\/\//i.test(navUrl) && navUrl !== 'about:blank') {
+        evt.preventDefault();
+      }
+    });
+  });
+});
 
 app.whenReady().then(() => {
   // ── Phase 0: Initialize all storage before anything else ────────────────────
@@ -223,7 +258,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Graceful storage shutdown — ensure SQLite WAL is checkpointed
+// Graceful shutdown — checkpoint SQLite WAL and tear down all CDP sessions +
+// the headless agent window so no orphaned Chrome processes linger.
 app.on('will-quit', () => {
+  browserController.disposeAll();
   shutdownStorage();
 });

@@ -186,6 +186,34 @@ export function App() {
     return () => window.removeEventListener('heliox:switch-project', handler);
   }, [openProjects, projectPath, setProjectPath]);
 
+  // M1 — Start/stop dev-server polling whenever the active project changes.
+  // The main process polls candidate ports and pushes 'heliox:dev-server-detected'
+  // events; the companion effect below subscribes to those events.
+  useEffect(() => {
+    if (!projectPath || !window.helioxAPI) return;
+    window.helioxAPI.startDevServerWatch(projectPath).catch(() => {/* non-critical */});
+    return () => {
+      window.helioxAPI?.stopDevServerWatch().catch(() => {/* non-critical */});
+    };
+  }, [projectPath]);
+
+  // M1 — Auto-open a web-preview window when a new dev server is detected.
+  // Deduplication: if a 'web-preview' window is already bound to the same port
+  // we skip spawning a second one (idempotent across React re-renders and hot
+  // reloads that restart the dev server on the same port).
+  useEffect(() => {
+    if (!window.helioxAPI) return;
+    const unsub = window.helioxAPI.onDevServerDetected(({ url, port }) => {
+      const existing = useDesktopStore.getState().windows;
+      const alreadyOpen = existing.some(
+        w => w.type === 'web-preview' && w.boundPort === port,
+      );
+      if (alreadyOpen) return;
+      addWindow('web-preview', { url, boundPort: port });
+    });
+    return unsub;
+  }, [addWindow]);
+
   // Global keyboard shortcuts
   const handleGlobalKeyDown = useCallback((e: KeyboardEvent) => {
     const isMeta = e.metaKey || e.ctrlKey;

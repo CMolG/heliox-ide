@@ -11,6 +11,7 @@ import type { Flow, RunAgentParams, AgentEvent, HelioxAPI } from '../types';
 import type { ContextMapNode, ContextMapEdge } from '../types/context-map';
 import type { AgenticFlow } from '../types/harness';
 import type { HarnessEventPayload } from '../types/ipc-events';
+import type { BrowserAction } from '../types/browser';
 
 const helioxAPI: HelioxAPI = {
   initBaselines: (flows: Flow[]) =>
@@ -272,6 +273,49 @@ const helioxAPI: HelioxAPI = {
       ipcRenderer.removeListener('heliox:attachable-updated', handler);
     };
   },
+
+  // ── M1 Dev-server watcher ───────────────────────────────────────
+  // Renderer calls startDevServerWatch when a project opens; the main process
+  // polls candidate ports and pushes 'heliox:dev-server-detected' events back.
+
+  startDevServerWatch: (projectPath: string) =>
+    ipcRenderer.invoke('devserver:start-watch', projectPath),
+
+  stopDevServerWatch: () =>
+    ipcRenderer.invoke('devserver:stop-watch'),
+
+  onDevServerDetected: (callback: (payload: { url: string; port: number }) => void) => {
+    const handler = (_event: IpcRendererEvent, data: { url: string; port: number }) =>
+      callback(data);
+    ipcRenderer.on('heliox:dev-server-detected', handler);
+    return () => { ipcRenderer.removeListener('heliox:dev-server-detected', handler); };
+  },
+
+  // ── M2 Browser control (native CDP via webContents.debugger) ────────────
+  // All channels follow the {success, data?, error?} return convention.
+  // The `id` argument is the Electron webContentsId stored in the desktop store
+  // after the <webview> fires dom-ready (DesktopWindow.webContentsId).
+
+  browserAttach: (id: number) =>
+    ipcRenderer.invoke('browser:attach', id),
+
+  browserGoto: (id: number, url: string) =>
+    ipcRenderer.invoke('browser:goto', id, url),
+
+  browserObserve: (id: number) =>
+    ipcRenderer.invoke('browser:observe', id),
+
+  browserAct: (id: number, elementId: number, action: BrowserAction, value?: string) =>
+    ipcRenderer.invoke('browser:act', id, elementId, action, value),
+
+  browserExtractSeo: (id: number, url?: string) =>
+    ipcRenderer.invoke('browser:extract-seo', id, url),
+
+  browserDetach: (id: number) =>
+    ipcRenderer.invoke('browser:detach', id),
+
+  browserSetAgentSurface: (id: number | null) =>
+    ipcRenderer.invoke('browser:set-agent-surface', id),
 };
 
 // Menu events from main process

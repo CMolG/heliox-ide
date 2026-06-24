@@ -26,5 +26,23 @@ export const AntiVerificationInterceptor = {
   },
 } as const satisfies AgenticMod;
 
+/**
+ * WebBrowserMod — injects the browser_goto / browser_act / browser_extract_seo
+ * tool trio into the step's tool surface. Drives the linked preview window when
+ * present, falling back to a headless surface when not.
+ */
+export const WebBrowserMod = {
+  id: 'web-browser',
+  name: 'WebBrowser',
+  type: 'tool_provider',
+  config: {
+    description:
+      'Live web navigation for the agent: browser_goto(url) loads a page and returns a compact '
+      + 'accessibility tree (AOM) with numeric element ids; browser_act(elementId, action, value) '
+      + 'clicks/fills/selects/presses; browser_extract_seo(url?) returns meta tags, canonical, and '
+      + 'Core Web Vitals. Drives the linked preview window when present, else a headless surface.',
+  },
+} as const satisfies AgenticMod;
+
 /** Mods backed by runtime logic (not pure market `.md` injections). */
-export const CODE_MODS: AgenticMod[] = [AntiVerificationInterceptor];
+export const CODE_MODS: AgenticMod[] = [AntiVerificationInterceptor, WebBrowserMod];

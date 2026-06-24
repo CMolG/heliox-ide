@@ -57,7 +57,7 @@ export type WindowState = 'normal' | 'minimized' | 'maximized';
 
 export interface DesktopWindow {
   id: string;
-  type: 'chat' | 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone';
+  type: 'chat' | 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview';
   title: string;
   /** Lucide icon name (e.g. 'MessageSquare', 'Terminal') */
   iconName: string;
@@ -81,6 +81,14 @@ export interface DesktopWindow {
   childProjectPath?: string;
   /** For file-viewer windows — the absolute file path to display */
   filePath?: string;
+  /** For web-preview windows — the URL currently loaded in the webview */
+  url?: string;
+  /** For web-preview windows — the dev-server port this preview is bound to */
+  boundPort?: number;
+  /** For web-preview windows — true once an agent has been linked for M2 CDP control */
+  agentLinked?: boolean;
+  /** For web-preview windows — the Electron WebContents id of the guest webview (set post dom-ready, used by M2) */
+  webContentsId?: number;
   /** Stored position/size before maximize for restore */
   preMaximizeRect?: { position: WindowPosition; size: WindowSize };
   /** When assigned to a grid cell — the grid ID (window is positioned by the grid) */

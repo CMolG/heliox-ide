@@ -450,6 +450,36 @@ export interface HelioxAPI {
       affectedSessions?: string[];
     }) => void,
   ) => () => void;
+
+  // ── M1 Dev-server watcher ──────────────────────────────────────────────────
+  /** Start polling candidate ports for the given project path. */
+  startDevServerWatch: (projectPath: string) => Promise<{ success: boolean; error?: string }>;
+  /** Stop polling (all watchers if no arg, or just the one for the given project). */
+  stopDevServerWatch: () => Promise<{ success: boolean; error?: string }>;
+  /** Subscribe to dev-server-detected push events. Returns unsubscribe fn. */
+  onDevServerDetected: (callback: (payload: DevServerDetectedPayload) => void) => () => void;
+
+  // ── M2 Browser control (native CDP via webContents.debugger) ──────────────
+  /** Attach a CDP debugger session to the webview identified by webContentsId. Idempotent. */
+  browserAttach: (id: number) => Promise<{ success: boolean; error?: string }>;
+  /** Navigate the webview to url and return the resulting AOM snapshot. */
+  browserGoto: (id: number, url: string) => Promise<{ success: boolean; data?: import('./browser').AomSnapshot; error?: string }>;
+  /** Return a fresh AOM snapshot of the current page without navigating. */
+  browserObserve: (id: number) => Promise<{ success: boolean; data?: import('./browser').AomSnapshot; error?: string }>;
+  /** Perform a DOM action on an AOM element by its numeric id. Returns a fresh AOM snapshot. */
+  browserAct: (id: number, elementId: number, action: import('./browser').BrowserAction, value?: string) => Promise<{ success: boolean; data?: import('./browser').AomSnapshot; error?: string }>;
+  /** Extract SEO metadata + Core Web Vitals from the current page (navigates to url first if provided). */
+  browserExtractSeo: (id: number, url?: string) => Promise<{ success: boolean; data?: import('./browser').SeoReport; error?: string }>;
+  /** Detach the CDP debugger. Idempotent — never throws on already-detached sessions. */
+  browserDetach: (id: number) => Promise<{ success: boolean; error?: string }>;
+  /** Set (or clear with null) which webview is the active agent surface (main-side; read by M3). */
+  browserSetAgentSurface: (id: number | null) => Promise<{ success: boolean; error?: string }>;
+}
+
+/** Payload emitted by the main-process dev-server watcher when a new port comes up. */
+export interface DevServerDetectedPayload {
+  url: string;
+  port: number;
 }
 
 // ─── Storage Layer Types ────────────────────────────────────────────────────

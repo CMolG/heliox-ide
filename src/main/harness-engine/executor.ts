@@ -8,6 +8,7 @@ import type { AgenticFlow, AgenticMod, AgenticStep } from '../../types/harness';
 import { harnessEventBus } from './event-bus';
 import { buildStepContext } from './context-builder';
 import { createLocalMcpToolSet, type LocalMcpOptions } from './mcp-adapter';
+import { createBrowserToolSet } from './browser-toolset';
 import { runLLMStep, type LLMStepResult, type RunLLMStepInput } from './llm-runner';
 import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/collector';
 
@@ -109,6 +110,13 @@ function hasAntiVerificationInterceptor(step: AgenticStep): boolean {
   ));
 }
 
+function hasWebBrowserMod(step: AgenticStep): boolean {
+  return step.mods.some((mod) => (
+    mod.id === 'web-browser'
+    || mod.name === 'WebBrowser'
+  ));
+}
+
 async function executeStep(
   flow: AgenticFlow,
   step: AgenticStep,
@@ -119,12 +127,15 @@ async function executeStep(
   const context = await buildStepContext(step, {
     onModStatus: (mod, status, logs) => emitModStatus(flow.id, step.id, mod, status, logs),
   });
-  const tools = createLocalMcpToolSet({
-    rootDir: options.rootDir,
-    fileSystem: options.fileSystem,
-    telemetrySink: options.telemetrySink,
-    antiVerificationInterceptor: hasAntiVerificationInterceptor(step),
-  });
+  const tools = {
+    ...createLocalMcpToolSet({
+      rootDir: options.rootDir,
+      fileSystem: options.fileSystem,
+      telemetrySink: options.telemetrySink,
+      antiVerificationInterceptor: hasAntiVerificationInterceptor(step),
+    }),
+    ...(hasWebBrowserMod(step) ? createBrowserToolSet() : {}),
+  };
   const runStep = options.runStep ?? runLLMStep;
   const result = await runStep({
     flowId: flow.id,

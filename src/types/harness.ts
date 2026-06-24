@@ -18,7 +18,7 @@ export interface AgenticTool {
 export interface AgenticMod {
   id: string;
   name: string;
-  type: 'pre_process' | 'post_process' | 'system_override';
+  type: 'pre_process' | 'post_process' | 'system_override' | 'tool_provider';
   config?: Record<string, unknown>;
 }
 
