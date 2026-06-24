@@ -25,3 +25,6 @@ test-results/
 
 # Java SDK (sdk/java) build output
 sdk/java/target/
+
+# Agent planning artifacts (not product source)
+docs/superpowers/
