@@ -13,6 +13,7 @@ When designing or applying a Mod, you must strictly adhere to these architectura
 1.  **Stackability & Compatibility:** Unlike Roles (where only one can be active at a time), multiple Mods can be stacked onto a single session to create highly specialized behaviors (e.g., combining `test-driven`, `strict-linting`, and `zero-dependencies`). However, the IDE must validate that stacked Mods are **compatible** and do not contain conflicting systemic instructions.
 2.  **Strictly Prohibited on Flows:** Mods **cannot** be attached to `flows`. Flows are rigid, pre-planned pipelines with their own hardcoded system constraints. Injecting a Mod into a Flow would cause prompt collisions, hallucination, or break the Flow's autonomous loop.
 3.  **Enhancement of Roles:** Mods are designed to augment `roles`. For example, you can take the `frontend-engineer` Role and attach the `a11y-enforcer` Mod to guarantee that all generated UI components strictly pass WCAG AAA standards.
+4.  **Exclusive Groups (Mutual Exclusion):** A Mod may declare an `exclusiveGroup`. Mods sharing the same `exclusiveGroup` are **mutually incompatible** — only one can be active at a time. This is how a **Design System** is modeled: each design system is a Mod in the `design-system` exclusive group, so two design systems can never stack and blend their visual concepts. Design systems are *not* a separate market category; they are exclusive-group Mods. The loader auto-derives the incompatibility from the group, so you only set `exclusiveGroup`, not a hand-written `incompatibleWith` list.
 
 ---
 

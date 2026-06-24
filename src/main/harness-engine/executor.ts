@@ -7,8 +7,9 @@
 import type { AgenticFlow, AgenticMod, AgenticStep } from '../../types/harness';
 import { harnessEventBus } from './event-bus';
 import { buildStepContext } from './context-builder';
-import { createLocalMcpToolSet } from './mcp-adapter';
+import { createLocalMcpToolSet, type LocalMcpOptions } from './mcp-adapter';
 import { runLLMStep, type LLMStepResult, type RunLLMStepInput } from './llm-runner';
+import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/collector';
 
 export interface HarnessStepRunnerInput extends RunLLMStepInput {
   flowId: string;
@@ -17,7 +18,11 @@ export interface HarnessStepRunnerInput extends RunLLMStepInput {
 
 export interface ExecuteAgenticFlowOptions {
   rootDir?: string;
+  fileSystem?: LocalMcpOptions['fileSystem'];
+  telemetrySink?: LocalMcpOptions['telemetrySink'];
+  onLLMStepTelemetry?: (event: LLMStepTelemetryEvent) => void;
   modelId?: string;
+  timeoutMs?: number;
   runStep?: (input: HarnessStepRunnerInput) => Promise<LLMStepResult>;
 }
 
@@ -96,6 +101,14 @@ function emitModStatus(
   });
 }
 
+function hasAntiVerificationInterceptor(step: AgenticStep): boolean {
+  return step.mods.some((mod) => (
+    mod.id === 'anti-verification-interceptor'
+    || mod.name === 'AntiVerificationInterceptor'
+    || mod.config?.interceptor === 'anti-verification'
+  ));
+}
+
 async function executeStep(
   flow: AgenticFlow,
   step: AgenticStep,
@@ -106,7 +119,12 @@ async function executeStep(
   const context = await buildStepContext(step, {
     onModStatus: (mod, status, logs) => emitModStatus(flow.id, step.id, mod, status, logs),
   });
-  const tools = createLocalMcpToolSet({ rootDir: options.rootDir });
+  const tools = createLocalMcpToolSet({
+    rootDir: options.rootDir,
+    fileSystem: options.fileSystem,
+    telemetrySink: options.telemetrySink,
+    antiVerificationInterceptor: hasAntiVerificationInterceptor(step),
+  });
   const runStep = options.runStep ?? runLLMStep;
   const result = await runStep({
     flowId: flow.id,
@@ -115,6 +133,12 @@ async function executeStep(
     userPrompt: context.userPrompt,
     tools,
     modelId: options.modelId,
+    timeoutMs: options.timeoutMs,
+    onTelemetry: (event) => options.onLLMStepTelemetry?.({
+      ...event,
+      flowId: flow.id,
+      stepId: step.id,
+    }),
   });
 
   emitStepStatus(flow.id, step.id, 'completed', result.text);

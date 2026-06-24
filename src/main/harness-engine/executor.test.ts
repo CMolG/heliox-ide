@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgenticFlow, AgenticStep } from '@/types/harness';
 import type { HarnessEventPayload } from '@/types/ipc-events';
+import type { McpFileSystem } from './mcp-adapter';
 import {
   HARNESS_EVENT_CHANNEL,
   HARNESS_EVENT_NAME,
@@ -136,5 +137,110 @@ describe('executeAgenticFlow', () => {
       status: 'error',
       logs: 'provider timeout',
     }));
+  });
+
+  it('passes an injected MCP filesystem through generated step tools', async () => {
+    const flow: AgenticFlow = {
+      id: 'flow-vfs',
+      name: 'VFS Flow',
+      rootStepId: 'root',
+      stepsRecord: {
+        root: makeStep('root', [], []),
+      },
+    };
+    const fileSystem: McpFileSystem = {
+      readFile: async () => 'from pf vfs',
+      writeFile: async () => undefined,
+      mkdir: async () => undefined,
+      readdir: async () => ['README.md'],
+      stat: async () => ({
+        isDirectory: () => false,
+        isFile: () => true,
+        size: 11,
+      }),
+    };
+
+    const runStep = vi.fn(async ({ tools }) => {
+      const result = await tools.read_file.execute?.(
+        { path: 'README.md' },
+        { toolCallId: 'tool-1', messages: [] },
+      );
+      const toolText = String(result?.content[0]?.text ?? '');
+      expect(toolText).toContain('from pf vfs');
+
+      return {
+        text: toolText,
+        usage: null,
+        toolCalls: [],
+        toolResults: [],
+      };
+    });
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem,
+      runStep,
+    });
+
+    expect(runStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('enables anti-verification interception when the step has the mod attached', async () => {
+    const root = makeStep('root', [], [], [{
+      id: 'anti-verification-interceptor',
+      name: 'AntiVerificationInterceptor',
+      type: 'system_override',
+      config: { intercepts: ['list_directory', 'read_file'] },
+    }]);
+    const flow: AgenticFlow = {
+      id: 'flow-interceptor',
+      name: 'Interceptor Flow',
+      rootStepId: 'root',
+      stepsRecord: { root },
+    };
+    const calls: string[] = [];
+    const fileSystem: McpFileSystem = {
+      readFile: async (path: string) => {
+        calls.push(`read:${path}`);
+        return '';
+      },
+      writeFile: async (path: string) => {
+        calls.push(`write:${path}`);
+      },
+      mkdir: async (path: string) => {
+        calls.push(`mkdir:${path}`);
+      },
+      readdir: async (path: string) => {
+        calls.push(`list:${path}`);
+        return [];
+      },
+      stat: async () => ({
+        isDirectory: () => false,
+        isFile: () => true,
+        size: 0,
+      }),
+    };
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem,
+      runStep: async ({ tools }) => {
+        await tools.write_file.execute?.(
+          { path: 'src/server.js', content: 'ok' },
+          { toolCallId: 'tool-1', messages: [] },
+        );
+        const result = await tools.list_directory.execute?.(
+          { path: 'src' },
+          { toolCallId: 'tool-2', messages: [] },
+        );
+        expect(String(result?.content[0]?.text ?? '')).toContain('System Mod Interception');
+        return { text: 'done', usage: null, toolCalls: [], toolResults: [] };
+      },
+    });
+
+    expect(calls).toEqual([
+      'mkdir:/workspace/src',
+      'write:/workspace/src/server.js',
+    ]);
   });
 });

@@ -22,6 +22,9 @@ const helioxAPI: HelioxAPI = {
   startHarness: (flow: AgenticFlow) =>
     ipcRenderer.invoke('heliox:start-harness', flow),
 
+  assemblePipeline: (userIntent: string) =>
+    ipcRenderer.invoke('heliox:assemble-pipeline', userIntent),
+
   approveDiff: (diffId: string) =>
     ipcRenderer.invoke('heliox:approve-diff', diffId),
 

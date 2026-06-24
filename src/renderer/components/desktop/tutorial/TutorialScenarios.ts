@@ -261,14 +261,14 @@ const marketplace: TutorialScenario = {
   label: 'Marketplace',
   category: 'apps',
   accentColor: YELLOW,
-  subtitle: 'Browse and deploy Roles, Mods, Flows, and Design Systems.',
+  subtitle: 'Browse and deploy Roles, Mods, and Flows.',
   iconName: 'Store',
   tags: ['Deploy', 'Browse', 'Customize'],
   steps: [
     {
       target: '[data-testid="dock-marketplace"]',
       title: 'Open Marketplace',
-      description: 'Click to open the Marketplace overlay. Browse curated Roles, Mods, Flows, and Design Systems.',
+      description: 'Click to open the Marketplace overlay. Browse curated Roles, Mods, and Flows.',
       position: 'top',
     },
     {
@@ -281,32 +281,6 @@ const marketplace: TutorialScenario = {
   ],
 };
 
-// ─── Design System Editor ───────────────────────────────────────
-
-const designSystemEditor: TutorialScenario = {
-  id: 'design-system-editor',
-  label: 'Design System Editor',
-  category: 'apps',
-  accentColor: '#10B981',
-  subtitle: 'Visual design system management and brand identity toolkit.',
-  iconName: 'Palette',
-  tags: ['Design', 'Brand', 'Tokens'],
-  steps: [
-    {
-      target: '[data-testid="dock-design-system-editor"]',
-      title: 'Open Editor',
-      description: 'Launch the Design System Editor to manage color tokens, typography, and brand guidelines.',
-      position: 'top',
-    },
-    {
-      target: '[data-testid="desktop-canvas-bg"]',
-      title: 'Design Windows',
-      description: 'Edit and preview design tokens in real-time. Attach Design Systems to chat windows for design-aware agents.',
-      position: 'top',
-      highlightViewport: true,
-    },
-  ],
-};
 
 // ─── Diff Viewer ────────────────────────────────────────────────
 
@@ -361,7 +335,6 @@ export const TUTORIAL_SCENARIOS: Record<string, TutorialScenario> = {
   'file-explorer': fileExplorer,
   backlog,
   marketplace,
-  'design-system-editor': designSystemEditor,
   'diff-viewer': diffViewer,
   'file-viewer': fileViewer,
 };

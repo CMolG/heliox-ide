@@ -57,7 +57,7 @@ export type WindowState = 'normal' | 'minimized' | 'maximized';
 
 export interface DesktopWindow {
   id: string;
-  type: 'chat' | 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'design-system-editor';
+  type: 'chat' | 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone';
   title: string;
   /** Lucide icon name (e.g. 'MessageSquare', 'Terminal') */
   iconName: string;
@@ -77,8 +77,6 @@ export interface DesktopWindow {
   roleId?: string;
   /** Connected market modifier names (stackable, compatibility-checked) */
   modifierIds: string[];
-  /** Connected design system (max 1 per window, name from inventory) */
-  designSystemId?: string;
   /** For chat windows — the child project path (cwd for agent) */
   childProjectPath?: string;
   /** For file-viewer windows — the absolute file path to display */
@@ -150,7 +148,6 @@ export interface DockItem {
     | 'mental-select-tool'
     | 'mental-ramification-tool'
     | 'prompt-dev-zone'
-    | 'design-system-editor'
     | 'grid';
   /** For plugin items — the plugin ID to spawn */
   pluginId?: string;
@@ -158,7 +155,7 @@ export interface DockItem {
 
 // ─── Plugin / Marketplace ────────────────────────────────────────
 
-export type PluginCategory = 'roles' | 'modifiers' | 'tools' | 'flows' | 'design-systems';
+export type PluginCategory = 'roles' | 'modifiers' | 'tools' | 'flows';
 
 export interface Plugin {
   id: string;
@@ -185,12 +182,6 @@ export interface Plugin {
     promptSuffix: string;
     overrides?: Record<string, unknown>;
   };
-  /** For design-systems — micro-preview spec for visual sampling */
-  designSystemPreview?: import('./market').MarketDesignSystemPreview;
-  /** For design-systems — primary accent color (hex) */
-  accentColor?: string;
-  /** For design-systems — brand identity card data for rich preview */
-  brandIdentityCard?: import('./market').MarketBrandIdentityCard;
 }
 
 // ─── Canvas Pan State ────────────────────────────────────────────
@@ -202,7 +193,7 @@ export interface CanvasPan {
 
 // ─── Desktop Attachable (draggable market items on the canvas) ───
 
-export type AttachableType = 'role' | 'mod' | 'flow' | 'design-system';
+export type AttachableType = 'role' | 'mod' | 'flow';
 
 // ─── Mental Graph (xyflow source of truth) ──────────────────────
 //
@@ -233,14 +224,26 @@ export interface MentalGraphNode {
 export interface StepNodeData {
   title: string;
   description?: string;
+  prompt?: string;
+  roleId?: string;
+  modIds?: string[];
   mods: MarketMod[];
   roles: MarketRole[];
+  [key: string]: unknown;
+}
+
+export interface FrameNodeData {
+  title: string;
+  description?: string;
+  childIds: string[];
+  missingCapabilitiesRequested?: string[];
   [key: string]: unknown;
 }
 
 export interface StepGraphNode {
   id: string;
   type: 'step';
+  parentId?: string;
   position: { x: number; y: number };
   width: number;
   height: number;
@@ -255,7 +258,20 @@ export interface StepGraphNode {
   createdAt: number;
 }
 
-export type CanvasGraphNode = MentalGraphNode | StepGraphNode;
+export interface FrameGraphNode {
+  id: string;
+  type: 'frame';
+  position: { x: number; y: number };
+  width: number;
+  height: number;
+  text: string;
+  color: string;
+  shape: MentalShape;
+  data: FrameNodeData;
+  createdAt: number;
+}
+
+export type CanvasGraphNode = MentalGraphNode | StepGraphNode | FrameGraphNode;
 
 export interface MentalGraphEdge {
   id: string;

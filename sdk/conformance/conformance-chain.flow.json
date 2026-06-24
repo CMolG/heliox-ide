@@ -1,0 +1,36 @@
+{
+  "version": "1",
+  "id": "conformance-chain",
+  "name": "Conformance Chain",
+  "rootStepId": "step-a",
+  "steps": [
+    {
+      "id": "step-a",
+      "type": "llm_call",
+      "prompt": "Step A: initialise the pipeline.",
+      "dependsOn": [],
+      "tools": []
+    },
+    {
+      "id": "step-b",
+      "type": "llm_call",
+      "prompt": "Step B: process output from step A.",
+      "dependsOn": ["step-a"],
+      "tools": []
+    },
+    {
+      "id": "step-c",
+      "type": "llm_call",
+      "prompt": "Step C: transform output from step B.",
+      "dependsOn": ["step-b"],
+      "tools": []
+    },
+    {
+      "id": "step-d",
+      "type": "llm_call",
+      "prompt": "Step D: finalise and emit result.",
+      "dependsOn": ["step-c"],
+      "tools": []
+    }
+  ]
+}

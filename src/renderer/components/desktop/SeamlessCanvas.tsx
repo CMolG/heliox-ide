@@ -33,7 +33,6 @@ import { FileViewerApp } from '@/renderer/components/atoms/apps/FileViewerApp';
 import { DiffViewerApp } from '@/renderer/components/atoms/apps/DiffViewerApp';
 import { BacklogKanbanWidget } from '@/renderer/components/atoms/widgets/BacklogKanbanWidget';
 import { PromptDevZoneApp } from '@/renderer/components/atoms/apps/PromptDevZoneApp';
-import { DesignSystemEditorApp } from '@/renderer/components/atoms/apps/DesignSystemEditorApp';
 import { NotificationCenterApp } from '@/renderer/components/atoms/apps/NotificationCenterApp';
 import { SessionStatusDock } from '@/renderer/components/atoms/plugins/SessionStatusDock';
 import { DesktopCanvasBg } from './DesktopCanvasBg';
@@ -414,12 +413,6 @@ export function SeamlessCanvas() {
         store.addWindow('prompt-dev-zone', { title: 'Prompt Dev Zone', position: { x: cx, y: cy }, size: { width: 720, height: 520 } });
         break;
       }
-      case 'design-system-editor': {
-        const existing = store.windows.find(w => w.type === 'design-system-editor');
-        if (existing) { store.navigateToWindow(existing.id); break; }
-        store.addWindow('design-system-editor', { title: 'Design System Editor', iconName: 'Palette', position: { x: cx, y: cy }, size: { width: 860, height: 640 } });
-        break;
-      }
       case 'arrange': {
         const wins = store.windows.filter(w => w.state !== 'minimized');
         const cols = Math.ceil(Math.sqrt(wins.length));
@@ -485,7 +478,6 @@ export function SeamlessCanvas() {
     if (win.type === 'diff-viewer') return <DiffViewerApp windowId={win.id} sessionId={win.sessionId} />;
     if (win.type === 'backlog') return <BacklogKanbanWidget windowId={win.id} />;
     if (win.type === 'prompt-dev-zone') return <PromptDevZoneApp windowId={win.id} />;
-    if (win.type === 'design-system-editor') return <DesignSystemEditorApp windowId={win.id} />;
     return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#525252', fontSize: 13 }}>Empty window</div>;
   };
 
@@ -538,7 +530,7 @@ export function SeamlessCanvas() {
           {/* Snap guide overlay */}
           <SnapGuides />
 
-          {/* Desktop Attachables (role / mod / flow / design-system) */}
+          {/* Desktop Attachables (role / mod / flow) */}
           {attachables.map(att => (
             <DesktopAttachable key={att.id} attachable={att} />
           ))}

@@ -191,20 +191,6 @@ export function Dock() {
           useDesktopStore.getState().addGrid();
           break;
         }
-        case 'design-system-editor': {
-          const existing = useDesktopStore.getState().windows.find(w => w.type === 'design-system-editor');
-          if (existing) {
-            navigateToWindow(existing.id);
-          } else {
-            const winId = addWindow('design-system-editor', {
-              title: 'Design System Editor',
-              iconName: 'Palette',
-              size: { width: 860, height: 640 },
-            });
-            requestAnimationFrame(() => navigateToWindow(winId));
-          }
-          break;
-        }
       }
     } else if (item.type === 'plugin' && item.pluginId) {
       const plugin = installedPlugins.find(p => p.id === item.pluginId);
@@ -330,7 +316,7 @@ export function Dock() {
 
       if (isOut) {
         // Map plugin category → attachable type
-        const typeMap: Record<string, AttachableType> = { roles: 'role', modifiers: 'mod', flows: 'flow', 'design-systems': 'design-system' };
+        const typeMap: Record<string, AttachableType> = { roles: 'role', modifiers: 'mod', flows: 'flow' };
         const attType = typeMap[plugin.category];
         if (attType) {
           // Convert screen coords → canvas coords (accounting for pan/zoom)

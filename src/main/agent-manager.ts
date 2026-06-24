@@ -117,7 +117,6 @@ export class AgentManager extends EventEmitter {
           feedbackPayload,
           rolePrompt: params.rolePrompt,
           modPrompts: params.modPrompts,
-          designSystemPrompt: params.designSystemPrompt,
           contextDigest,
           attachedDirectives,
         });

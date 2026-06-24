@@ -54,7 +54,7 @@ export function connectionsToEdges(connections: WindowConnection[]): Edge<Connec
 
 /**
  * Derives attachment edges by checking which attachables are linked
- * to windows via flowId, roleId, modifierIds, or designSystemId.
+ * to windows via flowId, roleId, or modifierIds.
  */
 export function deriveAttachmentEdges(
   windows: DesktopWindow[],
@@ -93,18 +93,6 @@ export function deriveAttachmentEdges(
       if (att) {
         edges.push({
           id: `att-link-${win.id}-mod-${att.id}`,
-          source: `att-${att.id}`,
-          target: `win-${win.id}`,
-          type: 'attachment',
-          data: { edgeType: 'attachment', attachableType: att.type },
-        });
-      }
-    }
-    if (win.designSystemId) {
-      const att = attachableByName.get(win.designSystemId);
-      if (att) {
-        edges.push({
-          id: `att-link-${win.id}-ds-${att.id}`,
           source: `att-${att.id}`,
           target: `win-${win.id}`,
           type: 'attachment',

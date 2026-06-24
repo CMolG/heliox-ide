@@ -21,3 +21,7 @@ results.tsv
 e2e/.e2e-user-data-dir
 playwright-report/
 test-results/
+/.env
+
+# Java SDK (sdk/java) build output
+sdk/java/target/

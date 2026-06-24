@@ -15,7 +15,6 @@ export type TutorialScenarioId =
   | 'file-explorer'
   | 'backlog'
   | 'marketplace'
-  | 'design-system-editor'
   | 'diff-viewer'
   | 'file-viewer';
 
@@ -28,7 +27,6 @@ export const ALL_TUTORIAL_SCENARIOS: TutorialScenarioId[] = [
   'file-explorer',
   'backlog',
   'marketplace',
-  'design-system-editor',
   'diff-viewer',
   'file-viewer',
 ];

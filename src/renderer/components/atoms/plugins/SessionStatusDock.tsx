@@ -34,7 +34,6 @@ interface SessionDockItem {
   roleId?: string;
   modifierIds: string[];
   flowId?: string;
-  designSystemId?: string;
 }
 
 function formatDuration(startMs: number, endMs?: number): string {
@@ -108,7 +107,6 @@ export function SessionStatusDock() {
           roleId: win?.roleId ?? s.roleId,
           modifierIds: win?.modifierIds ?? [],
           flowId: win?.flowId,
-          designSystemId: win?.designSystemId,
         };
       });
   }, [sessions, projectPath, finishedIds, windows]);
@@ -345,12 +343,6 @@ export function SessionStatusDock() {
               <div className="flex justify-between items-center">
                 <span className="text-[10px] text-[#636363] font-['Manrope',sans-serif]">Flow</span>
                 <span className="text-[11px] text-zinc-300 font-['Liberation_Mono',monospace] truncate max-w-[140px]">{hoveredData.flowId}</span>
-              </div>
-            )}
-            {hoveredData.designSystemId && (
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] text-[#636363] font-['Manrope',sans-serif]">Design System</span>
-                <span className="text-[11px] text-zinc-300 font-['Liberation_Mono',monospace] truncate max-w-[110px]">{hoveredData.designSystemId}</span>
               </div>
             )}
             {hoveredData.modifierIds.length > 0 && (

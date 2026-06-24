@@ -27,6 +27,7 @@ import {
 } from './opencode-providers';
 import { executeAgenticFlow } from './harness-engine/executor';
 import { setHarnessEventWindow } from './harness-engine/event-bus';
+import { assemblePipeline } from './meta-agent/pipeline-generator';
 
 const execFileAsync = promisify(execFile);
 
@@ -49,7 +50,7 @@ const IGNORED_DIRS = new Set([
   '.idea', '.vscode',
 ]);
 
-const MARKET_PROMPT_CATEGORIES = new Set(['flows', 'roles', 'mods', 'design-systems']);
+const MARKET_PROMPT_CATEGORIES = new Set(['flows', 'roles', 'mods', 'steps']);
 
 function getProjectConfigDir(projectPath: string): string {
   const hash = createHash('md5').update(projectPath).digest('hex').slice(0, 12);
@@ -209,6 +210,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }, 0);
 
     return { success: true };
+  });
+
+  ipcMain.handle('heliox:assemble-pipeline', async (_event, userIntent: string) => {
+    if (typeof userIntent !== 'string' || userIntent.trim().length === 0) {
+      return { success: false, error: 'A non-empty user intent is required.' };
+    }
+
+    try {
+      const data = await assemblePipeline(userIntent.trim());
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
   });
 
   ipcMain.handle('heliox:approve-diff', async (_event, diffId: string) => {

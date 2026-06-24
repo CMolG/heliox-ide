@@ -259,6 +259,56 @@
         "Run the full test suite to verify integration",
         "Mark the backlog item as complete and terminate"
       ]
+    },
+    {
+      "name": "auto-refiner",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdAutoFixHigh",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously analyzes and re-architects an existing codebase toward premium, production-grade quality through relentless functional (never cosmetic) upgrades.",
+      "tags": [
+        "refactor",
+        "evolution",
+        "features",
+        "quality",
+        "architecture",
+        "loop",
+        "infinite"
+      ],
+      "steps": [
+        "Analyze the project structure and inventory existing features",
+        "Autonomously generate a prioritized functional improvement backlog",
+        "Engineer real behavioral upgrades (not cosmetic) for the top item",
+        "Validate the improvement and log results to results.tsv",
+        "Commit changes and loop to the next backlog item"
+      ]
+    },
+    {
+      "name": "auto-saas-cost-reducer",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdSavings",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously audits infrastructure-as-code, paid API usage, and deployment configs to reduce cloud/SaaS spend without degrading the user experience.",
+      "tags": [
+        "finops",
+        "cost",
+        "infrastructure",
+        "optimization",
+        "cloud",
+        "loop",
+        "infinite"
+      ],
+      "steps": [
+        "Analyze IaC, deployment configs, and paid API usage",
+        "Inventory expensive operations and generate a prioritized FinOps backlog",
+        "Implement the highest-impact cost reduction without degrading UX",
+        "Validate savings and log to finops_results.tsv",
+        "Commit changes and loop to the next cost-saving target"
+      ]
     }
   ],
   "roles": [
@@ -576,6 +626,143 @@
         "accessibility",
         "wcag",
         "inclusive"
+      ]
+    },
+    {
+      "name": "output-budget",
+      "icon": "MdCompress",
+      "iconLibrary": "react-icons/md",
+      "description": "Optimizes for the smallest correct artifact and fewest tokens; enforces surgical edits over full rewrites.",
+      "tags": [
+        "concise",
+        "tokens",
+        "minimal",
+        "surgical"
+      ],
+      "incompatibleWith": [
+        "verbose-comments"
+      ]
+    },
+    {
+      "name": "regression-sentinel",
+      "icon": "MdGppGood",
+      "iconLibrary": "react-icons/md",
+      "description": "Brownfield guard: read before write, preserve public contracts, limit blast radius, and prove prior features survive.",
+      "tags": [
+        "regression",
+        "brownfield",
+        "contracts",
+        "safe"
+      ]
+    },
+    {
+      "name": "spec-adherence",
+      "icon": "MdRule",
+      "iconLibrary": "react-icons/md",
+      "description": "Treats the specification as law: extracts every rule into a checklist, implements each, and self-verifies adherence.",
+      "tags": [
+        "requirements",
+        "spec",
+        "domain",
+        "checklist"
+      ]
+    },
+    {
+      "name": "systematic-debug",
+      "icon": "MdTroubleshoot",
+      "iconLibrary": "react-icons/md",
+      "description": "Hypothesis-driven debugging: reproduce, isolate, hypothesize, and verify with an exact file:line — no blind loops.",
+      "tags": [
+        "debugging",
+        "root-cause",
+        "diagnosis",
+        "analysis"
+      ]
+    },
+    {
+      "name": "self-review",
+      "icon": "MdRateReview",
+      "iconLibrary": "react-icons/md",
+      "description": "Runs a finalization self-review against the objective and prior team artifacts before declaring a task complete.",
+      "tags": [
+        "review",
+        "quality",
+        "self-check",
+        "verification"
+      ]
+    },
+    {
+      "name": "edge-case-coverage",
+      "icon": "MdAccountTree",
+      "iconLibrary": "react-icons/md",
+      "description": "Forces robust handling of edge cases (nulls, boundaries, overflow, invalid types) with real general logic instead of happy-path or hardcoded answers.",
+      "tags": [
+        "edge-cases",
+        "robustness",
+        "algorithms",
+        "correctness"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "scaffold-structure",
+      "icon": "MdFolderSpecial",
+      "iconLibrary": "react-icons/md",
+      "description": "Lays down the folder and file skeleton for a feature or module, matching project conventions, before any logic is written.",
+      "tags": [
+        "scaffold",
+        "structure",
+        "skeleton",
+        "atomic"
+      ]
+    },
+    {
+      "name": "write-failing-tests",
+      "icon": "MdScience",
+      "iconLibrary": "react-icons/md",
+      "description": "Specifies desired behavior as executable tests that fail before any implementation exists (TDD red).",
+      "tags": [
+        "tdd",
+        "tests",
+        "red",
+        "atomic"
+      ]
+    },
+    {
+      "name": "implement-to-green",
+      "icon": "MdCheckCircle",
+      "iconLibrary": "react-icons/md",
+      "description": "Writes the smallest correct implementation needed to make failing tests pass (TDD green).",
+      "tags": [
+        "tdd",
+        "implementation",
+        "green",
+        "atomic"
+      ]
+    },
+    {
+      "name": "review-diff",
+      "icon": "MdRateReview",
+      "iconLibrary": "react-icons/md",
+      "description": "Reviews a change against a quality rubric and reports concrete findings without rewriting the code.",
+      "tags": [
+        "review",
+        "quality",
+        "diff",
+        "atomic"
+      ]
+    },
+    {
+      "name": "refactor-safely",
+      "icon": "MdCompress",
+      "iconLibrary": "react-icons/md",
+      "description": "Improves the internal structure of existing code without changing its observable behavior.",
+      "tags": [
+        "refactor",
+        "safe",
+        "behavior-preserving",
+        "atomic"
       ]
     }
   ]

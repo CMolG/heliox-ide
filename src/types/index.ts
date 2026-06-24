@@ -8,6 +8,7 @@
 // src/types/index.ts — Heliox IDE shared types
 import type { AgenticFlow } from './harness';
 import type { HarnessEventPayload } from './ipc-events';
+import type { PipelineAssembly } from './meta-agent';
 
 export interface PerformanceMetrics {
   lcp: number;            // Largest Contentful Paint (ms)
@@ -230,8 +231,6 @@ export interface RunAgentParams {
   rolePrompt?: string;
   /** Modifier prompt contents (injected by renderer from market/store) */
   modPrompts?: string[];
-  /** Design system prompt content (injected by renderer from market/store) */
-  designSystemPrompt?: string;
   /** Session role id used for context-map digest ranking */
   roleId?: string;
   /** Active directives to inject by mode */
@@ -339,6 +338,7 @@ export interface HelioxAPI {
   initBaselines: (flows: Flow[]) => Promise<IpcResult>;
   runAgent: (params: RunAgentParams) => Promise<IpcResult>;
   startHarness: (flow: AgenticFlow) => Promise<IpcResult>;
+  assemblePipeline: (userIntent: string) => Promise<{ success: boolean; data?: PipelineAssembly; error?: string }>;
   readMarketInventory: (projectPath: string) => Promise<import('./market').MarketInventory | null>;
   readMarketPrompt: (projectPath: string, category: string, name: string) => Promise<string | null>;
   readBacklog: (projectPath: string) => Promise<import('./market').BacklogCard[]>;

@@ -22,7 +22,7 @@ interface AttachableWrapperProps {
   children: React.ReactNode;
   color?: string;
   active?: boolean;
-  type: 'role' | 'mod' | 'flow' | 'design-system';
+  type: 'role' | 'mod' | 'flow';
   className?: string;
   onClick?: () => void;
   'aria-label'?: string;
@@ -39,7 +39,6 @@ const typePresets: Record<AttachableWrapperProps['type'], {
   role: { padding: '10px 14px', borderRadius: 10, accentWidth: 4, minHeight: 64 },
   mod: { padding: '6px 10px', borderRadius: 8, accentWidth: 3, minHeight: 40 },
   flow: { padding: '10px 14px', borderRadius: 10, accentWidth: 0, minHeight: 56 },
-  'design-system': { padding: '10px 14px', borderRadius: 10, accentWidth: 4, minHeight: 64 },
 };
 
 // ─── Component ───────────────────────────────────────────────────

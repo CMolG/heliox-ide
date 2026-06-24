@@ -11,7 +11,7 @@
  * - Does NOT own: node-level UI (delegated to MentalNode), edge styling (delegated to MentalEdge),
  *   or store persistence (delegated to desktop-store)
  */
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -35,11 +35,13 @@ import { MentalNode } from './MentalNode';
 import { StepNode } from './StepNode';
 import { MentalEdge } from './MentalEdge';
 import { MentalAttachActionBubble } from './MentalAttachActionBubble';
-import type { CanvasGraphNode, StepGraphNode } from '@/types/desktop';
+import { FrameNode } from '../nodes/FrameNode';
+import { MetaChat } from '../harness/MetaChat';
+import type { CanvasGraphNode, FrameGraphNode, StepGraphNode } from '@/types/desktop';
 
 // ─── Custom node/edge type registrations ─────────────────────────
 
-const nodeTypes = { mental: MentalNode, step: StepNode };
+const nodeTypes = { mental: MentalNode, step: StepNode, frame: FrameNode };
 const edgeTypes = { mental: MentalEdge };
 
 // ─── Declarative handle positions ────────────────────────────────
@@ -71,6 +73,10 @@ function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
   return node.type === 'step';
 }
 
+function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
+  return node.type === 'frame';
+}
+
 // ─── Inner component (requires ReactFlowProvider ancestor) ───────
 // Also owns the container div so it can access useReactFlow() for
 // the pane double-click → new node handler.
@@ -79,6 +85,7 @@ function MentalGraphCanvasInner() {
   const mentalNodes = useDesktopStore((s) => s.mentalNodes);
   const mentalEdges = useDesktopStore((s) => s.mentalEdges);
   const mentalTool = useDesktopStore((s) => s.mentalTool);
+  const mentalMode = useDesktopStore((s) => s.mentalMode);
   const canvasPan = useDesktopStore((s) => s.canvasPan);
   const canvasZoom = useDesktopStore((s) => s.canvasZoom);
   const updateMentalNode = useDesktopStore((s) => s.updateMentalNode);
@@ -86,9 +93,29 @@ function MentalGraphCanvasInner() {
   const createRamificationFromDrop = useDesktopStore((s) => s.createRamificationFromDrop);
   const setMentalEditingNodeId = useDesktopStore((s) => s.setMentalEditingNodeId);
   const setSelectedMentalNodeIds = useDesktopStore((s) => s.setSelectedMentalNodeIds);
+  const setCanvasPan = useDesktopStore((s) => s.setCanvasPan);
+  const setCanvasZoom = useDesktopStore((s) => s.setCanvasZoom);
 
   const { screenToFlowPosition } = useReactFlow();
   const connectingSourceRef = useRef<string | null>(null);
+  const showGraphBackdrop = mentalMode !== 'off' || mentalNodes.length > 0;
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      const ids = useDesktopStore.getState().selectedMentalNodeIds;
+      if (ids.length === 0) return;
+      event.preventDefault();
+      for (const id of ids) {
+        useDesktopStore.getState().removeMentalNode(id);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // ─── Map store nodes → React Flow nodes ──────────────────────
   // width + height on the node object (not only in style) is required by
@@ -103,16 +130,34 @@ function MentalGraphCanvasInner() {
 
   const rfNodes: Node[] = useMemo(() =>
     mentalNodes.map((n) => {
+      if (isFrameGraphNode(n)) {
+        return {
+          id: n.id,
+          type: 'frame',
+          position: n.position,
+          data: n.data,
+          width: n.width,
+          height: n.height,
+          style: { width: n.width, height: n.height },
+          dragHandle: '.pipeline-frame-node',
+          zIndex: 0,
+          selectable: true,
+        };
+      }
+
       if (isStepGraphNode(n)) {
         return {
           id: n.id,
           type: 'step',
+          ...(n.parentId ? { parentId: n.parentId, extent: 'parent' as const } : {}),
           position: n.position,
           data: n.data,
           width: n.width,
           height: n.height,
           style: { width: n.width, height: n.height },
           dragHandle: '.step-node-drag-handle',
+          handles: buildHandles(n.width, n.height, 'square'),
+          zIndex: 2,
         };
       }
 
@@ -217,6 +262,16 @@ function MentalGraphCanvasInner() {
     setMentalEditingNodeId(null);
   }, [setMentalEditingNodeId]);
 
+  const onViewportChange = useCallback((viewport: { x: number; y: number; zoom: number }) => {
+    const store = useDesktopStore.getState();
+    if (Math.abs(store.canvasPan.x - viewport.x) > 0.5 || Math.abs(store.canvasPan.y - viewport.y) > 0.5) {
+      setCanvasPan({ x: viewport.x, y: viewport.y });
+    }
+    if (Math.abs(store.canvasZoom - viewport.zoom) > 0.001) {
+      setCanvasZoom(viewport.zoom);
+    }
+  }, [setCanvasPan, setCanvasZoom]);
+
   return (
     <div
       className="mental-graph-canvas-container"
@@ -261,11 +316,12 @@ function MentalGraphCanvasInner() {
         nodesConnectable={true}
         elementsSelectable={true}
         viewport={{ x: canvasPan.x, y: canvasPan.y, zoom: canvasZoom }}
-        onViewportChange={() => {}}
+        onViewportChange={onViewportChange}
       >
-        <Background color="rgba(255,255,255,0.03)" gap={24} />
+        {showGraphBackdrop && <Background color="rgba(255,255,255,0.03)" gap={24} />}
       </ReactFlow>
       <MentalAttachActionBubble />
+      <MetaChat />
     </div>
   );
 }
@@ -273,13 +329,6 @@ function MentalGraphCanvasInner() {
 // ─── Public export (wraps in provider) ───────────────────────────
 
 export function MentalGraphCanvas() {
-  const mentalMode = useDesktopStore((s) => s.mentalMode);
-  const mentalNodes = useDesktopStore((s) => s.mentalNodes);
-
-  // Always render when there are existing mental nodes (so they stay visible).
-  // Only hide the canvas when there are zero nodes AND mode is off.
-  if (mentalMode === 'off' && mentalNodes.length === 0) return null;
-
   return (
     <ReactFlowProvider>
       <MentalGraphCanvasInner />

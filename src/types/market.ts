@@ -37,108 +37,28 @@ export interface MarketMod {
   description: string;
   tags: string[];
   incompatibleWith?: string[];
+  /**
+   * Mods sharing an `exclusiveGroup` are mutually incompatible — only one can be
+   * active at a time. This is how a design system is modeled: as a mod in the
+   * `design-system` exclusive group, so two design systems can never stack and
+   * blend their concepts.
+   */
+  exclusiveGroup?: string;
 }
 
-export interface MarketDesignSystemPreview {
-  typography: {
-    heading: string;   // CSS font-family stack
-    body: string;      // CSS font-family stack
-    mono: string;      // CSS font-family stack
-  };
-  tokens: {
-    accent: string;    // usually mirrors accentColor
-    bg: string;
-    surface: string;
-    text: string;
-    radius: number;    // px
-    gap: number;       // px base spacing
-  };
-  components: {
-    buttonLabel: string;
-    inputPlaceholder: string;
-    chipLabel: string;
-    cardTitle: string;
-    cardMeta: string;
-  };
-}
-
-// ─── Brand Identity Card Types ───────────────────────────────────
-
-export interface MarketBrandIdentityBrand {
-  name: string;
-  tagline: string;
-  description: string;
-  initials: string;
-  ctaLabel: string;
-  badge: string;
-}
-
-export interface MarketBrandIdentityCtaStyle {
-  background: string;
-  color: string;
-  border: string;
-  borderRadius: string;
-  padding: string;
-  fontWeight: string;
-  letterSpacing: string;
-  textTransform: string;
-  fontSize: string;
-  cursor: string;
-  boxShadow?: string;
-  fontFamily?: string;
-}
-
-export interface MarketBrandIdentityTheme {
-  name: string;
-  fontDisplay: string;
-  fontBody: string;
-  fontMono: string;
-  primary: string;
-  secondary: string;
-  accent: string;
-  surface: string;
-  text: string;
-  textMuted: string;
-  textOnPrimary: string;
-  border: string;
-  radius: string;
-  badgeBg: string;
-  badgeColor: string;
-  spacing: string;
-  letterSpacing: string;
-  ctaStyle: MarketBrandIdentityCtaStyle;
-}
-
-export interface MarketBrandIdentityCard {
-  brand: MarketBrandIdentityBrand;
-  theme: MarketBrandIdentityTheme;
-}
-
-// ─── Design System ──────────────────────────────────────────────
-
-export interface MarketDesignSystem {
+export interface MarketStep {
   name: string;
   icon: string;
   iconLibrary: string;
   description: string;
   tags: string[];
-  /** Primary accent color for the design system (hex) */
-  accentColor?: string;
-  /** Preview color tokens from the palette */
-  colorTokens?: string[];
-  /** The full design system prompt/spec injected into constraints (loaded from market/design-systems/*.md) */
-  prompt?: string;
-  /** Micro-preview spec for visual sample rendering */
-  preview?: MarketDesignSystemPreview;
-  /** Brand Identity Card data for rich preview rendering */
-  brandIdentityCard?: MarketBrandIdentityCard;
 }
 
 export interface MarketInventory {
   flows: MarketFlow[];
   roles: MarketRole[];
   mods: MarketMod[];
-  designSystems: MarketDesignSystem[];
+  steps?: MarketStep[];
 }
 
 // ─── Backlog Cards (parsed from .backlog/*.md YAML frontmatter) ──
@@ -170,6 +90,6 @@ export interface ConnectorState {
 
 export interface LoadedPrompt {
   name: string;
-  category: 'flows' | 'roles' | 'mods' | 'design-systems';
+  category: 'flows' | 'roles' | 'mods' | 'steps';
   content: string;
 }

@@ -24,7 +24,6 @@ export function buildAgentPrompt(params: {
   feedbackPayload?: AgentFeedbackPayload;
   rolePrompt?: string;
   modPrompts?: string[];
-  designSystemPrompt?: string;
   contextDigest?: string;
   attachedDirectives?: {
     system?: string;
@@ -35,7 +34,7 @@ export function buildAgentPrompt(params: {
 }): string {
   const {
     userInstruction, flows, feedbackPayload,
-    rolePrompt, modPrompts, designSystemPrompt,
+    rolePrompt, modPrompts,
     contextDigest, attachedDirectives,
     stupidityMode = true,
   } = params;
@@ -45,7 +44,6 @@ export function buildAgentPrompt(params: {
     .withAttachedDirectives(attachedDirectives)
     .withPersona(rolePrompt ?? '')
     .withStrictConstraints(modPrompts ?? [])
-    .withDesignSystem(designSystemPrompt)
     .withContextDigest(contextDigest)
     .withFlows(flows)
     .withFeedback(feedbackPayload)

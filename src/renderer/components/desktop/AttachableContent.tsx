@@ -2,8 +2,8 @@
  * AttachableContent.tsx — Renderer Desktop Surface Component
  *
  * Responsibility:
- * - Renders the visual content of a canvas attachable (role / mod / flow /
- *   design-system) based on its matched market inventory entry.
+ * - Renders the visual content of a canvas attachable (role / mod / flow)
+ *   based on its matched market inventory entry.
  *
  * Boundaries:
  * - Owns: the type-dispatch and fallback chip rendering.
@@ -15,18 +15,16 @@ import React from 'react';
 import { AttachableRole } from '../atoms/attachables/AttachableRole';
 import { AttachableMod } from '../atoms/attachables/AttachableMod';
 import { AttachableFlow } from '../atoms/attachables/AttachableFlow';
-import { AttachableDesignSystem } from '../atoms/attachables/AttachableDesignSystem';
 import type { DesktopAttachable as AttachableT } from '@/types/desktop';
-import type { MarketRole, MarketMod, MarketFlow, MarketDesignSystem } from '@/types/market';
+import type { MarketRole, MarketMod, MarketFlow } from '@/types/market';
 import { TYPE_META } from './DesktopAttachable';
 import { kebabToTitle } from './attachable-helpers';
 import { theme } from '../../logic/theme';
 
-export function AttachableContent({ attachable, marketItem }: { attachable: AttachableT; marketItem: MarketRole | MarketMod | MarketFlow | MarketDesignSystem | null }) {
+export function AttachableContent({ attachable, marketItem }: { attachable: AttachableT; marketItem: MarketRole | MarketMod | MarketFlow | null }) {
   if (attachable.type === 'role' && marketItem) return <AttachableRole role={marketItem as MarketRole} />;
   if (attachable.type === 'mod' && marketItem) return <AttachableMod mod={marketItem as MarketMod} />;
   if (attachable.type === 'flow' && marketItem) return <AttachableFlow flow={marketItem as MarketFlow} />;
-  if (attachable.type === 'design-system' && marketItem) return <AttachableDesignSystem designSystem={marketItem as MarketDesignSystem} />;
 
   const meta = TYPE_META[attachable.type];
   return (

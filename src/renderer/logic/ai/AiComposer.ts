@@ -19,7 +19,6 @@
  *     .withPersona("You are a Senior Cloud Architect...")
  *     .withCognitiveSteps(["Analyze feasibility", "Draft architecture"])
  *     .withStrictConstraints(["No AWS services allowed", "Keep under 500 words"])
- *     .withDesignSystem(dsPrompt)
  *     .withFlows(flows)
  *     .withFeedback(feedbackPayload)
  *     .withMemory(excitementProfile)
@@ -74,7 +73,6 @@ export class AiComposer {
 
   // 4. Narrowing Constraints (RISEN: Narrowing)
   private strictConstraints: string[] = [];
-  private designSystemPrompt: string | null = null;
   private contextDigest: string | null = null;
   private memorySection: string | null = null;
   private flows: Flow[] = [];
@@ -141,11 +139,6 @@ export class AiComposer {
    */
   withStrictConstraints(constraints: string[]): this {
     if (constraints.length > 0) this.strictConstraints = constraints;
-    return this;
-  }
-
-  withDesignSystem(prompt: string | undefined | null): this {
-    if (prompt) this.designSystemPrompt = prompt;
     return this;
   }
 
@@ -281,17 +274,14 @@ Do not take shortcuts. Show your work and evaluate trade-offs at each step.`;
   }
 
   /**
-   * Aggregates all constraints, design systems, and external context
-   * into a single unified "ruleset" block.
+   * Aggregates all constraints and external context into a single unified
+   * "ruleset" block.
    */
   private buildNarrowingSection(): string {
     const parts: string[] = [];
 
     if (this.strictConstraints.length > 0) {
       parts.push(`[ABSOLUTE RULES]\n- ${this.strictConstraints.join('\n- ')}`);
-    }
-    if (this.designSystemPrompt) {
-      parts.push(`[DESIGN SYSTEM]\n${this.designSystemPrompt}`);
     }
     if (this.memorySection) {
       parts.push(`[LEARNED PREFERENCES (MEMORY)]\n${this.memorySection}`);

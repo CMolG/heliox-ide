@@ -2,8 +2,8 @@
  * DesktopAttachable.tsx — Renderer Desktop Surface Component
  *
  * Responsibility:
- * - Renders a draggable canvas item for the four AttachableType variants
- *   (role / mod / flow / design-system).
+ * - Renders a draggable canvas item for the AttachableType variants
+ *   (role / mod / flow).
  *
  * Boundaries:
  * - Owns: component-level rendering, styling, and local interaction wiring
@@ -33,7 +33,6 @@ export const TYPE_META: Record<AttachableType, { color: string; icon: string; la
   role: { color: '#E87040', icon: 'User', label: 'Role' },
   mod: { color: '#4285F4', icon: 'Wrench', label: 'Mod' },
   flow: { color: '#A78BFA', icon: 'Route', label: 'Flow' },
-  'design-system': { color: '#10B981', icon: 'Palette', label: 'Design System' },
 };
 
 // ─── Component ──────────────────────────────────────────────────

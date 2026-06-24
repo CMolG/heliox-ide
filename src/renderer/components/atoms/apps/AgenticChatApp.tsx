@@ -458,24 +458,6 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
       }
     }
 
-    // Collect design system prompt separately (passed to buildAgentPrompt).
-    let designSystemPrompt: string | undefined;
-    if (win?.designSystemId && projectPath) {
-      try {
-        designSystemPrompt = await window.helioxAPI.readMarketPrompt(
-          projectPath,
-          'design-systems',
-          win.designSystemId,
-        ) ?? undefined;
-      } catch { /* fallback to hydrated inventory prompt */ }
-
-      if (!designSystemPrompt) {
-        designSystemPrompt = marketInventory?.designSystems
-          ?.find(ds => ds.name === win.designSystemId)
-          ?.prompt;
-      }
-    }
-
     // Infinity loop
     if (infiniteLoop) {
       instruction = `${INFINITY_LOOP_PROMPT}\n\n${instruction}`;
@@ -532,7 +514,6 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
         runE2E: appSettings.runE2E,
         rolePrompt,
         modPrompts: modPrompts.length > 0 ? modPrompts : undefined,
-        designSystemPrompt,
         roleId: win?.roleId,
         contextDigest: combinedDigest,
       });

@@ -46,7 +46,6 @@ export function PromptDevZoneApp({ windowId }: PromptDevZoneAppProps) {
   const [stupidityMode, setStupidityMode] = useState(true);
   const [selectedRoleId, setSelectedRoleId] = useState<string>('');
   const [selectedModNames, setSelectedModNames] = useState<Set<string>>(new Set());
-  const [selectedDesignSystem, setSelectedDesignSystem] = useState<string>('');
   const [includeFlows, setIncludeFlows] = useState(false);
   const [includeOutputSchema, setIncludeOutputSchema] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -54,10 +53,8 @@ export function PromptDevZoneApp({ windowId }: PromptDevZoneAppProps) {
   // ── Resolved markdown content (loaded from .md files) ──────────
   const [resolvedRolePrompt, setResolvedRolePrompt] = useState<string | null>(null);
   const [resolvedModPrompts, setResolvedModPrompts] = useState<string[]>([]);
-  const [resolvedDSPrompt, setResolvedDSPrompt] = useState<string | null>(null);
 
   const mods = marketInventory?.mods ?? [];
-  const designSystems = marketInventory?.designSystems ?? [];
   const marketRoles = marketInventory?.roles ?? [];
 
   // ── Load role markdown when selection changes ──────────────────
@@ -85,15 +82,6 @@ export function PromptDevZoneApp({ windowId }: PromptDevZoneAppProps) {
     resolveMarketPrompts(projectPath, 'mods', names).then(setResolvedModPrompts);
   }, [selectedModNames, projectPath]);
 
-  // ── Load design system markdown when selection changes ─────────
-  useEffect(() => {
-    if (!selectedDesignSystem || !projectPath) {
-      setResolvedDSPrompt(null);
-      return;
-    }
-    resolveMarketPrompt(projectPath, 'design-systems', selectedDesignSystem).then(setResolvedDSPrompt);
-  }, [selectedDesignSystem, projectPath]);
-
   // ── Compose prompt live ────────────────────────────────────────
   const composedPrompt = useMemo(() => {
     if (!instruction.trim()) return '// Enter an instruction above to preview the composed prompt';
@@ -101,8 +89,7 @@ export function PromptDevZoneApp({ windowId }: PromptDevZoneAppProps) {
     let composer = new AiComposer(instruction)
       .withStupidityMode(stupidityMode)
       .withPersona(resolvedRolePrompt ?? '')
-      .withStrictConstraints(resolvedModPrompts)
-      .withDesignSystem(resolvedDSPrompt);
+      .withStrictConstraints(resolvedModPrompts);
 
     if (includeFlows && flows.length > 0) {
       composer = composer.withFlows(flows);
@@ -113,7 +100,7 @@ export function PromptDevZoneApp({ windowId }: PromptDevZoneAppProps) {
     }
 
     return composer.compose();
-  }, [instruction, stupidityMode, resolvedRolePrompt, resolvedModPrompts, resolvedDSPrompt, includeFlows, flows, includeOutputSchema]);
+  }, [instruction, stupidityMode, resolvedRolePrompt, resolvedModPrompts, includeFlows, flows, includeOutputSchema]);
 
   // ── Metrics ────────────────────────────────────────────────────
   const charCount = composedPrompt.length;
@@ -257,24 +244,6 @@ export function PromptDevZoneApp({ windowId }: PromptDevZoneAppProps) {
               ariaLabel="Select role"
             />
           </div>
-
-          {/* Design System */}
-          {designSystems.length > 0 && (
-            <div style={sectionStyle}>
-              <span style={labelStyle}>Design System</span>
-              <HelioxDropdown
-                value={selectedDesignSystem}
-                options={[
-                  { value: '', label: 'None' },
-                  ...designSystems.map(ds => ({ value: ds.name, label: ds.name })),
-                ]}
-                onChange={setSelectedDesignSystem}
-                variant="field"
-                fontSize={11}
-                ariaLabel="Select design system"
-              />
-            </div>
-          )}
 
           {/* Mods */}
           {mods.length > 0 && (

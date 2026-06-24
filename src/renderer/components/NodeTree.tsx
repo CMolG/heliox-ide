@@ -24,7 +24,6 @@ const TYPE_META: Record<AttachableType, { color: string; icon: string; label: st
   role: { color: '#E87040', icon: 'User', label: 'Role' },
   mod:  { color: '#4285F4', icon: 'Wrench', label: 'Mod' },
   flow: { color: '#A78BFA', icon: 'Route', label: 'Flow' },
-  'design-system': { color: '#10B981', icon: 'Palette', label: 'Design System' },
 };
 
 function kebabToTitle(str: string): string {
@@ -195,7 +194,6 @@ export function NodeTree() {
   const fileViewerWindows = sortedWindows.filter(w => w.type === 'file-viewer');
   const pluginWindows = sortedWindows.filter(w => w.type === 'plugin');
   const backlogWindows = sortedWindows.filter(w => w.type === 'backlog');
-  const designEditorWindows = sortedWindows.filter(w => w.type === 'design-system-editor');
   const promptDevWindows = sortedWindows.filter(w => w.type === 'prompt-dev-zone');
 
   const getAttachedItems = (win: typeof windows[0]) => {
@@ -518,7 +516,6 @@ export function NodeTree() {
           )}
           {renderGroup('Backlog', backlogWindows)}
           {renderGroup('Plugins', pluginWindows)}
-          {renderGroup('Design System', designEditorWindows)}
           {renderGroup('Prompt Dev Zone', promptDevWindows)}
 
           {/* Grid layouts */}

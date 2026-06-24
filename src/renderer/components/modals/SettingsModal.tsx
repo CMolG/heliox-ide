@@ -169,7 +169,7 @@ function RemoteControlSection() {
 const TUTORIAL_GROUPS: { label: string; ids: TutorialScenarioId[] }[] = [
   { label: 'Workspace', ids: ['workspace'] },
   { label: 'Market Items', ids: ['roles', 'mods', 'flows'] },
-  { label: 'Apps', ids: ['chat', 'file-explorer', 'backlog', 'marketplace', 'design-system-editor', 'diff-viewer', 'file-viewer'] },
+  { label: 'Apps', ids: ['chat', 'file-explorer', 'backlog', 'marketplace', 'diff-viewer', 'file-viewer'] },
 ];
 
 export function SettingsModal() {

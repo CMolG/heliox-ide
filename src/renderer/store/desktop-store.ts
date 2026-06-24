@@ -13,10 +13,11 @@ import type {
   DesktopWindow, WindowPosition, WindowSize, WindowConnection,
   DockItem, Plugin, PluginCategory, SnapGuide, CliProvider, ConnectionPort, CanvasPan,
   DesktopAttachable, AttachableType, DesktopGrid, MentalMode, MentalShape,
-  MentalTool, MentalGraphNode, MentalGraphEdge, StepGraphNode, CanvasGraphNode,
+  MentalTool, MentalGraphNode, MentalGraphEdge, StepGraphNode, CanvasGraphNode, FrameGraphNode,
 } from '@/types/desktop';
 import type { MarketInventory, MarketMod, MarketRole, BacklogCard } from '@/types/market';
 import type { TutorialScenarioId, TutorialProgress } from '@/types/tutorial';
+import type { PipelineAssembly } from '@/types/meta-agent';
 
 
 // ─── Grid cell geometry helper ───────────────────────────────────
@@ -84,7 +85,6 @@ const DEFAULT_DOCK_ITEMS: DockItem[] = [
   { id: 'dock-grid', type: 'action', label: 'Grid', iconName: 'LayoutGrid', action: 'grid' },
   { id: 'dock-mental-draw-toggle', type: 'action', label: 'Mental', iconName: 'PenTool', action: 'mental-draw-toggle' },
   { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
-  { id: 'dock-design-system-editor', type: 'action', label: 'Design System', iconName: 'Palette', action: 'design-system-editor' },
   ...(import.meta.env.DEV ? [
     { id: 'dock-prompt-dev-zone', type: 'action', label: 'Prompt Dev Zone', iconName: 'FlaskConical', action: 'prompt-dev-zone' } satisfies DockItem,
   ] : []),
@@ -139,13 +139,40 @@ export interface DesktopNotification {
 
 interface AddStepNodeInput {
   id?: string;
+  parentId?: string;
   position?: WindowPosition;
   width?: number;
   height?: number;
   title?: string;
   description?: string;
+  prompt?: string;
+  roleId?: string;
+  modIds?: string[];
   mods?: MarketMod[];
   roles?: MarketRole[];
+}
+
+interface AddFrameNodeInput {
+  id?: string;
+  position: WindowPosition;
+  width: number;
+  height: number;
+  title: string;
+  description?: string;
+  childIds?: string[];
+  missingCapabilitiesRequested?: string[];
+}
+
+interface InsertPipelineAssemblyInput {
+  assembly: PipelineAssembly;
+  position: WindowPosition;
+  frameWidth: number;
+  frameHeight: number;
+}
+
+interface InsertPipelineAssemblyResult {
+  frameId: string;
+  stepIds: string[];
 }
 
 // ─── Store Interface ─────────────────────────────────────────────
@@ -166,8 +193,6 @@ interface DesktopStore {
   removeRole: (windowId: string) => void;
   addModifier: (windowId: string, modifierId: string) => boolean;
   removeModifier: (windowId: string, modifierId: string) => void;
-  assignDesignSystem: (windowId: string, designSystemId: string) => boolean;
-  removeDesignSystem: (windowId: string) => void;
   updateWindowTitle: (windowId: string, title: string) => void;
 
   // Multi-selection
@@ -276,7 +301,9 @@ interface DesktopStore {
   setMentalEditingNodeId: (nodeId: string | null) => void;
   addMentalNode: (node: Omit<MentalGraphNode, 'id' | 'createdAt'> & { id?: string }) => string;
   updateMentalNode: (nodeId: string, patch: Partial<Pick<MentalGraphNode, 'position' | 'width' | 'height' | 'text' | 'color'>>) => void;
+  addFrameNode: (node: AddFrameNodeInput) => string;
   addStepNode: (node?: AddStepNodeInput) => string;
+  insertPipelineAssembly: (input: InsertPipelineAssemblyInput) => InsertPipelineAssemblyResult;
   addModToStep: (stepId: string, modData: MarketMod) => boolean;
   removeModFromStep: (stepId: string, modId: string) => void;
   addRoleToStep: (stepId: string, roleData: MarketRole) => boolean;
@@ -385,8 +412,41 @@ function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
   return node.type === 'step';
 }
 
+function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
+  return node.type === 'frame';
+}
+
 function marketEntityId(entity: MarketMod | MarketRole): string {
   return entity.name;
+}
+
+function titleFromId(id: string): string {
+  return id
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function roleFromId(roleId: string): MarketRole {
+  return {
+    name: roleId,
+    icon: 'MdPerson',
+    iconLibrary: 'react-icons/md',
+    description: `${titleFromId(roleId)} role selected by the Meta-Agent.`,
+    tags: ['meta-agent', 'generated'],
+    color: '#E87040',
+  };
+}
+
+function modFromId(modId: string): MarketMod {
+  return {
+    name: modId,
+    icon: 'MdTune',
+    iconLibrary: 'react-icons/md',
+    description: `${titleFromId(modId)} mod selected by the Meta-Agent.`,
+    tags: ['meta-agent', 'generated'],
+  };
 }
 
 // ─── Store ───────────────────────────────────────────────────────
@@ -558,16 +618,6 @@ export const useDesktopStore = create<DesktopStore>()(
             : w
         ),
       })),
-
-      assignDesignSystem: (windowId, designSystemId) => {
-        const state = get();
-        const win = state.windows.find(w => w.id === windowId);
-        if (!win || win.designSystemId) return false;
-        state._updateWindow(windowId, { designSystemId });
-        return true;
-      },
-
-      removeDesignSystem: (windowId) => get()._updateWindow(windowId, { designSystemId: undefined }),
 
       updateWindowTitle: (windowId, title) => get()._updateWindow(windowId, { title }),
 
@@ -811,13 +861,6 @@ export const useDesktopStore = create<DesktopStore>()(
           success = state.assignRole(windowId, att.name);
         } else if (att.type === 'mod') {
           success = state.addModifier(windowId, att.name);
-        } else if (att.type === 'design-system') {
-          // If a design system is already assigned, detach it first (respawns as attachable)
-          const currentWin = get().windows.find(w => w.id === windowId);
-          if (currentWin?.designSystemId) {
-            state.detachFromWindow(windowId, 'design-system', currentWin.designSystemId);
-          }
-          success = state.assignDesignSystem(windowId, att.name);
         }
 
         if (success) {
@@ -850,8 +893,6 @@ export const useDesktopStore = create<DesktopStore>()(
           state.removeModifier(windowId, name);
         } else if (type === 'flow') {
           state.disconnectFlow(windowId);
-        } else if (type === 'design-system') {
-          state.removeDesignSystem(windowId);
         }
 
         // Respawn as attachable near the window
@@ -873,8 +914,6 @@ export const useDesktopStore = create<DesktopStore>()(
           state.removeModifier(windowId, name);
         } else if (type === 'flow') {
           state.disconnectFlow(windowId);
-        } else if (type === 'design-system') {
-          state.removeDesignSystem(windowId);
         }
       },
 
@@ -1258,12 +1297,36 @@ export const useDesktopStore = create<DesktopStore>()(
         }),
       })),
 
+      addFrameNode: (input) => {
+        const id = input.id ?? `frame-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const node: FrameGraphNode = {
+          id,
+          type: 'frame',
+          position: input.position,
+          width: input.width,
+          height: input.height,
+          text: input.title,
+          color: 'rgba(255,255,255,0.04)',
+          shape: 'square',
+          data: {
+            title: input.title,
+            description: input.description,
+            childIds: [...(input.childIds ?? [])],
+            missingCapabilitiesRequested: [...(input.missingCapabilitiesRequested ?? [])],
+          },
+          createdAt: Date.now(),
+        };
+        set((s) => ({ mentalNodes: [...s.mentalNodes, node] }));
+        return id;
+      },
+
       addStepNode: (input = {}) => {
         const state = get();
         const id = input.id ?? `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const node: StepGraphNode = {
           id,
           type: 'step',
+          ...(input.parentId ? { parentId: input.parentId } : {}),
           position: input.position ?? getViewportCenteredSpawnPosition(state.canvasPan, state.canvasZoom),
           width: input.width ?? DEFAULT_STEP_WIDTH,
           height: input.height ?? DEFAULT_STEP_HEIGHT,
@@ -1273,6 +1336,9 @@ export const useDesktopStore = create<DesktopStore>()(
           data: {
             title: input.title ?? 'Pipeline step',
             description: input.description,
+            prompt: input.prompt,
+            roleId: input.roleId,
+            modIds: [...(input.modIds ?? [])],
             mods: [...(input.mods ?? [])],
             roles: [...(input.roles ?? [])],
           },
@@ -1280,6 +1346,83 @@ export const useDesktopStore = create<DesktopStore>()(
         };
         set((s) => ({ mentalNodes: [...s.mentalNodes, node] }));
         return id;
+      },
+
+      insertPipelineAssembly: ({ assembly, position, frameWidth, frameHeight }) => {
+        const frameId = `frame-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const stepIdMap = new Map<string, string>();
+        const stepIds = assembly.steps.map((step) => {
+          const nodeId = `${frameId}-${step.id}`;
+          stepIdMap.set(step.id, nodeId);
+          return nodeId;
+        });
+        const frameNode: FrameGraphNode = {
+          id: frameId,
+          type: 'frame',
+          position,
+          width: frameWidth,
+          height: frameHeight,
+          text: assembly.frameTitle,
+          color: 'rgba(255,255,255,0.04)',
+          shape: 'square',
+          data: {
+            title: assembly.frameTitle,
+            description: assembly.description,
+            childIds: stepIds,
+            missingCapabilitiesRequested: [...assembly.missingCapabilitiesRequested],
+          },
+          createdAt: Date.now(),
+        };
+        const stepNodes: StepGraphNode[] = assembly.steps.map((step, index) => ({
+          id: stepIdMap.get(step.id)!,
+          type: 'step',
+          parentId: frameId,
+          position: {
+            x: 56 + index * 250,
+            y: 96 + (index % 2) * 34,
+          },
+          width: DEFAULT_STEP_WIDTH,
+          height: DEFAULT_STEP_HEIGHT,
+          text: titleFromId(step.id),
+          color: '#1a1a1a',
+          shape: 'square',
+          data: {
+            title: titleFromId(step.id),
+            description: step.prompt,
+            prompt: step.prompt,
+            roleId: step.roleId,
+            modIds: [...step.modIds],
+            mods: step.modIds.map(modFromId),
+            roles: step.roleId ? [roleFromId(step.roleId)] : [],
+          },
+          createdAt: Date.now(),
+        }));
+        const edges: MentalGraphEdge[] = assembly.steps.flatMap((step) => (
+          step.prevStepIds.flatMap((prevStepId) => {
+            const sourceId = stepIdMap.get(prevStepId);
+            const targetId = stepIdMap.get(step.id);
+            if (!sourceId || !targetId || sourceId === targetId) return [];
+            return [{
+              id: `me-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              sourceId,
+              targetId,
+              sourceHandle: 'right',
+              targetHandle: 'left',
+              type: 'link',
+              color: DEFAULT_MENTAL_EDGE_COLOR,
+              createdAt: Date.now(),
+            }];
+          })
+        ));
+
+        set((s) => ({
+          mentalNodes: [...s.mentalNodes, frameNode, ...stepNodes],
+          mentalEdges: [...s.mentalEdges, ...edges],
+          selectedMentalNodeIds: [frameId],
+          mentalEditingNodeId: null,
+        }));
+
+        return { frameId, stepIds };
       },
 
       addModToStep: (stepId, modData) => {
@@ -1352,11 +1495,31 @@ export const useDesktopStore = create<DesktopStore>()(
         }),
       })),
 
-      removeMentalNode: (nodeId) => set((s) => ({
-        mentalNodes: s.mentalNodes.filter((n) => n.id !== nodeId),
-        mentalEdges: s.mentalEdges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId),
-        mentalEditingNodeId: s.mentalEditingNodeId === nodeId ? null : s.mentalEditingNodeId,
-      })),
+      removeMentalNode: (nodeId) => set((s) => {
+        const target = s.mentalNodes.find((n) => n.id === nodeId);
+        const idsToRemove = new Set<string>([nodeId]);
+        if (target && isFrameGraphNode(target)) {
+          for (const childId of target.data.childIds) idsToRemove.add(childId);
+          for (const node of s.mentalNodes) {
+            if ('parentId' in node && node.parentId === nodeId) idsToRemove.add(node.id);
+          }
+        }
+
+        return {
+          mentalNodes: s.mentalNodes
+            .filter((n) => !idsToRemove.has(n.id))
+            .map((n) => {
+              if (!isFrameGraphNode(n)) return n;
+              const nextChildIds = n.data.childIds.filter((childId) => !idsToRemove.has(childId));
+              return nextChildIds.length === n.data.childIds.length
+                ? n
+                : { ...n, data: { ...n.data, childIds: nextChildIds } };
+            }),
+          mentalEdges: s.mentalEdges.filter((e) => !idsToRemove.has(e.sourceId) && !idsToRemove.has(e.targetId)),
+          selectedMentalNodeIds: s.selectedMentalNodeIds.filter((id) => !idsToRemove.has(id)),
+          mentalEditingNodeId: s.mentalEditingNodeId && idsToRemove.has(s.mentalEditingNodeId) ? null : s.mentalEditingNodeId,
+        };
+      }),
 
       addMentalEdge: (sourceId, targetId, edgeType = 'link', sourceHandle, targetHandle) => {
         if (!sourceId || !targetId || sourceId === targetId) return null;

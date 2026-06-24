@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import type { PipelineAssembly } from '@/types/meta-agent';
 import { useDesktopStore } from '../store/desktop-store';
 
 // Reset store to pristine state before each test
@@ -925,6 +926,76 @@ describe('Mental Graph nodes and directed edges', () => {
     expect(useDesktopStore.getState().mentalEditingNodeId).toBe(id);
     store.removeMentalNode(id);
     expect(useDesktopStore.getState().mentalEditingNodeId).toBeNull();
+  });
+
+  it('insertPipelineAssembly creates a frame with relative step children and dependency edges', () => {
+    const assembly: PipelineAssembly = {
+      frameTitle: 'Jira Delivery Pipeline',
+      description: 'Ticket to tests to implementation.',
+      missingCapabilitiesRequested: ['Jira integration'],
+      steps: [
+        { id: 'read-ticket', prompt: 'Extract acceptance criteria from the Jira ticket.', roleId: 'confident-executor', modIds: [], prevStepIds: [] },
+        { id: 'write-tests', prompt: 'Write unit tests that encode the acceptance criteria.', roleId: 'confident-executor', modIds: ['anti-verification-interceptor'], prevStepIds: ['read-ticket'] },
+        { id: 'implement-function', prompt: 'Implement the minimal function that satisfies the tests.', roleId: 'confident-executor', modIds: ['anti-verification-interceptor'], prevStepIds: ['write-tests'] },
+      ],
+    };
+
+    const result = useDesktopStore.getState().insertPipelineAssembly({
+      assembly,
+      position: { x: 400, y: 120 },
+      frameWidth: 1120,
+      frameHeight: 420,
+    });
+    const state = useDesktopStore.getState();
+    const frame = state.mentalNodes.find((node) => node.id === result.frameId);
+    const steps = state.mentalNodes.filter((node) => result.stepIds.includes(node.id));
+
+    expect(frame).toMatchObject({
+      type: 'frame',
+      position: { x: 400, y: 120 },
+      width: 1120,
+      height: 420,
+      data: {
+        title: 'Jira Delivery Pipeline',
+        childIds: result.stepIds,
+        missingCapabilitiesRequested: ['Jira integration'],
+      },
+    });
+    expect(steps).toHaveLength(3);
+    expect(steps.every((node) => 'parentId' in node && node.parentId === result.frameId)).toBe(true);
+    expect(state.mentalEdges).toHaveLength(2);
+    expect(state.mentalEdges[0]).toMatchObject({
+      sourceId: result.stepIds[0],
+      targetId: result.stepIds[1],
+      sourceHandle: 'right',
+      targetHandle: 'left',
+    });
+    expect(state.selectedMentalNodeIds).toEqual([result.frameId]);
+  });
+
+  it('removeMentalNode cascade-deletes frame children and their edges', () => {
+    const result = useDesktopStore.getState().insertPipelineAssembly({
+      assembly: {
+        frameTitle: 'Pipeline',
+        description: 'Two step pipeline.',
+        missingCapabilitiesRequested: [],
+        steps: [
+          { id: 'a', prompt: 'Do A with explicit context.', roleId: 'confident-executor', modIds: [], prevStepIds: [] },
+          { id: 'b', prompt: 'Use A to do B with explicit output.', roleId: 'confident-executor', modIds: [], prevStepIds: ['a'] },
+        ],
+      },
+      position: { x: 400, y: 120 },
+      frameWidth: 900,
+      frameHeight: 420,
+    });
+
+    useDesktopStore.getState().removeMentalNode(result.frameId);
+
+    const state = useDesktopStore.getState();
+    expect(state.mentalNodes.some((node) => node.id === result.frameId)).toBe(false);
+    expect(state.mentalNodes.some((node) => result.stepIds.includes(node.id))).toBe(false);
+    expect(state.mentalEdges).toEqual([]);
+    expect(state.selectedMentalNodeIds).toEqual([]);
   });
 
   it('updateMentalEdgeColor changes edge color', () => {

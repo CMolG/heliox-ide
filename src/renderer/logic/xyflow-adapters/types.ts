@@ -40,7 +40,7 @@ export interface WindowNodeData {
   [key: string]: unknown;
 }
 
-/** Data payload for an attachable node (role, mod, flow, design-system). */
+/** Data payload for an attachable node (role, mod, flow). */
 export interface AttachableNodeData {
   nodeType: 'attachable';
   attachableId: string;

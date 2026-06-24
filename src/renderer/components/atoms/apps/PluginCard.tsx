@@ -22,7 +22,6 @@ const CATEGORY_BADGES: Record<PluginCategory, { label: string; color: string }> 
   roles: { label: 'Role', color: '#E87040' },
   modifiers: { label: 'Modifier', color: '#4285F4' },
   tools: { label: 'Tool', color: '#A0F695' },
-  'design-systems': { label: 'Design System', color: '#10B981' },
 };
 
 function subString(str: string, n: number): string {

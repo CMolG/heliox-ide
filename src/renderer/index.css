@@ -1829,6 +1829,207 @@ body {
   pointer-events: none;
 }
 
+/* ─── Pipeline Frame Nodes ───────────────────────────────────── */
+
+.pipeline-frame-node {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  border-radius: 8px;
+  border: 1px dashed rgba(244, 244, 245, 0.22);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
+    rgba(8, 8, 8, 0.18);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 22px 60px rgba(0, 0, 0, 0.18);
+  cursor: grab;
+}
+
+.pipeline-frame-node:active {
+  cursor: grabbing;
+}
+
+.pipeline-frame-title {
+  position: absolute;
+  left: 18px;
+  top: 14px;
+  max-width: calc(100% - 84px);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: rgba(10, 10, 10, 0.54);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: #f4f4f5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+}
+
+.pipeline-frame-title span {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+  color: rgba(161, 161, 170, 0.7);
+}
+
+.pipeline-frame-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-manrope);
+  font-size: 13px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.pipeline-frame-missing {
+  position: absolute;
+  right: 18px;
+  top: 16px;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.1);
+  border: 1px solid rgba(250, 204, 21, 0.22);
+}
+
+/* ─── Meta Compiler Chat ─────────────────────────────────────── */
+
+.meta-chat-shell {
+  position: absolute;
+  right: 18px;
+  bottom: 92px;
+  z-index: 180;
+  width: min(420px, calc(100vw - 36px));
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 8px 10px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(24, 24, 24, 0.82), rgba(8, 8, 8, 0.74)),
+    rgba(14, 14, 14, 0.72);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow:
+    0 22px 68px rgba(0, 0, 0, 0.44),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.meta-chat-orb {
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f4f4f5;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.meta-chat-label {
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  color: rgba(244, 244, 245, 0.72);
+}
+
+.meta-chat-input-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr 34px;
+  gap: 8px;
+  align-items: end;
+}
+
+.meta-chat-input {
+  min-width: 0;
+  height: 54px;
+  resize: none;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  padding: 9px 10px;
+  color: #f4f4f5;
+  background: rgba(0, 0, 0, 0.24);
+  font-family: var(--font-manrope);
+  font-size: 12px;
+  line-height: 1.35;
+  outline: none;
+}
+
+.meta-chat-input:focus {
+  border-color: rgba(147, 197, 253, 0.44);
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.12);
+}
+
+.meta-chat-input::placeholder {
+  color: rgba(161, 161, 170, 0.62);
+}
+
+.meta-chat-submit {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #0a0a0a;
+  background: #f4f4f5;
+  box-shadow: 0 10px 24px rgba(255, 255, 255, 0.12);
+}
+
+.meta-chat-submit:disabled {
+  opacity: 0.38;
+  box-shadow: none;
+}
+
+.meta-chat-submit svg {
+  transition: transform 0.16s ease;
+}
+
+.meta-chat-submit:not(:disabled):hover svg {
+  transform: translateY(-1px);
+}
+
+.meta-chat-status,
+.meta-chat-error {
+  grid-column: 2;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.meta-chat-status {
+  color: rgba(147, 197, 253, 0.82);
+}
+
+.meta-chat-error {
+  color: rgba(248, 113, 113, 0.9);
+}
+
+.meta-chat-spinner {
+  animation: spin 0.9s linear infinite;
+}
+
 /* ─── Step Nodes (xyflow + dnd-kit harness) ───────────────────── */
 
 .step-node-shell {
