@@ -1111,4 +1111,25 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return { success: false, error: errMsg(err) };
     }
   });
+
+  // ─── Arena leaderboard ────────────────────────────────────────────────────
+  // Reads the JSON file written by `npm run pf:arena`. ENOENT is not an error —
+  // it simply means no Arena run has been executed yet for this project.
+
+  ipcMain.handle('arena:read-leaderboard', async (_e, projectPath: string) => {
+    const leaderboardPath = join(
+      projectPath, '.heliox', 'performance-frontier', 'heliox-leaderboard.json',
+    );
+    try {
+      const raw = await readFile(leaderboardPath, 'utf-8');
+      const entries = JSON.parse(raw) as import('../types/arena').ArenaLeaderboardEntry[];
+      return { success: true, data: entries };
+    } catch (err) {
+      // ENOENT → no Arena run yet; return an empty list rather than an error
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { success: true, data: [] };
+      }
+      return { success: false, error: errMsg(err) };
+    }
+  });
 }

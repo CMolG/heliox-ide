@@ -474,6 +474,18 @@ export interface HelioxAPI {
   browserDetach: (id: number) => Promise<{ success: boolean; error?: string }>;
   /** Set (or clear with null) which webview is the active agent surface (main-side; read by M3). */
   browserSetAgentSurface: (id: number | null) => Promise<{ success: boolean; error?: string }>;
+
+  // ── Arena leaderboard ──────────────────────────────────────────────────────
+  /**
+   * Read the Arena leaderboard JSON for the given project.
+   * Returns `{ success: true, data: [] }` when no Arena run exists yet —
+   * ENOENT is treated as "no data" rather than an error at the IPC layer.
+   */
+  readArenaLeaderboard(projectPath: string): Promise<{
+    success: boolean;
+    data?: import('./arena').ArenaLeaderboardEntry[];
+    error?: string;
+  }>;
 }
 
 /** Payload emitted by the main-process dev-server watcher when a new port comes up. */

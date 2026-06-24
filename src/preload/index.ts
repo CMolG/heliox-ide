@@ -316,6 +316,12 @@ const helioxAPI: HelioxAPI = {
 
   browserSetAgentSurface: (id: number | null) =>
     ipcRenderer.invoke('browser:set-agent-surface', id),
+
+  // ── Arena leaderboard ───────────────────────────────────────────
+  // Reads the leaderboard JSON produced by `npm run pf:arena`.
+  // Returns { success, data } — data is [] when no run exists yet.
+  readArenaLeaderboard: (projectPath: string) =>
+    ipcRenderer.invoke('arena:read-leaderboard', projectPath),
 };
 
 // Menu events from main process

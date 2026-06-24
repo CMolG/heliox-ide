@@ -57,7 +57,7 @@ export type WindowState = 'normal' | 'minimized' | 'maximized';
 
 export interface DesktopWindow {
   id: string;
-  type: 'chat' | 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview';
+  type: 'chat' | 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena';
   title: string;
   /** Lucide icon name (e.g. 'MessageSquare', 'Terminal') */
   iconName: string;
@@ -156,7 +156,8 @@ export interface DockItem {
     | 'mental-select-tool'
     | 'mental-ramification-tool'
     | 'prompt-dev-zone'
-    | 'grid';
+    | 'grid'
+    | 'arena';
   /** For plugin items — the plugin ID to spawn */
   pluginId?: string;
 }

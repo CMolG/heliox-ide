@@ -84,6 +84,7 @@ const DEFAULT_DOCK_ITEMS: DockItem[] = [
   { id: 'dock-backlog', type: 'action', label: 'Backlog', iconName: 'KanbanSquare', action: 'backlog' },
   { id: 'dock-grid', type: 'action', label: 'Grid', iconName: 'LayoutGrid', action: 'grid' },
   { id: 'dock-mental-draw-toggle', type: 'action', label: 'Mental', iconName: 'PenTool', action: 'mental-draw-toggle' },
+  { id: 'dock-arena', type: 'action', label: 'Heliox Arena', iconName: 'Trophy', action: 'arena' },
   { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
   ...(import.meta.env.DEV ? [
     { id: 'dock-prompt-dev-zone', type: 'action', label: 'Prompt Dev Zone', iconName: 'FlaskConical', action: 'prompt-dev-zone' } satisfies DockItem,
@@ -483,6 +484,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'diff-viewer' ? (opts?.title ?? 'Diff Viewer')
           : type === 'prompt-dev-zone' ? 'Prompt Dev Zone'
           : type === 'web-preview' ? (opts?.title ?? 'Preview')
+          : type === 'arena' ? 'Heliox Arena'
           : 'Plugin';
         const defaultIcon = type === 'chat'
           ? CLI_ICON_NAMES[cliProv]
@@ -492,6 +494,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'diff-viewer' ? 'GitCompareArrows'
           : type === 'prompt-dev-zone' ? 'FlaskConical'
           : type === 'web-preview' ? 'Globe'
+          : type === 'arena' ? 'Trophy'
           : 'Blocks';
         const win: DesktopWindow = {
           id,

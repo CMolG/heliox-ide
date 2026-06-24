@@ -187,6 +187,21 @@ export function Dock() {
           }
           break;
         }
+        case 'arena': {
+          // Singleton — focus the existing Arena window or open a new one
+          const existing = useDesktopStore.getState().windows.find(w => w.type === 'arena');
+          if (existing) {
+            navigateToWindow(existing.id);
+          } else {
+            const winId = addWindow('arena', {
+              title: 'Heliox Arena',
+              iconName: 'Trophy',
+              size: { width: 900, height: 560 },
+            });
+            requestAnimationFrame(() => navigateToWindow(winId));
+          }
+          break;
+        }
         case 'grid': {
           useDesktopStore.getState().addGrid();
           break;
