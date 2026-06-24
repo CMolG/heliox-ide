@@ -1,11 +1,13 @@
 package io.heliox.sdk.engine;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.heliox.sdk.engine.DagTelemetry.NodeExecutionRecord;
 import io.heliox.sdk.flow.StepConfig;
 import io.heliox.sdk.internal.Json;
 import io.heliox.sdk.provider.ChatMessage;
 import io.heliox.sdk.provider.LlmProvider;
 import io.heliox.sdk.provider.LlmRequest;
+import io.heliox.sdk.provider.LlmResponse;
 import io.heliox.sdk.provider.ToolCall;
 import io.heliox.sdk.schema.JsonSchema;
 import io.heliox.sdk.schema.SchemaExtractor;
@@ -17,6 +19,9 @@ import io.heliox.sdk.validation.ValidationResult;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Executes a single {@link StepConfig}. Two concerns are interleaved, both fully async
@@ -31,6 +36,14 @@ import java.util.concurrent.CompletableFuture;
  *       deserialized; on failure the offending fields are injected as a corrective system
  *       message and the step retries, up to {@code maxRetries}.</li>
  * </ol>
+ *
+ * <h3>Telemetry instrumentation</h3>
+ * The 4-argument overloads of {@link #executeStep} and {@link #executeStepText} accept a
+ * {@link DagTelemetry} collector. Timing is captured with {@link System#nanoTime()} snapshots
+ * inside the {@link CompletableFuture} closures and accumulated via thread-safe
+ * {@link AtomicLong} counters. One {@link NodeExecutionRecord} is published per node via
+ * {@code whenComplete}, which fires on both the success and failure paths. The 2- and 3-argument
+ * overloads delegate to the 4-argument forms with {@link DagTelemetry#NOOP}.
  */
 public final class StepExecutor {
 
@@ -59,47 +72,148 @@ public final class StepExecutor {
         this.model = model;
     }
 
-    /** Execute a step whose output must deserialize into {@code expectedType}. */
+    // =========================================================================
+    // Public API — typed output
+    // =========================================================================
+
+    /**
+     * Execute a step whose output must deserialize into {@code expectedType}.
+     * Telemetry is discarded (delegates to {@link DagTelemetry#NOOP}).
+     */
     public <T> CompletableFuture<T> executeStep(StepConfig step, Class<T> expectedType, int maxRetries) {
+        return executeStep(step, expectedType, maxRetries, DagTelemetry.NOOP);
+    }
+
+    /**
+     * Execute a step whose output must deserialize into {@code expectedType}, reporting
+     * per-node timing, validation latency, and retry count to {@code telemetry}.
+     *
+     * <p>Exactly one {@link NodeExecutionRecord} for {@code step.id()} is published to
+     * {@code telemetry} when the node terminates — on both success and failure.
+     *
+     * @param step        the step configuration to execute
+     * @param expectedType the expected Java type of the deserialized output
+     * @param maxRetries  maximum number of schema-validation retries
+     * @param telemetry   collector for the node's execution metrics; use
+     *                    {@link DagTelemetry#NOOP} to discard
+     * @param <T>         the output type
+     * @return a future that resolves to the typed result
+     */
+    public <T> CompletableFuture<T> executeStep(StepConfig step, Class<T> expectedType,
+                                                 int maxRetries, DagTelemetry telemetry) {
         JsonSchema schema = schemaExtractor.extract(expectedType);
         List<ChatMessage> history = seedTypedMessages(step, schema);
-        return attempt(history, schema, expectedType, maxRetries);
+
+        // Per-node accumulators — captured in closures, never shared across nodes.
+        AtomicLong inferenceNs = new AtomicLong(0L);
+        AtomicLong validationNs = new AtomicLong(0L);
+        AtomicInteger attemptCount = new AtomicInteger(0);
+        AtomicReference<LlmResponse> lastResponse = new AtomicReference<>();
+
+        CompletableFuture<T> result = attempt(
+                history, schema, expectedType, maxRetries,
+                inferenceNs, validationNs, attemptCount, lastResponse);
+
+        return result.whenComplete((value, error) -> {
+            String status = error == null ? "ok" : "failed";
+            long inferenceMs = inferenceNs.get() / 1_000_000L;
+            long validationMs = validationNs.get() / 1_000_000L;
+            int attempts = Math.max(1, attemptCount.get());
+            Integer tokens = extractTokens(lastResponse.get());
+            telemetry.record(new NodeExecutionRecord(
+                    step.id(), inferenceMs, validationMs,
+                    attempts, attempts - 1, status, tokens));
+        }).thenApply(v -> v); // re-wrap so whenComplete's void return stays transparent
     }
 
-    /** Execute a step for its free-form text output (used by intermediate DAG nodes). */
+    // =========================================================================
+    // Public API — free-form text output
+    // =========================================================================
+
+    /**
+     * Execute a step for its free-form text output (used by intermediate DAG nodes).
+     * Telemetry is discarded (delegates to {@link DagTelemetry#NOOP}).
+     */
     public CompletableFuture<String> executeStepText(StepConfig step, int maxRetries) {
-        return runToolLoop(seedTextMessages(step), null, DEFAULT_TOOL_BUDGET)
-            .thenApply(ConversationResult::finalText);
+        return executeStepText(step, maxRetries, DagTelemetry.NOOP);
     }
 
-    private <T> CompletableFuture<T> attempt(List<ChatMessage> history, JsonSchema schema, Class<T> type, int retriesLeft) {
-        return runToolLoop(history, schema, DEFAULT_TOOL_BUDGET).thenCompose(conversation -> {
-            String jsonText = extractJson(conversation.finalText());
+    /**
+     * Execute a step for its free-form text output, reporting per-node timing to
+     * {@code telemetry}. For text nodes there is no schema validation, so
+     * {@code schemaValidationMs} is always 0 and {@code attempts} is always 1.
+     *
+     * @param step       the step configuration to execute
+     * @param maxRetries maximum number of schema-validation retries (passed through
+     *                   for consistency; text nodes do not validate)
+     * @param telemetry  collector for the node's execution metrics
+     * @return a future that resolves to the model's text output
+     */
+    public CompletableFuture<String> executeStepText(StepConfig step, int maxRetries, DagTelemetry telemetry) {
+        AtomicLong inferenceNs = new AtomicLong(0L);
+        AtomicReference<LlmResponse> lastResponse = new AtomicReference<>();
 
-            JsonNode parsed;
-            try {
-                parsed = Json.MAPPER.readTree(jsonText);
-            } catch (Exception e) {
-                return retryOrFail("El contenido no es JSON válido (" + e.getMessage() + ")",
-                    conversation, schema, type, retriesLeft, null);
-            }
+        CompletableFuture<String> result =
+                runToolLoop(seedTextMessages(step), null, DEFAULT_TOOL_BUDGET, inferenceNs, lastResponse)
+                        .thenApply(ConversationResult::finalText);
 
-            ValidationResult result = validator.validate(schema, parsed);
-            if (!result.valid()) {
-                return retryOrFail(result.toPromptMessage(), conversation, schema, type, retriesLeft, result);
-            }
+        return result.whenComplete((value, error) -> {
+            String status = error == null ? "ok" : "failed";
+            long inferenceMs = inferenceNs.get() / 1_000_000L;
+            Integer tokens = extractTokens(lastResponse.get());
+            telemetry.record(new NodeExecutionRecord(
+                    step.id(), inferenceMs, 0L,
+                    1, 0, status, tokens));
+        }).thenApply(v -> v);
+    }
 
-            try {
-                return CompletableFuture.completedFuture(Json.MAPPER.treeToValue(parsed, type));
-            } catch (Exception e) {
-                return retryOrFail("La deserialización falló (" + e.getMessage() + ")",
-                    conversation, schema, type, retriesLeft, result);
-            }
-        });
+    // =========================================================================
+    // Internal — retry loop
+    // =========================================================================
+
+    private <T> CompletableFuture<T> attempt(List<ChatMessage> history, JsonSchema schema, Class<T> type,
+                                              int retriesLeft,
+                                              AtomicLong inferenceNs, AtomicLong validationNs,
+                                              AtomicInteger attemptCount,
+                                              AtomicReference<LlmResponse> lastResponse) {
+        attemptCount.incrementAndGet();
+        return runToolLoop(history, schema, DEFAULT_TOOL_BUDGET, inferenceNs, lastResponse)
+                .thenCompose(conversation -> {
+                    String jsonText = extractJson(conversation.finalText());
+
+                    JsonNode parsed;
+                    try {
+                        parsed = Json.MAPPER.readTree(jsonText);
+                    } catch (Exception e) {
+                        return retryOrFail("El contenido no es JSON válido (" + e.getMessage() + ")",
+                                conversation, schema, type, retriesLeft, null,
+                                inferenceNs, validationNs, attemptCount, lastResponse);
+                    }
+
+                    long validationStart = System.nanoTime();
+                    ValidationResult result = validator.validate(schema, parsed);
+                    validationNs.addAndGet(System.nanoTime() - validationStart);
+
+                    if (!result.valid()) {
+                        return retryOrFail(result.toPromptMessage(), conversation, schema, type, retriesLeft, result,
+                                inferenceNs, validationNs, attemptCount, lastResponse);
+                    }
+
+                    try {
+                        return CompletableFuture.completedFuture(Json.MAPPER.treeToValue(parsed, type));
+                    } catch (Exception e) {
+                        return retryOrFail("La deserialización falló (" + e.getMessage() + ")",
+                                conversation, schema, type, retriesLeft, result,
+                                inferenceNs, validationNs, attemptCount, lastResponse);
+                    }
+                });
     }
 
     private <T> CompletableFuture<T> retryOrFail(String detail, ConversationResult conversation, JsonSchema schema,
-                                                 Class<T> type, int retriesLeft, ValidationResult result) {
+                                                  Class<T> type, int retriesLeft, ValidationResult result,
+                                                  AtomicLong inferenceNs, AtomicLong validationNs,
+                                                  AtomicInteger attemptCount,
+                                                  AtomicReference<LlmResponse> lastResponse) {
         if (retriesLeft <= 0) {
             ValidationResult finalResult = result != null
                 ? result
@@ -110,17 +224,34 @@ public final class StepExecutor {
         List<ChatMessage> next = append(conversation.history(), ChatMessage.system(
             "El JSON falló en estos campos: " + detail
                 + ". Corrige los errores y devuelve ÚNICAMENTE un JSON válido que cumpla el esquema."));
-        return attempt(next, schema, type, retriesLeft - 1);
+        return attempt(next, schema, type, retriesLeft - 1,
+                inferenceNs, validationNs, attemptCount, lastResponse);
     }
+
+    // =========================================================================
+    // Internal — tool loop
+    // =========================================================================
 
     /**
      * Drive the conversation until the model returns a final (non-tool) answer, executing any
      * requested tools along the way. Returns the full history (including the final assistant
      * turn) and the final text.
+     *
+     * <p>Every call to {@link LlmProvider#complete} is bracketed with {@link System#nanoTime()}
+     * snapshots; the elapsed nanoseconds are accumulated into {@code inferenceNs}.
+     * {@code lastResponse} is updated with every provider response so the caller can extract
+     * token counts from the final turn.
      */
-    private CompletableFuture<ConversationResult> runToolLoop(List<ChatMessage> history, JsonSchema schema, int toolBudget) {
+    private CompletableFuture<ConversationResult> runToolLoop(List<ChatMessage> history, JsonSchema schema,
+                                                               int toolBudget,
+                                                               AtomicLong inferenceNs,
+                                                               AtomicReference<LlmResponse> lastResponse) {
+        long callStart = System.nanoTime();
         LlmRequest request = new LlmRequest(history, schema, model, 0.0, toolRegistry.specs());
         return provider.complete(request).thenCompose(response -> {
+            inferenceNs.addAndGet(System.nanoTime() - callStart);
+            lastResponse.set(response);
+
             ChatMessage assistantMessage = response.hasToolCalls()
                 ? ChatMessage.assistantToolCalls(response.content(), response.toolCalls())
                 : ChatMessage.assistant(response.content());
@@ -128,11 +259,16 @@ public final class StepExecutor {
 
             if (response.hasToolCalls() && toolBudget > 0) {
                 return executeToolCalls(response.toolCalls()).thenCompose(toolMessages ->
-                    runToolLoop(concat(withAssistant, toolMessages), schema, toolBudget - 1));
+                    runToolLoop(concat(withAssistant, toolMessages), schema, toolBudget - 1,
+                            inferenceNs, lastResponse));
             }
             return CompletableFuture.completedFuture(new ConversationResult(withAssistant, response.content()));
         });
     }
+
+    // =========================================================================
+    // Internal — tool invocation
+    // =========================================================================
 
     private CompletableFuture<List<ChatMessage>> executeToolCalls(List<ToolCall> calls) {
         List<CompletableFuture<ChatMessage>> futures = new ArrayList<>(calls.size());
@@ -146,6 +282,10 @@ public final class StepExecutor {
         return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
             .thenApply(ignored -> futures.stream().map(CompletableFuture::join).toList());
     }
+
+    // =========================================================================
+    // Internal — message builders
+    // =========================================================================
 
     private List<ChatMessage> seedTypedMessages(StepConfig step, JsonSchema schema) {
         StringBuilder system = new StringBuilder();
@@ -171,6 +311,10 @@ public final class StepExecutor {
         return messages;
     }
 
+    // =========================================================================
+    // Internal — helpers
+    // =========================================================================
+
     /** Final history plus the model's last textual answer. */
     record ConversationResult(List<ChatMessage> history, String finalText) {
     }
@@ -193,6 +337,24 @@ public final class StepExecutor {
             cause = cause.getCause();
         }
         return cause.getMessage();
+    }
+
+    /**
+     * Extracts combined token count from a provider response when available.
+     * Returns {@code null} if the provider did not populate token fields (the
+     * common case for {@link io.heliox.sdk.testutil.FakeProvider} and providers
+     * that do not report usage).
+     */
+    private static Integer extractTokens(LlmResponse response) {
+        if (response == null) {
+            return null;
+        }
+        Integer prompt = response.promptTokens();
+        Integer completion = response.completionTokens();
+        if (prompt == null && completion == null) {
+            return null;
+        }
+        return (prompt != null ? prompt : 0) + (completion != null ? completion : 0);
     }
 
     /** Extract a JSON document from raw model content, tolerating {@code ```json} fences and surrounding prose. */

@@ -14,6 +14,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Scans Java objects for {@link HelioxTool}-annotated methods and exposes them to the
@@ -23,18 +27,89 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p>Tool methods may return any value (serialized to JSON) or a {@link CompletableFuture}
  * (awaited and then serialized), keeping the whole pipeline non-blocking.
+ *
+ * <p>All argument binding and reflective invocation is offloaded to a dedicated
+ * {@link ExecutorService} (the <em>tool executor</em>) so that blocking or CPU-heavy tool
+ * methods never steal threads from the provider's I/O completion pool. The default pool
+ * uses daemon threads named {@code heliox-tool-N} so a bare {@code new ToolRegistry()} in
+ * tests never blocks JVM exit.
+ *
+ * <p>When a {@code ToolRegistry} is constructed without an externally supplied executor it
+ * owns the executor and shuts it down in {@link #shutdown()}. When an executor is injected
+ * via {@link #ToolRegistry(SchemaExtractor, ExecutorService)} the caller retains ownership
+ * and {@link #shutdown()} is a no-op for that executor.
  */
 public final class ToolRegistry {
 
+    /**
+     * Thread factory for the default daemon tool-executor pool.
+     * Threads are named {@code heliox-tool-1}, {@code heliox-tool-2}, etc.
+     */
+    private static final class HelioxToolThreadFactory implements ThreadFactory {
+
+        private final AtomicInteger counter = new AtomicInteger(0);
+
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread thread = new Thread(r, "heliox-tool-" + counter.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        }
+    }
+
     private final SchemaExtractor schemaExtractor;
     private final Map<String, Tool> tools = new LinkedHashMap<>();
+    private final ExecutorService toolExecutor;
 
+    /**
+     * Whether this registry created (and therefore owns) the {@link #toolExecutor}.
+     * When {@code true}, {@link #shutdown()} will shut the executor down; when
+     * {@code false} the caller is responsible for the executor's lifecycle.
+     */
+    private final boolean ownsExecutor;
+
+    /**
+     * Creates a registry with a fresh {@link SchemaExtractor} and a default dedicated
+     * daemon-thread pool named {@code heliox-tool-N}. This registry owns and will shut
+     * down the pool when {@link #shutdown()} is called.
+     */
     public ToolRegistry() {
         this(new SchemaExtractor());
     }
 
+    /**
+     * Creates a registry with the supplied {@link SchemaExtractor} and a default dedicated
+     * daemon-thread pool named {@code heliox-tool-N}. This registry owns and will shut
+     * down the pool when {@link #shutdown()} is called.
+     *
+     * @param schemaExtractor the extractor used to derive JSON schemas from tool parameters
+     */
     public ToolRegistry(SchemaExtractor schemaExtractor) {
+        this(schemaExtractor, Executors.newCachedThreadPool(new HelioxToolThreadFactory()), true);
+    }
+
+    /**
+     * Creates a registry with an externally supplied executor. The caller retains ownership
+     * of {@code toolExecutor} — {@link #shutdown()} will <em>not</em> shut it down.
+     *
+     * @param schemaExtractor the extractor used to derive JSON schemas from tool parameters
+     * @param toolExecutor    the executor onto which argument binding and tool invocation are offloaded
+     */
+    public ToolRegistry(SchemaExtractor schemaExtractor, ExecutorService toolExecutor) {
+        this(schemaExtractor, toolExecutor, false);
+    }
+
+    /**
+     * Internal delegating constructor.
+     *
+     * @param schemaExtractor the extractor used to derive JSON schemas from tool parameters
+     * @param toolExecutor    the executor onto which argument binding and tool invocation are offloaded
+     * @param ownsExecutor    {@code true} iff this registry should shut the executor down on {@link #shutdown()}
+     */
+    private ToolRegistry(SchemaExtractor schemaExtractor, ExecutorService toolExecutor, boolean ownsExecutor) {
         this.schemaExtractor = schemaExtractor;
+        this.toolExecutor = toolExecutor;
+        this.ownsExecutor = ownsExecutor;
     }
 
     /** Scan {@code instance} for annotated tool methods and register them. */
@@ -53,10 +128,12 @@ public final class ToolRegistry {
         return this;
     }
 
+    /** Returns {@code true} if no tools have been registered yet. */
     public boolean isEmpty() {
         return tools.isEmpty();
     }
 
+    /** Returns the {@link ToolSpec} list for all registered tools, preserving registration order. */
     public List<ToolSpec> specs() {
         List<ToolSpec> specs = new ArrayList<>(tools.size());
         for (Tool tool : tools.values()) {
@@ -65,33 +142,89 @@ public final class ToolRegistry {
         return specs;
     }
 
-    /** Dispatch a tool call, returning the JSON-serialized result. */
+    /**
+     * Dispatch a tool call asynchronously on the dedicated tool executor, returning the
+     * JSON-serialized result as a {@link CompletableFuture}.
+     *
+     * <p>The argument-binding step and the reflective {@code method.invoke} are both
+     * executed on {@link #toolExecutor} so they never block the provider's I/O threads.
+     * If the tool method itself returns a {@code CompletableFuture<?>}, that future is
+     * composed ({@code thenCompose}) so async tools still resolve correctly without
+     * requiring an extra thread.
+     *
+     * <p>Error semantics are preserved from the synchronous implementation:
+     * <ul>
+     *   <li>Unknown tool name → failed future with {@link IllegalArgumentException}.</li>
+     *   <li>Argument-binding failure → failed future with the parsing exception.</li>
+     *   <li>{@link InvocationTargetException} → failed future with its {@linkplain Throwable#getCause() cause}.</li>
+     *   <li>Other reflective exceptions → failed future with the exception itself.</li>
+     * </ul>
+     *
+     * @param name          the registered tool name
+     * @param argumentsJson the JSON object of arguments produced by the model, or {@code null}/blank for no args
+     * @return a future that completes with the serialized tool result, or fails with the above errors
+     */
     public CompletableFuture<String> invoke(String name, String argumentsJson) {
         Tool tool = tools.get(name);
         if (tool == null) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("Unknown tool: " + name));
         }
 
-        final Object[] arguments;
-        try {
-            arguments = bindArguments(tool.method(), argumentsJson);
-        } catch (Exception e) {
-            return CompletableFuture.failedFuture(e);
-        }
+        return CompletableFuture.supplyAsync(() -> {
+            // Both argument binding and reflective invocation run on toolExecutor.
+            final Object[] arguments;
+            try {
+                arguments = bindArguments(tool.method(), argumentsJson);
+            } catch (Exception e) {
+                // Wrap in RuntimeException so supplyAsync captures it; unwrapped below.
+                throw new BindingException(e);
+            }
 
-        try {
-            Object returned = tool.method().invoke(tool.target(), arguments);
+            try {
+                return tool.method().invoke(tool.target(), arguments);
+            } catch (InvocationTargetException e) {
+                throw new InvocationException(e.getCause() != null ? e.getCause() : e);
+            } catch (Exception e) {
+                throw new InvocationException(e);
+            }
+        }, toolExecutor).thenCompose(returned -> {
             if (returned instanceof CompletableFuture<?> future) {
-                return future.thenApply(ToolRegistry::serialize);
+                // The tool method itself is async — compose to avoid nesting futures.
+                @SuppressWarnings("unchecked")
+                CompletableFuture<Object> cast = (CompletableFuture<Object>) future;
+                return cast.thenApply(ToolRegistry::serialize);
             }
             return CompletableFuture.completedFuture(serialize(returned));
-        } catch (InvocationTargetException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            return CompletableFuture.failedFuture(cause);
-        } catch (Exception e) {
-            return CompletableFuture.failedFuture(e);
+        }).exceptionally(ex -> {
+            // Unwrap our internal wrappers so callers see the original cause.
+            Throwable cause = ex;
+            if (cause instanceof java.util.concurrent.CompletionException ce && ce.getCause() != null) {
+                cause = ce.getCause();
+            }
+            if (cause instanceof BindingException be) {
+                sneakyThrow(be.getCause());
+            }
+            if (cause instanceof InvocationException ie) {
+                sneakyThrow(ie.getCause());
+            }
+            sneakyThrow(cause);
+            throw new AssertionError("unreachable");
+        });
+    }
+
+    /**
+     * Shuts down the tool executor if this registry owns it (i.e., it was created by this
+     * registry rather than injected from outside). Safe to call multiple times.
+     */
+    public void shutdown() {
+        if (ownsExecutor) {
+            toolExecutor.shutdown();
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
 
     private Object[] bindArguments(Method method, String argumentsJson) throws Exception {
         JsonNode root = (argumentsJson == null || argumentsJson.isBlank())
@@ -124,6 +257,29 @@ public final class ToolRegistry {
             return Json.MAPPER.writeValueAsString(value);
         } catch (Exception e) {
             return String.valueOf(value);
+        }
+    }
+
+    /**
+     * Throws any {@link Throwable} without requiring it to be declared, exploiting type
+     * erasure to bypass checked-exception enforcement.
+     */
+    @SuppressWarnings("unchecked")
+    private static <E extends Throwable> void sneakyThrow(Throwable t) throws E {
+        throw (E) t;
+    }
+
+    /** Wraps a binding (argument-parsing) exception for transport through {@code supplyAsync}. */
+    private static final class BindingException extends RuntimeException {
+        BindingException(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    /** Wraps a tool-invocation exception for transport through {@code supplyAsync}. */
+    private static final class InvocationException extends RuntimeException {
+        InvocationException(Throwable cause) {
+            super(cause);
         }
     }
 
