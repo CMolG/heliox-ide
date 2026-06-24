@@ -1905,6 +1905,35 @@ body {
   border: 1px solid rgba(250, 204, 21, 0.22);
 }
 
+.pipeline-frame-count {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+  color: rgba(161, 161, 170, 0.45);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pipeline-frame-meta {
+  position: absolute;
+  left: 18px;
+  top: 52px;
+  max-width: calc(100% - 48px);
+}
+
+.pipeline-frame-desc {
+  margin: 0;
+  font-family: var(--font-manrope);
+  font-size: 10px;
+  line-height: 1.3;
+  color: rgba(161, 161, 170, 0.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 /* ─── Meta Compiler Chat ─────────────────────────────────────── */
 
 .meta-chat-shell {

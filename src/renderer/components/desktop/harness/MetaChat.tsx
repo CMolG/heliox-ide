@@ -1,5 +1,4 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { useReactFlow } from '@xyflow/react';
 import type { PipelineAssembly } from '@/types/meta-agent';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { calculateSafeInsertionPoint } from '../../../store/spatial-engine';
@@ -26,7 +25,8 @@ export function MetaChat() {
   const [error, setError] = useState<string | null>(null);
   const mentalNodes = useDesktopStore((state) => state.mentalNodes);
   const insertPipelineAssembly = useDesktopStore((state) => state.insertPipelineAssembly);
-  const { setCenter } = useReactFlow();
+  const setCanvasPan = useDesktopStore((state) => state.setCanvasPan);
+  const setCanvasZoom = useDesktopStore((state) => state.setCanvasZoom);
 
   const canSubmit = useMemo(() => intent.trim().length > 0 && status !== 'assembling', [intent, status]);
 
@@ -58,18 +58,30 @@ export function MetaChat() {
         frameHeight: frameSize.height,
       });
 
-      await setCenter(
-        safePoint.x + frameSize.width / 2,
-        safePoint.y + frameSize.height / 2,
-        { duration: 1200, zoom: 0.8 },
-      );
+      // Center the camera on the freshly assembled pipeline. The React Flow
+      // viewport in MentalGraphCanvas is CONTROLLED (driven by canvasPan/canvasZoom +
+      // onViewportChange), so the imperative useReactFlow().setCenter() is overridden
+      // by the controlled prop and its promise never resolves — which previously hung
+      // this handler before setStatus('idle'). Center by moving the store viewport.
+      const targetZoom = 0.8;
+      const container = document.querySelector('.mental-graph-canvas-container');
+      const viewW = container?.clientWidth ?? window.innerWidth;
+      const viewH = container?.clientHeight ?? window.innerHeight;
+      const centerX = safePoint.x + frameSize.width / 2;
+      const centerY = safePoint.y + frameSize.height / 2;
+      setCanvasZoom(targetZoom);
+      setCanvasPan({
+        x: viewW / 2 - centerX * targetZoom,
+        y: viewH / 2 - centerY * targetZoom,
+      });
+
       setIntent('');
       setStatus('idle');
     } catch (err) {
       setStatus('error');
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [intent, insertPipelineAssembly, setCenter, status]);
+  }, [intent, insertPipelineAssembly, setCanvasPan, setCanvasZoom, status]);
 
   return (
     <form
