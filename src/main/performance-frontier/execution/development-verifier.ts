@@ -12,8 +12,11 @@
  */
 
 import { symlink } from 'fs/promises';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { runInSandbox } from './sandbox-runner';
+
+/** The VFS root prefix used by sandbox-runner (matches its default `rootPrefix`). */
+const WORKSPACE_PREFIX = '/workspace';
 
 const OUTPUT_TRUNCATE_BYTES = 8 * 1024; // 8 KB
 
@@ -93,18 +96,52 @@ function truncate(text: string): string {
 }
 
 /**
+ * Discover test files from a VFS snapshot.
+ *
+ * Returns paths relative to the workspace root (e.g. `'sub/matrix.test.ts'`),
+ * sorted for deterministic ordering. A file qualifies if its VFS key starts with
+ * `/workspace/` and its basename matches `*.test.ts`, `*.test.tsx`, or
+ * `*.spec.ts` (case-insensitive).
+ */
+function discoverTestFiles(vfsSnapshot: Record<string, string>): string[] {
+  const prefix = `${WORKSPACE_PREFIX}/`;
+  const testPattern = /\.(test|spec)\.(tsx?)$/i;
+
+  return Object.keys(vfsSnapshot)
+    .filter((key) => key.startsWith(prefix) && testPattern.test(basename(key)))
+    .map((key) => key.slice(prefix.length))
+    .sort();
+}
+
+/**
  * Run the vitest suite inside the provided VFS snapshot and return a
  * deterministic, machine-readable result.
  *
- * The snapshot MUST include:
- *   /workspace/calculator.test.ts  — the test file
- *   /workspace/calculator.ts       — the agent's implementation
+ * The snapshot MUST include at least one test file whose basename ends in
+ * `.test.ts`, `.test.tsx`, or `.spec.ts` (e.g. `calculator.test.ts`,
+ * `matrix.test.ts`) plus the implementation file(s) it imports — all under the
+ * `/workspace` prefix. Any number of test files is supported; all discovered
+ * files are passed to vitest in a single run.
  */
 export async function verifyDevelopment(
   vfsSnapshot: Record<string, string>,
 ): Promise<TestVerificationResult> {
   // The vitest CLI entry point (confirmed by node_modules/vitest/package.json bin field).
   const vitestMjs = join('node_modules', 'vitest', 'vitest.mjs');
+
+  // --- Discover test files from the snapshot ---
+  const testFiles = discoverTestFiles(vfsSnapshot);
+
+  if (testFiles.length === 0) {
+    return {
+      ran: false,
+      passed: 0,
+      failed: 0,
+      total: 0,
+      output: '',
+      errorMessage: 'No *.test.ts file found in the snapshot.',
+    };
+  }
 
   let sandboxResult: Awaited<ReturnType<typeof runInSandbox>>;
 
@@ -122,7 +159,7 @@ export async function verifyDevelopment(
         );
       },
       command: process.execPath,
-      args: [vitestMjs, 'run', 'calculator.test.ts', '--reporter=json', '--no-color'],
+      args: [vitestMjs, 'run', ...testFiles, '--reporter=json', '--no-color'],
       timeoutMs: 90_000,
     });
   } catch (err: unknown) {
