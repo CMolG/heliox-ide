@@ -57,6 +57,8 @@ export interface ArenaLeaderboardEntry {
   executionCostUsd: number;
   /** Per-suite failure messages, present only when something went wrong. */
   errors?: string[];
+  /** Average wall-clock latency in ms across successful suites; absent when all suites failed. */
+  avgLatencyMs?: number;
 }
 
 const DEFAULT_SEED = 1;
@@ -117,6 +119,8 @@ export async function evaluateArenaModel(
   const errors: string[] = [];
   let totalTokens = 0;
   let executionCostUsd = 0;
+  let totalLatencyMs = 0;
+  let successfulSuites = 0;
   let anySuccess = false;
 
   for (const { suite, scoreKey } of options.suites) {
@@ -125,6 +129,8 @@ export async function evaluateArenaModel(
       const score = normalizeSemanticScore(result);
       scores[scoreKey] = score;
       totalTokens += result.telemetry.totalTokens;
+      totalLatencyMs += result.telemetry.latencyMs;
+      successfulSuites += 1;
       const cost = calculateExecutionCost(
         {
           promptTokens: result.telemetry.inputTokens,
@@ -143,6 +149,8 @@ export async function evaluateArenaModel(
     }
   }
 
+  const avgLatencyMs = successfulSuites > 0 ? Math.round(totalLatencyMs / successfulSuites) : undefined;
+
   return {
     modelId: model.id,
     name: model.name,
@@ -152,6 +160,7 @@ export async function evaluateArenaModel(
     totalTokens,
     executionCostUsd: roundCost(executionCostUsd),
     ...(errors.length > 0 ? { errors } : {}),
+    ...(avgLatencyMs !== undefined ? { avgLatencyMs } : {}),
   };
 }
 

@@ -16,6 +16,7 @@ function fakeRunResult(
   semanticMaxScore: number,
   tokens: number,
   reasoningTokens = 0,
+  latencyMs = 500,
 ): PFRunResult {
   return {
     semanticScore,
@@ -25,6 +26,7 @@ function fakeRunResult(
       outputTokens: tokens / 2,
       reasoningTokens,
       totalTokens: tokens + reasoningTokens,
+      latencyMs,
     },
   } as unknown as PFRunResult;
 }
@@ -73,9 +75,9 @@ describe('evaluateArenaModel', () => {
     const runSuite = vi.fn(async (suite: PFSuite, modelId: string) => {
       expect(modelId).toBe('openrouter/paid/beta');
       const byScore: Record<string, PFRunResult> = {
-        architecture: fakeRunResult(72, 90, 1000), // -> 80
-        'team-work': fakeRunResult(81, 90, 1000), // -> 90
-        'flow-assembler': fakeRunResult(120, 150, 1000), // -> 80
+        architecture: fakeRunResult(72, 90, 1000, 0, 300),  // -> 80, 300 ms
+        'team-work': fakeRunResult(81, 90, 1000, 0, 500),   // -> 90, 500 ms
+        'flow-assembler': fakeRunResult(120, 150, 1000, 0, 700), // -> 80, 700 ms
       };
       return byScore[suite];
     });
@@ -89,6 +91,8 @@ describe('evaluateArenaModel', () => {
     // 3 suites * (500 prompt * 5e-7 + 500 completion * 1.5e-6) = 3 * 0.001 = 0.003
     expect(entry.executionCostUsd).toBeCloseTo(0.003, 8);
     expect(entry.errors).toBeUndefined();
+    // avg latency: Math.round((300 + 500 + 700) / 3) = Math.round(500) = 500
+    expect(entry.avgLatencyMs).toBe(500);
   });
 
   it('bills reasoning tokens at the completion rate', async () => {
@@ -113,7 +117,10 @@ describe('evaluateArenaModel', () => {
   it('isolates suite failures and keeps partial scores', async () => {
     const runSuite = vi.fn(async (suite: PFSuite) => {
       if (suite === 'team-work') throw new Error('429 Too Many Requests');
-      return fakeRunResult(72, 90, 1000);
+      // architecture: 400 ms, flow-assembler: 600 ms
+      return suite === 'architecture'
+        ? fakeRunResult(72, 90, 1000, 0, 400)
+        : fakeRunResult(72, 90, 1000, 0, 600);
     });
 
     const entry = await evaluateArenaModel(FREE_MODEL, { seed: 1, suites: ARENA_SUITES, runSuite });
@@ -122,6 +129,8 @@ describe('evaluateArenaModel', () => {
     expect(entry.scores).toEqual({ architecture: 80, teamWork: null, assembler: 80 });
     expect(entry.errors).toEqual(['team-work: 429 Too Many Requests']);
     expect(entry.finalArenaScore).toBe(80);
+    // avg latency over the 2 successful suites: Math.round((400 + 600) / 2) = 500
+    expect(entry.avgLatencyMs).toBe(500);
   });
 
   it('marks the model api_error when every suite fails', async () => {
@@ -135,6 +144,9 @@ describe('evaluateArenaModel', () => {
     expect(entry.finalArenaScore).toBe(0);
     expect(entry.scores).toEqual({ architecture: null, teamWork: null, assembler: null });
     expect(entry.errors).toHaveLength(3);
+    // No successful suites → avgLatencyMs must be absent
+    expect(entry.avgLatencyMs).toBeUndefined();
+    expect('avgLatencyMs' in entry).toBe(false);
   });
 });
 
