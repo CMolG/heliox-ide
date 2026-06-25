@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -152,13 +153,23 @@ public final class ToolRegistry {
      * composed ({@code thenCompose}) so async tools still resolve correctly without
      * requiring an extra thread.
      *
-     * <p>Error semantics are preserved from the synchronous implementation:
+     * <p>Error semantics:
      * <ul>
      *   <li>Unknown tool name → failed future with {@link IllegalArgumentException}.</li>
-     *   <li>Argument-binding failure → failed future with the parsing exception.</li>
-     *   <li>{@link InvocationTargetException} → failed future with its {@linkplain Throwable#getCause() cause}.</li>
-     *   <li>Other reflective exceptions → failed future with the exception itself.</li>
+     *   <li>Argument-binding failure → failed future with the parsing exception wrapped in
+     *       {@link java.util.concurrent.CompletionException}.</li>
+     *   <li>{@link InvocationTargetException} → failed future with its
+     *       {@linkplain Throwable#getCause() cause} (i.e., the exception thrown by the tool
+     *       method) wrapped in {@link java.util.concurrent.CompletionException}.</li>
+     *   <li>Other reflective exceptions → failed future with the exception wrapped in
+     *       {@link java.util.concurrent.CompletionException}.</li>
      * </ul>
+     *
+     * <p>Callers using {@link java.util.concurrent.CompletableFuture#get()} will receive an
+     * {@link java.util.concurrent.ExecutionException} whose cause is the original exception
+     * (JDK unwraps one layer of {@code CompletionException} automatically). Callers using
+     * {@code handle} or {@code exceptionally} see the {@code CompletionException} directly and
+     * should walk {@link Throwable#getCause()} to reach the root cause.
      *
      * @param name          the registered tool name
      * @param argumentsJson the JSON object of arguments produced by the model, or {@code null}/blank for no args
@@ -176,16 +187,15 @@ public final class ToolRegistry {
             try {
                 arguments = bindArguments(tool.method(), argumentsJson);
             } catch (Exception e) {
-                // Wrap in RuntimeException so supplyAsync captures it; unwrapped below.
-                throw new BindingException(e);
+                throw new CompletionException(e);
             }
 
             try {
                 return tool.method().invoke(tool.target(), arguments);
             } catch (InvocationTargetException e) {
-                throw new InvocationException(e.getCause() != null ? e.getCause() : e);
+                throw new CompletionException(e.getCause() != null ? e.getCause() : e);
             } catch (Exception e) {
-                throw new InvocationException(e);
+                throw new CompletionException(e);
             }
         }, toolExecutor).thenCompose(returned -> {
             if (returned instanceof CompletableFuture<?> future) {
@@ -195,20 +205,6 @@ public final class ToolRegistry {
                 return cast.thenApply(ToolRegistry::serialize);
             }
             return CompletableFuture.completedFuture(serialize(returned));
-        }).exceptionally(ex -> {
-            // Unwrap our internal wrappers so callers see the original cause.
-            Throwable cause = ex;
-            if (cause instanceof java.util.concurrent.CompletionException ce && ce.getCause() != null) {
-                cause = ce.getCause();
-            }
-            if (cause instanceof BindingException be) {
-                sneakyThrow(be.getCause());
-            }
-            if (cause instanceof InvocationException ie) {
-                sneakyThrow(ie.getCause());
-            }
-            sneakyThrow(cause);
-            throw new AssertionError("unreachable");
         });
     }
 
@@ -257,29 +253,6 @@ public final class ToolRegistry {
             return Json.MAPPER.writeValueAsString(value);
         } catch (Exception e) {
             return String.valueOf(value);
-        }
-    }
-
-    /**
-     * Throws any {@link Throwable} without requiring it to be declared, exploiting type
-     * erasure to bypass checked-exception enforcement.
-     */
-    @SuppressWarnings("unchecked")
-    private static <E extends Throwable> void sneakyThrow(Throwable t) throws E {
-        throw (E) t;
-    }
-
-    /** Wraps a binding (argument-parsing) exception for transport through {@code supplyAsync}. */
-    private static final class BindingException extends RuntimeException {
-        BindingException(Throwable cause) {
-            super(cause);
-        }
-    }
-
-    /** Wraps a tool-invocation exception for transport through {@code supplyAsync}. */
-    private static final class InvocationException extends RuntimeException {
-        InvocationException(Throwable cause) {
-            super(cause);
         }
     }
 

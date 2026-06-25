@@ -85,7 +85,6 @@ vi.mock('../browser/browser-controller', () => ({
 }));
 
 // Import AFTER mock registration so the module gets the mocked version.
-// eslint-disable-next-line import/first
 import { browserController } from '../browser/browser-controller';
 
 // Typed helper so we get autocompletion on mock methods.
