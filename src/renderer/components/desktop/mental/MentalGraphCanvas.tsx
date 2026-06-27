@@ -19,6 +19,7 @@ import {
   ReactFlowProvider,
   ConnectionMode,
   Position,
+  MarkerType,
 } from '@xyflow/react';
 import type {
   Node,
@@ -31,9 +32,11 @@ import type {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useDesktopStore } from '../../../store/desktop-store';
+import { useHarnessStore } from '../../../store/harness-store';
 import { MentalNode } from './MentalNode';
 import { StepNode } from './StepNode';
 import { MentalEdge } from './MentalEdge';
+import { FlowEdge } from '../nodes/FlowEdge';
 import { MentalAttachActionBubble } from './MentalAttachActionBubble';
 import { FrameNode } from '../nodes/FrameNode';
 import { MetaChat } from '../harness/MetaChat';
@@ -42,7 +45,7 @@ import type { CanvasGraphNode, FrameGraphNode, StepGraphNode } from '@/types/des
 // ─── Custom node/edge type registrations ─────────────────────────
 
 const nodeTypes = { mental: MentalNode, step: StepNode, frame: FrameNode };
-const edgeTypes = { mental: MentalEdge };
+const edgeTypes = { mental: MentalEdge, flow: FlowEdge };
 
 // ─── Declarative handle positions ────────────────────────────────
 // Providing `handles` on each node lets React Flow resolve edge
@@ -96,6 +99,13 @@ function MentalGraphCanvasInner() {
   const setCanvasPan = useDesktopStore((s) => s.setCanvasPan);
   const setCanvasZoom = useDesktopStore((s) => s.setCanvasZoom);
 
+  // ─── Fork-indicator state (READ ONLY from harness store) ────────
+  // When a fork exists, `lastForkRunId` is set and `highlightedStepId`
+  // identifies the step from which the run was forked (the checkpoint step
+  // that was active when the user clicked "Fork from here").
+  const lastForkRunId = useHarnessStore((s) => s.checkpointState.lastForkRunId);
+  const forkOriginStepId = useHarnessStore((s) => s.checkpointState.highlightedStepId);
+
   const { screenToFlowPosition } = useReactFlow();
   const connectingSourceRef = useRef<string | null>(null);
   const showGraphBackdrop = mentalMode !== 'off' || mentalNodes.length > 0;
@@ -146,12 +156,19 @@ function MentalGraphCanvasInner() {
       }
 
       if (isStepGraphNode(n)) {
+        // Inject fork indicator data when this step is the fork-origin.
+        // `_isForkOrigin` and `_forkRunId` are consumed by StepNode to render
+        // the "forked here" badge. The underscore prefix signals these are
+        // canvas-injected ephemeral fields, not persistent StepNodeData fields.
+        const isForkOrigin = lastForkRunId !== null && forkOriginStepId === n.id;
         return {
           id: n.id,
           type: 'step',
           ...(n.parentId ? { parentId: n.parentId, extent: 'parent' as const } : {}),
           position: n.position,
-          data: n.data,
+          data: isForkOrigin
+            ? { ...n.data, _isForkOrigin: true, _forkRunId: lastForkRunId }
+            : n.data,
           width: n.width,
           height: n.height,
           style: { width: n.width, height: n.height },
@@ -180,26 +197,55 @@ function MentalGraphCanvasInner() {
         handles: buildHandles(n.width, n.height, shape),
       };
     }),
-    [mentalNodes]
+    [mentalNodes, lastForkRunId, forkOriginStepId]
   );
 
   // ─── Map store edges → React Flow edges ──────────────────────
+  // Edges between two Step nodes use the directional FlowEdge type.
+  // All other edges (mental node ↔ mental node) keep the plain MentalEdge.
 
-  const rfEdges: Edge[] = useMemo(() =>
-    mentalEdges.map((e) => ({
-      id: e.id,
-      source: e.sourceId,
-      target: e.targetId,
-      sourceHandle: e.sourceHandle || 'bottom',
-      targetHandle: e.targetHandle || 'top',
-      type: 'mental',
-      data: {
-        edgeColor: e.color,
-        edgeType: e.type,
-      },
-    })),
-    [mentalEdges]
-  );
+  const rfEdges: Edge[] = useMemo(() => {
+    const stepIds = new Set(mentalNodes.filter(isStepGraphNode).map((n) => n.id));
+
+    return mentalEdges.map((e) => {
+      const isFlowEdge = stepIds.has(e.sourceId) && stepIds.has(e.targetId);
+      const edgeColor = e.color ?? '#4DA8FF';
+
+      if (isFlowEdge) {
+        return {
+          id: e.id,
+          source: e.sourceId,
+          target: e.targetId,
+          sourceHandle: e.sourceHandle || 'right',
+          targetHandle: e.targetHandle || 'left',
+          type: 'flow',
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 16,
+            height: 16,
+            color: edgeColor,
+          },
+          data: {
+            edgeColor,
+            edgeType: e.type,
+          },
+        };
+      }
+
+      return {
+        id: e.id,
+        source: e.sourceId,
+        target: e.targetId,
+        sourceHandle: e.sourceHandle || 'bottom',
+        targetHandle: e.targetHandle || 'top',
+        type: 'mental',
+        data: {
+          edgeColor: e.color,
+          edgeType: e.type,
+        },
+      };
+    });
+  }, [mentalEdges, mentalNodes]);
 
   // ─── Handle node position/dimension changes ─────────────────
 

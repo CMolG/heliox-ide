@@ -28,6 +28,8 @@ import {
 import { executeAgenticFlow } from './harness-engine/executor';
 import { setHarnessEventWindow } from './harness-engine/event-bus';
 import { assemblePipeline } from './meta-agent/pipeline-generator';
+import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
+import { registerScorecardIpc, registerArenaIpc } from './performance-frontier/ipc';
 
 const execFileAsync = promisify(execFile);
 
@@ -1111,6 +1113,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return { success: false, error: errMsg(err) };
     }
   });
+
+  // ── Time-travel checkpoint IPC (ARCH-073) ─────────────────────────────────
+  // Delegated to a dedicated module to keep this file additive.
+  registerCheckpointIpcHandlers();
+
+  // ── Performance Frontier Scorecard + Arena IPC (ARCH-079) ─────────────────
+  // Registers pf:run-scorecard / pf:scorecard-progress and
+  // pf:run-arena / pf:arena-progress so the renderer panels can invoke them.
+  registerScorecardIpc(mainWindow);
+  registerArenaIpc(mainWindow);
 
   // ─── Arena leaderboard ────────────────────────────────────────────────────
   // Reads the JSON file written by `npm run pf:arena`. ENOENT is not an error —

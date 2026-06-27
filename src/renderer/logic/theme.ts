@@ -55,6 +55,8 @@ export const theme = {
 
   // Fonts
   fontMono: "'Liberation Mono', monospace",
+  // Display typeface for titles (dot-matrix). Self-hosted via @fontsource-variable/doto.
+  fontDisplay: "'Doto Variable', 'Atkinson Hyperlegible', 'Inter', sans-serif",
   fontGrotesk: "'Atkinson Hyperlegible', 'Inter', 'Segoe UI', Roboto, 'Noto Sans', sans-serif",
   fontManrope: "'Atkinson Hyperlegible', 'Inter', 'Segoe UI', Roboto, 'Noto Sans', sans-serif",
   fontInter: "'Atkinson Hyperlegible', 'Inter', 'Segoe UI', Roboto, 'Noto Sans', sans-serif",

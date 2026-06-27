@@ -31,6 +31,13 @@
       "prompt": "Step D: finalise and emit result.",
       "dependsOn": ["step-c"],
       "tools": []
+    },
+    {
+      "id": "step-e",
+      "type": "llm_call",
+      "prompt": "Step E: call the uppercase tool with the text 'hello conformance' and report the result.",
+      "dependsOn": ["step-d"],
+      "tools": ["uppercase"]
     }
   ]
 }

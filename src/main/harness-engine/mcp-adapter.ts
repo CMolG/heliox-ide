@@ -1,8 +1,11 @@
 /**
- * mcp-adapter.ts — Local MCP-compatible filesystem tools
+ * mcp-adapter.ts — Local MCP-compatible filesystem tools + remote MCP connection
  *
  * The harness exposes a small, root-scoped filesystem surface to LLMs. Tool
  * definitions are shaped like MCP tools and mapped into Vercel AI SDK tools.
+ *
+ * Also provides `createRemoteMcpToolSet` for connecting to external MCP servers
+ * (stdio or HTTP/SSE) and importing their tools into the executor's tool shape.
  */
 import {
   mkdir as nodeMkdir,
@@ -15,6 +18,10 @@ import { dirname, isAbsolute, relative, resolve } from 'path';
 import { tool, type ToolSet } from 'ai';
 import { z, ZodError } from 'zod';
 import type { CallToolResult, Tool as McpTool } from '@modelcontextprotocol/sdk/types.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { McpToolTelemetryEvent } from '../performance-frontier/telemetry/tool-events';
 
 const DEFAULT_MAX_READ_BYTES = 1024 * 1024;
@@ -327,4 +334,117 @@ export function createLocalMcpToolSet(options: LocalMcpOptions = {}): ToolSet {
       }),
     ]),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Remote MCP tool-set — connects to an external MCP server
+// ---------------------------------------------------------------------------
+
+/**
+ * Configuration for a stdio-based external MCP server.
+ * The server is started by spawning `command` with `args`.
+ */
+export interface StdioMcpServerConfig {
+  type: 'stdio';
+  command: string;
+  args?: string[];
+}
+
+/**
+ * Configuration for an HTTP/SSE-based external MCP server.
+ * Connects to the server at `url` using the Streamable-HTTP transport.
+ */
+export interface HttpMcpServerConfig {
+  type: 'http';
+  url: string;
+}
+
+/**
+ * Union of all supported external MCP server connection configs.
+ * Explicit config is REQUIRED — no auto-connect.
+ */
+export type RemoteMcpServerConfig = StdioMcpServerConfig | HttpMcpServerConfig;
+
+/**
+ * A connected remote MCP toolset that the caller must close when done.
+ */
+export interface RemoteMcpToolSet {
+  tools: ToolSet;
+  /** Closes the underlying transport / child process. */
+  close: () => Promise<void>;
+}
+
+function callToolResultToText(result: Awaited<ReturnType<Client['callTool']>>): string {
+  return (result.content as Array<{ type: string; text?: string }>)
+    .map((part) => (part.type === 'text' && typeof part.text === 'string' ? part.text : JSON.stringify(part)))
+    .join('\n');
+}
+
+/**
+ * Connects to an external MCP server and returns its tools in the executor's
+ * tool shape alongside a `close()` method to tear down the connection.
+ *
+ * Connection failure is **graceful**: an empty toolset is returned and the
+ * error is logged — the step continues without crashing.
+ *
+ * Explicit config is required; nothing is auto-connected.
+ */
+export async function createRemoteMcpToolSet(
+  config: RemoteMcpServerConfig,
+): Promise<RemoteMcpToolSet> {
+  let transport: Transport;
+
+  try {
+    if (config.type === 'stdio') {
+      transport = new StdioClientTransport({
+        command: config.command,
+        args: config.args ?? [],
+      });
+    } else {
+      transport = new StreamableHTTPClientTransport(new URL(config.url));
+    }
+
+    const client = new Client({ name: 'heliox-harness', version: '1.0.0' });
+    await client.connect(transport);
+
+    const { tools: mcpTools } = await client.listTools();
+
+    const toolSet: ToolSet = Object.fromEntries(
+      mcpTools.map((mcpTool) => {
+        const schema = z.object(
+          Object.fromEntries(
+            Object.entries(mcpTool.inputSchema.properties ?? {}).map(([key]) => [key, z.unknown()]),
+          ),
+        );
+
+        return [
+          mcpTool.name,
+          tool({
+            description: mcpTool.description ?? mcpTool.name,
+            inputSchema: schema,
+            execute: async (args) => {
+              const result = await client.callTool({ name: mcpTool.name, arguments: args as Record<string, unknown> });
+              return { content: result.content };
+            },
+            toModelOutput: ({ output }) => ({
+              type: 'text',
+              value: callToolResultToText(output as Awaited<ReturnType<Client['callTool']>>),
+            }),
+          }),
+        ];
+      }),
+    );
+
+    return {
+      tools: toolSet,
+      close: () => client.close(),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[mcp-adapter] Failed to connect to remote MCP server (${config.type}): ${message}`);
+    return {
+      tools: {},
+      close: async () => { /* nothing to close */ },
+    };
+  }
 }

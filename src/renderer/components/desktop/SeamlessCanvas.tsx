@@ -22,7 +22,6 @@ import { DesktopAttachable, AttachableOverlayCard } from './DesktopAttachable';
 import { SnapGuides } from './SnapGuides';
 import { WindowConnections } from './WindowConnections';
 import { MentalGraphCanvas } from './mental/MentalGraphCanvas';
-import { StepHarnessDock } from './mental/StepHarnessDock';
 import { Dock } from './Dock';
 import { TutorialEngine } from './tutorial/TutorialEngine';
 import { MarketplaceApp } from '@/renderer/components/atoms/apps/MarketplaceApp';
@@ -610,7 +609,6 @@ export function SeamlessCanvas() {
         )}
 
         {/* Dock (fixed, not affected by pan/zoom) — includes attachables */}
-        <StepHarnessDock />
         <Dock />
 
         {/* Session status dock — vertical left side */}

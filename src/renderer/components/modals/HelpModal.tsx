@@ -15,7 +15,7 @@
 // src/renderer/components/HelpModal.tsx — IDE documentation with sidebar navigation
 import React, { useState, useCallback, useEffect } from 'react';
 import { useHelioxStore } from '../../store';
-import { VscRocket, VscComment, VscRefresh, VscPerson, VscSettingsGear } from 'react-icons/vsc';
+import { VscRocket, VscComment, VscRefresh, VscPerson, VscSettingsGear, VscGraph } from 'react-icons/vsc';
 import { FiCommand } from 'react-icons/fi';
 import { theme } from '../../logic/theme';
 import { SectionContent } from './HelpSectionContent';
@@ -26,6 +26,7 @@ const SECTIONS: { id: DocSection; label: string; icon: React.ReactNode }[] = [
   { id: 'sessions', label: 'Sessions', icon: <VscComment size={14} /> },
   { id: 'flows', label: 'E2E Flows', icon: <VscRefresh size={14} /> },
   { id: 'roles', label: 'Roles', icon: <VscPerson size={14} /> },
+  { id: 'pipelines', label: 'Pipelines', icon: <VscGraph size={14} /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <FiCommand size={14} /> },
   { id: 'settings', label: 'Settings', icon: <VscSettingsGear size={14} /> },
 ];

@@ -10,7 +10,17 @@ import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import type { Flow, RunAgentParams, AgentEvent, HelioxAPI } from '../types';
 import type { ContextMapNode, ContextMapEdge } from '../types/context-map';
 import type { AgenticFlow } from '../types/harness';
-import type { HarnessEventPayload } from '../types/ipc-events';
+import type {
+  HarnessEventPayload,
+  ListCheckpointsResponse,
+  ReplayFromResponse,
+  ScorecardRunOptions,
+  ScorecardProgressEvent,
+  ScorecardResult,
+  ArenaRunOptions,
+  ArenaProgressEvent,
+  ArenaResult,
+} from '../types/ipc-events';
 import type { BrowserAction } from '../types/browser';
 
 const helioxAPI: HelioxAPI = {
@@ -322,6 +332,43 @@ const helioxAPI: HelioxAPI = {
   // Returns { success, data } — data is [] when no run exists yet.
   readArenaLeaderboard: (projectPath: string) =>
     ipcRenderer.invoke('arena:read-leaderboard', projectPath),
+
+  // ── Time-travel checkpoints (ARCH-073) ─────────────────────────
+  // List all checkpoints for a run. Returns { success, data, error }.
+  listCheckpoints: (runId: string): Promise<ListCheckpointsResponse> =>
+    ipcRenderer.invoke('harness:list-checkpoints', runId),
+
+  // Fork a run from a checkpoint (optionally with an edited step output).
+  // Returns { success, data: { forkRunId, seededStepIds, isDeterministicReplay }, error }.
+  harnessReplayFrom: (
+    flow: import('../types/harness').AgenticFlow,
+    checkpointId: string,
+    editedOutput?: string,
+  ): Promise<ReplayFromResponse> =>
+    ipcRenderer.invoke('harness:replay-from', flow, checkpointId, editedOutput),
+
+  // ── Performance Frontier Scorecard + Arena (ARCH-079) ──────────────────────
+  // Invoke channels match ipc.ts exactly (pf:run-scorecard / pf:run-arena).
+  // Progress channels match the constants in ipc.ts (pf:scorecard-progress /
+  // pf:arena-progress). Each `on*` method returns an unsubscribe fn.
+
+  runScorecard: (opts?: ScorecardRunOptions): Promise<{ success: boolean; data?: ScorecardResult; error?: string }> =>
+    ipcRenderer.invoke('pf:run-scorecard', opts),
+
+  onScorecardProgress: (cb: (event: ScorecardProgressEvent) => void): () => void => {
+    const handler = (_event: IpcRendererEvent, data: ScorecardProgressEvent) => cb(data);
+    ipcRenderer.on('pf:scorecard-progress', handler);
+    return () => { ipcRenderer.removeListener('pf:scorecard-progress', handler); };
+  },
+
+  runArena: (opts?: ArenaRunOptions): Promise<{ success: boolean; data?: ArenaResult; error?: string }> =>
+    ipcRenderer.invoke('pf:run-arena', opts),
+
+  onArenaProgress: (cb: (event: ArenaProgressEvent) => void): () => void => {
+    const handler = (_event: IpcRendererEvent, data: ArenaProgressEvent) => cb(data);
+    ipcRenderer.on('pf:arena-progress', handler);
+    return () => { ipcRenderer.removeListener('pf:arena-progress', handler); };
+  },
 };
 
 // Menu events from main process

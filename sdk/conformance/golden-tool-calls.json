@@ -1,0 +1,8 @@
+[
+  {
+    "stepId": "step-e",
+    "toolName": "uppercase",
+    "arguments": "{\"text\":\"hello conformance\"}",
+    "result": "HELLO CONFORMANCE"
+  }
+]

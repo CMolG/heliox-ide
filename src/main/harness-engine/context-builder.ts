@@ -5,6 +5,7 @@
  * prompts, resolved pre-process mods, and mental context become the user prompt.
  */
 import type { AgenticMod, AgenticStep } from '../../types/harness';
+import type { RetrievedChunk } from './retriever';
 
 export interface StepContext {
   systemPrompt: string;
@@ -19,6 +20,13 @@ export interface BuildStepContextOptions {
     status: 'running' | 'completed' | 'error',
     logs?: string,
   ) => void;
+  /**
+   * Chunks retrieved by a preceding `retriever` step (or the current step when
+   * it IS the retriever step). Injected into the user prompt under the
+   * `<retrieved_context>` delimiter so downstream steps consume them through
+   * the normal DAG context mechanism.
+   */
+  injectedChunks?: RetrievedChunk[];
 }
 
 function stringifyConfig(config: Record<string, unknown> | undefined): string {
@@ -74,6 +82,16 @@ function buildPostProcessHint(step: AgenticStep): string {
   ].join('\n');
 }
 
+function buildRetrievedContext(chunks: RetrievedChunk[] | undefined): string {
+  if (!chunks || chunks.length === 0) return '';
+
+  return [
+    '<retrieved_context>',
+    ...chunks.map((c, i) => `[${i + 1}] (score=${c.score.toFixed(4)}, doc=${c.docId})\n${c.text}`),
+    '</retrieved_context>',
+  ].join('\n');
+}
+
 export async function buildStepContext(
   step: AgenticStep,
   options: BuildStepContextOptions = {},
@@ -106,6 +124,7 @@ export async function buildStepContext(
     step.prompt,
     preProcessContext,
     buildMentalContext(step),
+    buildRetrievedContext(options.injectedChunks),
     buildPostProcessHint(step),
   ].filter(Boolean).join('\n\n');
 

@@ -3,6 +3,7 @@ import type { PipelineAssembly } from '@/types/meta-agent';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { calculateSafeInsertionPoint } from '../../../store/spatial-engine';
 import { LucideIcon } from '../LucideIcon';
+import { HelioxSpinner } from '../../brand/HelioxSpinner';
 
 const FRAME_HORIZONTAL_PADDING = 112;
 const FRAME_VERTICAL_PADDING = 210;
@@ -117,11 +118,11 @@ export function MetaChat() {
           disabled={!canSubmit}
           aria-label="Assemble pipeline"
         >
-          <LucideIcon
-            name={status === 'assembling' ? 'LoaderCircle' : 'ArrowUp'}
-            size={16}
-            className={status === 'assembling' ? 'meta-chat-spinner' : undefined}
-          />
+          {status === 'assembling' ? (
+            <HelioxSpinner size={16} />
+          ) : (
+            <LucideIcon name="ArrowUp" size={16} />
+          )}
         </button>
       </div>
       {status === 'assembling' && (

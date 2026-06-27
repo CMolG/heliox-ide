@@ -6,7 +6,7 @@
  */
 import { anthropic } from '@ai-sdk/anthropic';
 import { createOpenAI, openai } from '@ai-sdk/openai';
-import { generateText as aiGenerateText, stepCountIs, type LanguageModel, type ToolSet } from 'ai';
+import { generateText as aiGenerateText, streamText as aiStreamText, stepCountIs, type LanguageModel, type ToolSet } from 'ai';
 import { normalizeUsage } from '../performance-frontier/telemetry/normalize-usage';
 import { logProviderHeaders, normalizeProviderHeaders } from '../performance-frontier/telemetry/provider-headers';
 import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/collector';
@@ -45,6 +45,7 @@ export interface RunLLMStepInput {
     };
   }>;
   onTelemetry?: (event: LLMStepTelemetryEvent) => void;
+  onDelta?: (d: { kind: 'reasoning' | 'text' | 'tool'; delta: string }) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -210,11 +211,122 @@ export function resolveHarnessModel(modelId = process.env.HELIOX_HARNESS_MODEL ?
   throw new Error(`Unsupported harness model provider "${provider}". Use openai, anthropic, openrouter, mimo, or xiaomi-token-plan-ams.`);
 }
 
+interface RawStepResult {
+  text: string;
+  usage?: unknown;
+  totalUsage?: unknown;
+  toolCalls?: unknown[];
+  toolResults?: unknown[];
+  steps?: unknown[];
+  response?: {
+    headers?: Record<string, string>;
+  };
+}
+
+function buildLLMStepResult(
+  input: RunLLMStepInput,
+  raw: RawStepResult,
+  startedAt: number,
+): LLMStepResult {
+  const providerHeaders = normalizeProviderHeaders(raw.response?.headers);
+  // AI SDK exposes `usage` as the LAST step only; `totalUsage` aggregates every
+  // tool-calling round of a multi-step ReAct loop. Bill the total so we don't
+  // undercount the context re-sent on each round (was a ~20x underestimate).
+  const aggregatedUsage = raw.totalUsage ?? raw.usage ?? null;
+  const usage = normalizeUsage(aggregatedUsage, providerHeaders);
+  const cognitiveTrace = extractCognitiveTraceFromSteps(raw.steps);
+  const traceToolCallsCount = cognitiveTrace.filter((entry) => entry.type === 'tool_call').length;
+  const traceToolResultsCount = cognitiveTrace.filter((entry) => entry.type === 'tool_result').length;
+  const metrics: LLMStepTelemetryEvent = {
+    modelId: input.modelId,
+    ...usage,
+    latencyMs: performance.now() - startedAt,
+    toolCallsCount: traceToolCallsCount || (raw.toolCalls?.length ?? 0),
+    toolResultsCount: traceToolResultsCount || (raw.toolResults?.length ?? 0),
+  };
+  logProviderHeaders(providerHeaders, {
+    inputTokens: metrics.inputTokens,
+    outputTokens: metrics.outputTokens,
+    reasoningTokens: metrics.reasoningTokens ?? 0,
+    totalTokens: metrics.totalTokens,
+  });
+  input.onTelemetry?.(metrics);
+
+  return {
+    text: raw.text,
+    usage: aggregatedUsage,
+    toolCalls: raw.toolCalls ?? [],
+    toolResults: raw.toolResults ?? [],
+    cognitiveTrace,
+    metrics,
+  };
+}
+
 export async function runLLMStep(input: RunLLMStepInput): Promise<LLMStepResult> {
-  const generateText = input.generateText ?? aiGenerateText;
   const startedAt = performance.now();
 
+  // Use the streaming path only when onDelta is provided AND no generateText override
+  // is present. The override is used exclusively by tests to inject a mock, so
+  // keeping generateText as the default branch ensures tests remain unaffected.
+  const useStreaming = input.onDelta !== undefined && input.generateText === undefined;
+
   try {
+    if (useStreaming) {
+      const streamResult = aiStreamText({
+        model: input.model ?? resolveHarnessModel(input.modelId),
+        system: input.systemPrompt,
+        prompt: input.userPrompt,
+        tools: input.tools,
+        stopWhen: stepCountIs(input.maxSteps ?? DEFAULT_MAX_STEPS),
+        maxRetries: 1,
+        abortSignal: timeoutSignal(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      });
+
+      // Consume the fullStream and forward deltas to onDelta as they arrive.
+      for await (const part of streamResult.fullStream) {
+        if (part.type === 'text-delta') {
+          input.onDelta!({ kind: 'text', delta: part.text });
+        } else if (part.type === 'reasoning-delta') {
+          input.onDelta!({ kind: 'reasoning', delta: part.text });
+        } else if (part.type === 'tool-call') {
+          const toolName = (part as { toolName?: string }).toolName ?? '';
+          const toolInput = (part as { input?: unknown }).input;
+          let brief: string;
+          try {
+            brief = `${toolName}(${JSON.stringify(toolInput)})`;
+          } catch {
+            brief = toolName;
+          }
+          input.onDelta!({ kind: 'tool', delta: brief });
+        }
+      }
+
+      // After the stream is fully consumed, collect the aggregated result via
+      // the PromiseLike properties exposed by StreamTextResult.
+      const [text, rawUsage, totalUsage, steps, toolCalls, toolResults, response] = await Promise.all([
+        streamResult.text,
+        streamResult.usage,
+        streamResult.totalUsage,
+        streamResult.steps,
+        streamResult.toolCalls,
+        streamResult.toolResults,
+        streamResult.response,
+      ]);
+
+      const raw: RawStepResult = {
+        text,
+        usage: rawUsage,
+        totalUsage,
+        toolCalls: toolCalls as unknown[],
+        toolResults: toolResults as unknown[],
+        steps: steps as unknown[],
+        response: { headers: (response as { headers?: Record<string, string> }).headers },
+      };
+      return buildLLMStepResult(input, raw, startedAt);
+    }
+
+    // Default path: generateText (used directly by tests via the override).
+    const generateText = input.generateText ?? aiGenerateText;
     const result = await generateText({
       model: input.model ?? resolveHarnessModel(input.modelId),
       system: input.systemPrompt,
@@ -224,38 +336,7 @@ export async function runLLMStep(input: RunLLMStepInput): Promise<LLMStepResult>
       maxRetries: 1,
       abortSignal: timeoutSignal(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
-    const providerHeaders = normalizeProviderHeaders(result.response?.headers);
-    // AI SDK exposes `usage` as the LAST step only; `totalUsage` aggregates every
-    // tool-calling round of a multi-step ReAct loop. Bill the total so we don't
-    // undercount the context re-sent on each round (was a ~20x underestimate).
-    const aggregatedUsage = result.totalUsage ?? result.usage ?? null;
-    const usage = normalizeUsage(aggregatedUsage, providerHeaders);
-    const cognitiveTrace = extractCognitiveTraceFromSteps(result.steps);
-    const traceToolCallsCount = cognitiveTrace.filter((entry) => entry.type === 'tool_call').length;
-    const traceToolResultsCount = cognitiveTrace.filter((entry) => entry.type === 'tool_result').length;
-    const metrics: LLMStepTelemetryEvent = {
-      modelId: input.modelId,
-      ...usage,
-      latencyMs: performance.now() - startedAt,
-      toolCallsCount: traceToolCallsCount || result.toolCalls?.length || 0,
-      toolResultsCount: traceToolResultsCount || result.toolResults?.length || 0,
-    };
-    logProviderHeaders(providerHeaders, {
-      inputTokens: metrics.inputTokens,
-      outputTokens: metrics.outputTokens,
-      reasoningTokens: metrics.reasoningTokens ?? 0,
-      totalTokens: metrics.totalTokens,
-    });
-    input.onTelemetry?.(metrics);
-
-    return {
-      text: result.text,
-      usage: aggregatedUsage,
-      toolCalls: result.toolCalls ?? [],
-      toolResults: result.toolResults ?? [],
-      cognitiveTrace,
-      metrics,
-    };
+    return buildLLMStepResult(input, result as RawStepResult, startedAt);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`LLM step failed: ${message}`);

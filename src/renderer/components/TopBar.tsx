@@ -15,7 +15,7 @@
 // src/renderer/components/TopBar.tsx — Top navigation bar
 import React from 'react';
 import { theme } from '../logic/theme';
-import { LucideIcon } from './desktop/LucideIcon';
+import { HelioxLogo } from './brand/HelioxLogo';
 
 export const TopBar = React.memo(function TopBar() {
   return (
@@ -32,10 +32,10 @@ export const TopBar = React.memo(function TopBar() {
       }}
     >
       <div className="py-3 flex items-center justify-end" style={{ paddingLeft: '88px', paddingRight: '24px', gap: '10px' }}>
-        <LucideIcon name="Orbit" size={22} style={{ color: '#ffffff' }} />
+        <HelioxLogo size={22} />
         <span
           className="text-xl font-bold leading-7"
-          style={{ fontFamily: theme.fontGrotesk, color: theme.textSecondary }}
+          style={{ fontFamily: theme.fontDisplay, color: theme.textSecondary, letterSpacing: '0.03em' }}
           data-testid="topbar-brand"
         >
           Heliox <span style={{ color: theme.textFaint, fontWeight: 400 }}>(HeO₂)</span>

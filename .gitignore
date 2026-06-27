@@ -26,5 +26,11 @@ test-results/
 # Java SDK (sdk/java) build output
 sdk/java/target/
 
+# Python SDK (sdk/python) build/cache artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+
 # Agent planning artifacts (not product source)
 docs/superpowers/
+/docs/competitive-analysis/

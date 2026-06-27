@@ -18,6 +18,7 @@ import type {
 import type { MarketInventory, MarketMod, MarketRole, BacklogCard } from '@/types/market';
 import type { TutorialScenarioId, TutorialProgress } from '@/types/tutorial';
 import type { PipelineAssembly } from '@/types/meta-agent';
+import type { AgenticStepType } from '@/types/harness';
 
 
 // ─── Grid cell geometry helper ───────────────────────────────────
@@ -151,6 +152,7 @@ interface AddStepNodeInput {
   modIds?: string[];
   mods?: MarketMod[];
   roles?: MarketRole[];
+  stepType?: AgenticStepType;
 }
 
 interface AddFrameNodeInput {
@@ -1369,6 +1371,7 @@ export const useDesktopStore = create<DesktopStore>()(
             modIds: [...(input.modIds ?? [])],
             mods: [...(input.mods ?? [])],
             roles: [...(input.roles ?? [])],
+            stepType: input.stepType ?? 'llm_call',
           },
           createdAt: Date.now(),
         };
@@ -1401,6 +1404,19 @@ export const useDesktopStore = create<DesktopStore>()(
           },
           createdAt: Date.now(),
         };
+        // Compute out-degree for each step to detect routers
+        const outDegreeMap = new Map<string, number>();
+        for (const step of assembly.steps) {
+          for (const prevId of step.prevStepIds) {
+            outDegreeMap.set(prevId, (outDegreeMap.get(prevId) ?? 0) + 1);
+          }
+        }
+        const TOOL_MOD_PATTERN = /tool|browser|web|mcp/i;
+        function inferStepType(step: (typeof assembly.steps)[number]): AgenticStepType {
+          if ((outDegreeMap.get(step.id) ?? 0) > 1) return 'router';
+          if (step.modIds.some((id) => TOOL_MOD_PATTERN.test(id))) return 'tool_call';
+          return 'llm_call';
+        }
         const stepNodes: StepGraphNode[] = assembly.steps.map((step, index) => ({
           id: stepIdMap.get(step.id)!,
           type: 'step',
@@ -1422,6 +1438,7 @@ export const useDesktopStore = create<DesktopStore>()(
             modIds: [...step.modIds],
             mods: step.modIds.map(modFromId),
             roles: step.roleId ? [roleFromId(step.roleId)] : [],
+            stepType: inferStepType(step),
           },
           createdAt: Date.now(),
         }));

@@ -262,7 +262,7 @@ describe('stable export order', () => {
 // ---------------------------------------------------------------------------
 
 describe('cross-runtime conformance — golden DAG order', () => {
-  it('executes conformance-chain in step-a → step-b → step-c → step-d order', async () => {
+  it('executes conformance-chain in step-a → step-b → step-c → step-d → step-e order', async () => {
     // Load the shared fixture (also consumed by the Java test suite).
     const fixturePath = join(process.cwd(), 'sdk', 'conformance', 'conformance-chain.flow.json');
     const raw = readFileSync(fixturePath, 'utf-8');
@@ -278,6 +278,6 @@ describe('cross-runtime conformance — golden DAG order', () => {
       },
     });
 
-    expect(order).toEqual(['step-a', 'step-b', 'step-c', 'step-d']);
+    expect(order).toEqual(['step-a', 'step-b', 'step-c', 'step-d', 'step-e']);
   });
 });

@@ -486,6 +486,40 @@ export interface HelioxAPI {
     data?: import('./arena').ArenaLeaderboardEntry[];
     error?: string;
   }>;
+
+  // ── Time-travel checkpoints (ARCH-073) ─────────────────────────────────────
+  /** List all checkpoints for a run in chronological order. */
+  listCheckpoints(runId: string): Promise<import('./ipc-events').ListCheckpointsResponse>;
+  /** Fork a run from a checkpoint, optionally with an edited step output. */
+  harnessReplayFrom(
+    flow: import('./harness').AgenticFlow,
+    checkpointId: string,
+    editedOutput?: string,
+  ): Promise<import('./ipc-events').ReplayFromResponse>;
+
+  // ── Performance Frontier Scorecard + Arena (ARCH-079) ──────────────────────
+  /** Invoke pf:run-scorecard; returns the full structured scorecard or an error. */
+  runScorecard(opts?: import('./ipc-events').ScorecardRunOptions): Promise<{
+    success: boolean;
+    data?: import('./ipc-events').ScorecardResult;
+    error?: string;
+  }>;
+  /**
+   * Subscribe to incremental progress events streamed on pf:scorecard-progress
+   * while a scorecard run is in flight.  Returns an unsubscribe function.
+   */
+  onScorecardProgress(cb: (event: import('./ipc-events').ScorecardProgressEvent) => void): () => void;
+  /** Invoke pf:run-arena; returns the full leaderboard + recommendations or an error. */
+  runArena(opts?: import('./ipc-events').ArenaRunOptions): Promise<{
+    success: boolean;
+    data?: import('./ipc-events').ArenaResult;
+    error?: string;
+  }>;
+  /**
+   * Subscribe to per-model progress events streamed on pf:arena-progress
+   * while an Arena run is in flight.  Returns an unsubscribe function.
+   */
+  onArenaProgress(cb: (event: import('./ipc-events').ArenaProgressEvent) => void): () => void;
 }
 
 /** Payload emitted by the main-process dev-server watcher when a new port comes up. */

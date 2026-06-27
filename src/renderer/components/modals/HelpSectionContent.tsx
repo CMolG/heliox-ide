@@ -16,7 +16,7 @@
 import React from 'react';
 import { theme } from '../../logic/theme';
 
-export type DocSection = 'overview' | 'sessions' | 'flows' | 'roles' | 'shortcuts' | 'settings';
+export type DocSection = 'overview' | 'sessions' | 'flows' | 'roles' | 'pipelines' | 'shortcuts' | 'settings';
 
 const SHORTCUTS = [
   { keys: ['⌘', 'O'], description: 'Open project folder' },
@@ -132,6 +132,62 @@ export function SectionContent({ section }: { section: DocSection }) {
             Create custom roles for your workflow — documentation writer, DevOps engineer,
             accessibility auditor, or anything else.
           </p>
+        </div>
+      );
+    case 'pipelines':
+      return (
+        <div className="flex flex-col gap-4">
+          <h2 className="text-lg font-bold" style={headStyle}>Glosario de Pipelines</h2>
+          <p className="text-sm leading-6" style={bodyStyle}>
+            El editor de pipelines del canvas usa un vocabulario específico. Esta sección explica
+            cada concepto para que puedas diseñar y depurar flujos de agente con confianza.
+          </p>
+          <div className="flex flex-col gap-2 p-4 rounded-xl" style={{ background: 'rgba(0,0,0,0.3)' }}>
+            <span className="text-[10px] font-bold uppercase tracking-wider" style={labelStyle}>Elementos del canvas</span>
+            <div className="flex flex-col gap-2 text-sm" style={bodyStyle}>
+              <span>
+                <strong className="text-stone-300">Flow (Pipeline)</strong> — Grafo dirigido de Steps que el agente ejecuta de principio a fin.
+                Visualmente es el frame que agrupa y delimita todos los pasos del proceso.
+              </span>
+              <span>
+                <strong className="text-stone-300">Step</strong> — Unidad de trabajo dentro de un flow. Existen tres tipos:
+                <span className="block mt-1 ml-3">
+                  · <strong className="text-stone-400">LLM Call</strong> — Realiza una llamada al modelo de lenguaje.
+                </span>
+                <span className="block ml-3">
+                  · <strong className="text-stone-400">Tool Call</strong> — Ejecuta herramientas o servidores MCP.
+                </span>
+                <span className="block ml-3">
+                  · <strong className="text-stone-400">Router</strong> — Bifurca el flujo según una decisión condicional.
+                </span>
+              </span>
+              <span>
+                <strong className="text-stone-300">Role</strong> — Persona o system prompt que adopta el agente en ese step.
+                Determina el tono, las restricciones y el foco del modelo.
+              </span>
+              <span>
+                <strong className="text-stone-300">Mod</strong> — Modificador de comportamiento aplicado al step.
+                Puede ser un pre/post-procesador, un override de sistema o un proveedor de tools adicionales.
+              </span>
+              <span>
+                <strong className="text-stone-300">Tool</strong> — Capacidad concreta (función o endpoint MCP) que el step
+                puede invocar durante su ejecución.
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 p-4 rounded-xl" style={{ background: 'rgba(0,0,0,0.3)' }}>
+            <span className="text-[10px] font-bold uppercase tracking-wider" style={labelStyle}>Conexiones y estados</span>
+            <div className="flex flex-col gap-1.5 text-sm" style={bodyStyle}>
+              <span>
+                <strong className="text-stone-300">Conexiones (flechas)</strong> — Indican el orden de ejecución entre steps.
+                Se animan con un flujo pulsante cuando el step de origen está en curso.
+              </span>
+              <span><span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: theme.textFaint }} /> <strong className="text-zinc-400">Idle</strong> — El step no ha sido ejecutado aún.</span>
+              <span><span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: theme.success }} /> <strong className="text-stone-300">Running</strong> — Ejecutándose; el borde del nodo oscila.</span>
+              <span><span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: '#60a5fa' }} /> <strong className="text-blue-300">Completed</strong> — Finalizado con éxito.</span>
+              <span><span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: theme.danger }} /> <strong className="text-red-400">Error</strong> — El step falló; revisa los logs del nodo.</span>
+            </div>
+          </div>
         </div>
       );
     case 'shortcuts':

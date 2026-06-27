@@ -18,7 +18,8 @@
     "pf:arena": "tsx src/main/performance-frontier/arena/arena-runner.ts",
     "heliox:baseline": "node -e \"console.log('Run baselines via Heliox IDE UI — Flows tab → Initialize Baselines')\"",
     "build:bridge": "vite build --config vite.bridge.config.ts",
-    "heliox:init": "node -e \"const fs=require('fs'),p=require('path');const d=p.join(process.cwd(),'heliox');if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true});['flows.json','metrics.config.json'].forEach(f=>{const fp=p.join(d,f);if(!fs.existsSync(fp))fs.copyFileSync(p.join(__dirname,'assets','heliox-templates',f),fp)});console.log('Heliox config initialized in ./heliox/')\""
+    "heliox:init": "node -e \"const fs=require('fs'),p=require('path');const d=p.join(process.cwd(),'heliox');if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true});['flows.json','metrics.config.json'].forEach(f=>{const fp=p.join(d,f);if(!fs.existsSync(fp))fs.copyFileSync(p.join(__dirname,'assets','heliox-templates',f),fp)});console.log('Heliox config initialized in ./heliox/')\"",
+    "heliox:serve": "tsx src/main/serve/cli.ts"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",
@@ -76,6 +77,7 @@
     "@dnd-kit/modifiers": "^9",
     "@dnd-kit/sortable": "^10",
     "@dnd-kit/utilities": "^3",
+    "@fontsource-variable/doto": "^5.2.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@monaco-editor/react": "^4.7.0",
     "@playwright/test": "^1",

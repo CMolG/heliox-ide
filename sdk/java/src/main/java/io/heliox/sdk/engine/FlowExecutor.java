@@ -207,6 +207,74 @@ public final class FlowExecutor {
     }
 
     // =========================================================================
+    // executeAllText — all steps propagate raw provider text (canonical default)
+    // =========================================================================
+
+    /**
+     * Executes a flow where ALL steps — including the terminal sink — propagate raw provider
+     * text. No JSON-schema extraction is performed. This is the canonical default behaviour
+     * when no step declares an output schema.
+     *
+     * <p><b>Canonical typed-output rule:</b> JSON-schema extraction is an explicit opt-in
+     * (via {@link #execute(FlowDefinition, Class, int, Map)} or
+     * {@link #executeMultiSink(FlowDefinition, Map, int, Map)}). A flow whose steps carry no
+     * declared output schema must produce byte-identical text in both the TypeScript and Java
+     * runtimes — this method is the Java-side proof of that guarantee.
+     *
+     * @param flow        the flow definition to execute
+     * @param maxRetries  retry budget forwarded to {@link StepExecutor#executeStepText}
+     *                    (text steps do not validate; the budget is carried for API consistency)
+     * @param seedContext optional key/value pairs injected into every step's context
+     * @return a future that resolves to a {@link LinkedHashMap} of stepId → raw text, in
+     *         topological (DAG) execution order
+     */
+    public CompletableFuture<Map<String, String>> executeAllText(FlowDefinition flow,
+                                                                  int maxRetries,
+                                                                  Map<String, Object> seedContext) {
+        return executeAllText(flow, maxRetries, seedContext, DagTelemetry.NOOP);
+    }
+
+    /**
+     * Executes a flow where ALL steps propagate raw provider text, forwarding per-node metrics
+     * to {@code telemetry}.
+     *
+     * @param flow        the flow definition to execute
+     * @param maxRetries  retry budget (text steps do not validate; carried for API consistency)
+     * @param seedContext optional key/value pairs injected into every step's context
+     * @param telemetry   collector for per-node execution metrics
+     * @return a future that resolves to a {@link LinkedHashMap} of stepId → raw text
+     */
+    public CompletableFuture<Map<String, String>> executeAllText(FlowDefinition flow,
+                                                                  int maxRetries,
+                                                                  Map<String, Object> seedContext,
+                                                                  DagTelemetry telemetry) {
+        Map<String, StepConfig> byId = index(flow);
+        validateDependencies(byId);
+        List<StepConfig> order = topologicalOrder(byId);
+
+        Map<String, Object> seed = seedContext == null ? Map.of() : seedContext;
+        ConcurrentHashMap<String, String> results = new ConcurrentHashMap<>();
+        Map<String, CompletableFuture<String>> textFutures = new HashMap<>();
+
+        // Schedule every node — including the sink — as a text future.
+        scheduleNonSinkNodes(order, Set.of(), textFutures, results, seed, maxRetries, telemetry);
+
+        // All futures are already wired; combine them in topological order.
+        List<CompletableFuture<String>> allFutures = order.stream()
+                .map(step -> textFutures.get(step.id()))
+                .toList();
+
+        return CompletableFuture.allOf(allFutures.toArray(CompletableFuture[]::new))
+                .thenApply(ignored -> {
+                    Map<String, String> out = new LinkedHashMap<>();
+                    for (StepConfig step : order) {
+                        out.put(step.id(), results.get(step.id()));
+                    }
+                    return out;
+                });
+    }
+
+    // =========================================================================
     // Shared scheduling helper
     // =========================================================================
 

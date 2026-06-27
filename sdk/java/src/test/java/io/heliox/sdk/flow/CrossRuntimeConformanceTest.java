@@ -6,7 +6,10 @@ import io.heliox.sdk.engine.StepExecutor;
 import io.heliox.sdk.internal.Json;
 import io.heliox.sdk.provider.ChatMessage;
 import io.heliox.sdk.provider.LlmResponse;
+import io.heliox.sdk.provider.ToolCall;
 import io.heliox.sdk.testutil.FakeProvider;
+import io.heliox.sdk.tool.HelioxTool;
+import io.heliox.sdk.tool.ToolRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -21,34 +24,51 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Cross-runtime conformance test — proves that the Java runtime traverses the canonical
- * DAG in the same topological order as the TypeScript IDE runtime.
+ * DAG in the same topological order as the TypeScript IDE runtime AND propagates identical
+ * raw provider text for all steps (typed-output parity, ARCH-074) AND calls the same tools
+ * with the same arguments and integrates the same results (tool-calling parity, ARCH-075).
  *
  * <p><b>Shared fixture</b>: {@code sdk/conformance/conformance-chain.flow.json} (never
  * modified here). Both runtimes consume this single source of truth.
  *
- * <p><b>Golden DAG order</b>: {@code [step-a, step-b, step-c, step-d]} — a strict linear
- * chain where each step depends on the previous one.
+ * <p><b>Golden DAG order</b>: {@code [step-a, step-b, step-c, step-d, step-e]} — a strict
+ * linear chain where each step depends on the previous one.
  *
- * <p><b>Order-capture mechanism</b>: a {@link FakeProvider} stub configured with a
- * {@code responder} lambda. Each time the executor calls {@code provider.complete(request)},
- * the lambda inspects the USER message content (which contains the step's {@code promptTemplate})
- * to identify which step is running, appends the step id to a thread-safe list, and returns a
- * deterministic offline response — no network, no external processes.
- *
- * <p><b>Terminal-step response</b>: {@code step-d} is the sink (no dependents), so
- * {@link FlowExecutor} routes it through {@code executeStep(step, FlowResult.class, retries)},
- * which expects a valid JSON object. The responder detects this by checking whether the system
- * prompt contains the JSON Schema instruction, and returns {@code {"value":"done"}}.
- * All other steps use {@code executeStepText}, which accepts any plain string.
+ * <p><b>Tool-calling parity (ARCH-075):</b> {@code step-e} invokes the deterministic
+ * {@code uppercase} tool, which is registered in both the Java {@link ToolRegistry} (here)
+ * and the TypeScript conformance test harness. Both runtimes call the tool with the same
+ * arguments ({@code {"text":"hello conformance"}}) and integrate the same result
+ * ({@code "HELLO CONFORMANCE"}) into the conversation, producing the same post-tool output
+ * ({@code "Result: HELLO CONFORMANCE"}) — proven by comparing against
+ * {@code golden-tool-calls.json}.
  */
 class CrossRuntimeConformanceTest {
 
     /** The golden execution order that BOTH runtimes must agree on. */
-    private static final List<String> GOLDEN_ORDER = List.of("step-a", "step-b", "step-c", "step-d");
+    private static final List<String> GOLDEN_ORDER =
+        List.of("step-a", "step-b", "step-c", "step-d", "step-e");
 
-    /** Minimal output type for the terminal step (schema-enforced path). */
-    record FlowResult(String value) {
+    /** Minimal output type for the terminal step (explicit typed-path test only). */
+    record FlowResult(String value) {}
+
+    // ---------------------------------------------------------------------------
+    // Conformance tool — uppercase
+    //
+    // Identical name/schema/behaviour to the function in semantic-parity.test.ts.
+    // Pure, deterministic, no side-effects: uppercase(text) = text.toUpperCase().
+    // ---------------------------------------------------------------------------
+
+    static final class UppercaseTool {
+        @HelioxTool(name = "uppercase", description = "Returns the input text in upper case.")
+        public String uppercase(String text) {
+            return text == null ? "" : text.toUpperCase();
+        }
     }
+
+    // Tool-call fixture constants (must match golden-tool-calls.json exactly).
+    static final String UPPERCASE_TOOL_ARGS   = "{\"text\":\"hello conformance\"}";
+    static final String UPPERCASE_TOOL_RESULT = "HELLO CONFORMANCE";
+    static final String STEP_E_FINAL_TEXT     = "Result: HELLO CONFORMANCE";
 
     // ---- Fixture resolution ---------------------------------------------------------------
 
@@ -117,19 +137,22 @@ class CrossRuntimeConformanceTest {
             "flow id must match the fixture's 'id' field");
 
         List<StepConfig> steps = flow.steps();
-        assertEquals(4, steps.size(), "expected exactly 4 steps");
+        assertEquals(5, steps.size(), "expected exactly 5 steps");
 
         // Check ids in order.
         assertEquals("step-a", steps.get(0).id());
         assertEquals("step-b", steps.get(1).id());
         assertEquals("step-c", steps.get(2).id());
         assertEquals("step-d", steps.get(3).id());
+        assertEquals("step-e", steps.get(4).id());
 
         // Verify promptTemplate mapping (canonical 'prompt' field).
         assertTrue(steps.get(0).promptTemplate().contains("Step A"),
             "step-a promptTemplate should contain 'Step A'");
         assertTrue(steps.get(1).promptTemplate().contains("Step B"),
             "step-b promptTemplate should contain 'Step B'");
+        assertTrue(steps.get(4).promptTemplate().contains("Step E"),
+            "step-e promptTemplate should contain 'Step E'");
 
         // Verify dependsOn → dependencies mapping.
         assertEquals(List.of(), steps.get(0).dependencies(),
@@ -140,6 +163,8 @@ class CrossRuntimeConformanceTest {
             "step-c must depend on step-b");
         assertEquals(List.of("step-c"), steps.get(3).dependencies(),
             "step-d must depend on step-c");
+        assertEquals(List.of("step-d"), steps.get(4).dependencies(),
+            "step-e must depend on step-d");
 
         // systemPrompt must be null (not present in fixture).
         assertNull(steps.get(0).systemPrompt(), "step-a systemPrompt should be null");
@@ -154,10 +179,9 @@ class CrossRuntimeConformanceTest {
      * Runs the imported flow through the real {@link FlowExecutor} with a stub
      * {@link FakeProvider}, captures execution order, and asserts it equals the golden order.
      *
-     * <p>Order-capture strategy: the responder lambda is invoked synchronously inside
-     * {@code provider.complete()} for every step. It extracts the user-turn content from
-     * the message list, matches it against each step's known prompt prefix, appends the
-     * step id to {@code observedOrder}, and returns a deterministic offline response.
+     * <p>For step-e, the provider must handle two turns: first the tool-call request, then
+     * the final text after the tool result is fed back. The responder detects the post-tool
+     * turn by checking for a TOOL-role message in the request.
      */
     @Test
     void dagOrderMatchesGoldenOrder() throws Exception {
@@ -165,16 +189,15 @@ class CrossRuntimeConformanceTest {
         FlowDefinition flow = FlowImport.fromCanonicalFile(fixture);
 
         // Build a prompt → step-id mapping from the imported steps.
-        // Each step's promptTemplate is unique, so matching on it is unambiguous.
-        Map<String, String> promptToId = Map.of(
-            flow.steps().get(0).promptTemplate(), flow.steps().get(0).id(),
-            flow.steps().get(1).promptTemplate(), flow.steps().get(1).id(),
-            flow.steps().get(2).promptTemplate(), flow.steps().get(2).id(),
-            flow.steps().get(3).promptTemplate(), flow.steps().get(3).id()
-        );
+        Map<String, String> promptToId = new LinkedHashMap<>();
+        for (StepConfig step : flow.steps()) {
+            promptToId.put(step.promptTemplate(), step.id());
+        }
 
-        // Thread-safe because the DAG futures may execute on different ForkJoinPool threads.
         CopyOnWriteArrayList<String> observedOrder = new CopyOnWriteArrayList<>();
+
+        // Register the uppercase tool so step-e's tool call can be executed.
+        ToolRegistry registry = new ToolRegistry().register(new UppercaseTool());
 
         FakeProvider provider = new FakeProvider().responder(request -> {
             // Locate the USER-role message — it always contains the rendered promptTemplate.
@@ -194,19 +217,41 @@ class CrossRuntimeConformanceTest {
             }
 
             if (matchedId != null) {
-                observedOrder.add(matchedId);
+                // Record order only on first call for each step (tool-loop may call multiple times).
+                final String stepId = matchedId;
+                if (!observedOrder.contains(stepId)) {
+                    observedOrder.add(stepId);
+                }
             }
 
-            // The terminal step (step-d) goes through the typed executeStep path:
-            // the system prompt includes the JSON Schema instruction so we can detect it.
-            // Return a valid FlowResult JSON for that step; plain text for all others.
+            // Detect post-tool turn for step-e: a TOOL message is present in the history.
+            boolean isToolResultTurn = request.messages().stream()
+                .anyMatch(m -> m.role() == ChatMessage.Role.TOOL);
+
+            if (isToolResultTurn) {
+                // Second turn for step-e: model emits the final text after seeing the tool result.
+                boolean isTypedStep = request.messages().stream()
+                    .anyMatch(m -> m.role() == ChatMessage.Role.SYSTEM
+                        && m.content().contains("JSON Schema"));
+                return LlmResponse.of(isTypedStep ? "{\"value\":\"done\"}" : STEP_E_FINAL_TEXT);
+            }
+
+            // First (or only) turn: detect step-e by its prompt and return a tool call.
+            if (matchedId != null && matchedId.equals("step-e")) {
+                return LlmResponse.withToolCalls(
+                    "",
+                    List.of(new ToolCall("call_conformance_1", "uppercase", UPPERCASE_TOOL_ARGS))
+                );
+            }
+
+            // All other steps (step-a through step-d): detect typed path and return appropriate text.
             boolean isTypedStep = request.messages().stream()
                 .anyMatch(m -> m.role() == ChatMessage.Role.SYSTEM
                     && m.content().contains("JSON Schema"));
             return LlmResponse.of(isTypedStep ? "{\"value\":\"done\"}" : "ok");
         });
 
-        FlowExecutor executor = new FlowExecutor(new StepExecutor(provider));
+        FlowExecutor executor = new FlowExecutor(new StepExecutor(provider, registry));
         FlowResult result = executor.execute(flow, FlowResult.class, 1, Map.of()).get();
 
         // Assert the typed terminal response came back correctly.
@@ -223,41 +268,21 @@ class CrossRuntimeConformanceTest {
     // ---- Semantic output parity ----------------------------------------------------------
 
     /**
-     * SEMANTIC EXECUTION PARITY — proves the Java runtime produces the same per-step outputs
-     * as the TypeScript runtime for the canonical conformance flow.
+     * SEMANTIC EXECUTION PARITY (ARCH-074 + ARCH-075) — proves the Java runtime produces
+     * the same per-step outputs as the TypeScript runtime for the canonical conformance flow,
+     * including the tool-calling step (step-e).
      *
-     * <h3>Trace capture layer</h3>
-     * The trace is recorded at the <em>provider-text level</em>: for each provider call we
-     * identify the running step from its user-turn prompt, then record
-     * {@code {stepId, scripted-responses.get(stepId)}} into an ordered list.  This layer is
-     * defined as the "normalized trace" because both runtimes agree on what the provider
-     * returns per step; only post-processing diverges for the typed terminal step.
+     * <h3>Tool-calling step-e</h3>
+     * The scripted {@link FakeProvider} first returns a tool-call request for
+     * {@code uppercase}, then (after the tool has executed and the result has been threaded
+     * back) returns the final text. The {@link ToolRegistry} with the real
+     * {@link UppercaseTool} ensures the tool is ACTUALLY invoked — not bypassed.
      *
-     * <h3>Terminal-step handling (step-d)</h3>
-     * Steps a–c are executed via {@code executeStepText}; their provider text is propagated
-     * unchanged as the step's output.  Step-d is the sink and is executed via the typed
-     * {@code executeStep(…, FlowResult.class, …)} path: the runtime injects a JSON Schema
-     * system prompt and expects a valid JSON object in return.  Plain text ({@code "Result of
-     * step D"}) cannot pass through this path without a deserialization failure.
-     *
-     * <p><b>Resolution (provider-text normalization):</b> the provider IS called for step-d
-     * (confirmed by the trace recording), and we capture the scripted text
-     * ({@code "Result of step D"}) as its "output" in the normalized trace.  To allow execution
-     * to complete without error, the responder detects the typed path (system prompt contains
-     * {@code "JSON Schema"}) and returns {@code {"value":"done"}} to satisfy the runtime — but
-     * the <em>recorded</em> output remains the scripted text from {@code scripted-responses.json}.
-     *
-     * <p>This is NOT a fabricated pass: the provider is genuinely called four times in DAG
-     * order, the scripted text is faithfully associated with each step, and the assertion
-     * compares against the golden trace loaded from disk.  If the scripted-responses fixture
-     * or the golden fixture diverge in the future, this test will fail.
-     *
-     * <p><b>Documented divergence:</b> at the runtime-output level (what the executor returns
-     * to the caller), step-d's Java output is the deserialized {@code FlowResult} object, not
-     * the plain string {@code "Result of step D"}.  The TypeScript runtime propagates
-     * plain-text outputs for all steps including the sink.  This is a genuine cross-runtime
-     * behavioural difference in the typed-output layer; it does NOT appear in the
-     * provider-text-level trace, which is the layer this test asserts.
+     * <h3>How the trace is captured</h3>
+     * All steps use {@code executeAllText}. For steps a-d the scripted text flows through
+     * unchanged. For step-e the text is the post-tool final response
+     * ({@code "Result: HELLO CONFORMANCE"}). The golden trace entry for step-e records this
+     * same text, making the assertion byte-identical across runtimes.
      */
     @Test
     void semanticParityMatchesGoldenTrace() throws Exception {
@@ -272,29 +297,27 @@ class CrossRuntimeConformanceTest {
             new TypeReference<Map<String, String>>() {}
         );
 
-        // 2b. Load golden trace: List of {stepId, output} maps.
+        // 2b. Load golden trace: List<{stepId, output}>.
         Path goldenTracePath = resolveConformanceFile("golden-trace.json");
         List<Map<String, String>> goldenTrace = Json.MAPPER.readValue(
             goldenTracePath.toFile(),
             new TypeReference<List<Map<String, String>>>() {}
         );
 
-        // Build prompt → stepId mapping from the imported steps (unambiguous: each prompt is unique).
+        // Build prompt → stepId mapping (each prompt is unique — unambiguous).
         Map<String, String> promptToId = new LinkedHashMap<>();
         for (StepConfig step : flow.steps()) {
             promptToId.put(step.promptTemplate(), step.id());
         }
 
-        // 3. Run the flow with a scripted FakeProvider.
-        //    The trace is captured at the PROVIDER-TEXT LEVEL: when the provider is called for
-        //    a step we record {stepId, scriptedResponses.get(stepId)} into observedTrace.
-        //    For the terminal step (typed path, detected via "JSON Schema" in the system prompt)
-        //    we record the scripted text but return valid JSON to the runtime so execution
-        //    completes without error — see Javadoc above for the full divergence note.
-        CopyOnWriteArrayList<Map<String, String>> observedTrace = new CopyOnWriteArrayList<>();
+        // Register the uppercase tool so the real tool-execution loop runs for step-e.
+        ToolRegistry registry = new ToolRegistry().register(new UppercaseTool());
 
+        // 3. Scripted provider: handles both plain text steps AND the two-turn tool-calling step.
+        //    - For step-a through step-d: return canned text from scripted-responses.json.
+        //    - For step-e, turn 1: return a tool-call request for uppercase.
+        //    - For step-e, turn 2 (TOOL message present): return the post-tool final text.
         FakeProvider provider = new FakeProvider().responder(request -> {
-            // Identify the running step from the USER-role message content.
             String userContent = request.messages().stream()
                 .filter(m -> m.role() == ChatMessage.Role.USER)
                 .map(ChatMessage::content)
@@ -309,42 +332,45 @@ class CrossRuntimeConformanceTest {
                 }
             }
 
-            if (matchedId != null) {
-                // Record {stepId, scriptedText} at the provider-text level.
-                String scriptedText = scriptedResponses.get(matchedId);
-                Map<String, String> traceEntry = new LinkedHashMap<>();
-                traceEntry.put("stepId", matchedId);
-                traceEntry.put("output", scriptedText != null ? scriptedText : "");
-                observedTrace.add(traceEntry);
+            // Detect post-tool turn: a TOOL-role message has been threaded back.
+            boolean isToolResultTurn = request.messages().stream()
+                .anyMatch(m -> m.role() == ChatMessage.Role.TOOL);
+
+            if (isToolResultTurn) {
+                // Second call for step-e: return the final text (after tool result consumed).
+                String text = scriptedResponses.getOrDefault("step-e", "");
+                return LlmResponse.of(text);
             }
 
-            // Detect the typed terminal path: the system prompt contains the JSON Schema instruction.
-            boolean isTypedStep = request.messages().stream()
-                .anyMatch(m -> m.role() == ChatMessage.Role.SYSTEM
-                    && m.content().contains("JSON Schema"));
-
-            if (isTypedStep) {
-                // Return valid JSON for FlowResult so the runtime can deserialize it.
-                // The recorded output above already captures the scripted text for the trace.
-                return LlmResponse.of("{\"value\":\"done\"}");
+            if ("step-e".equals(matchedId)) {
+                // First call for step-e: the model requests the uppercase tool.
+                return LlmResponse.withToolCalls(
+                    "",
+                    List.of(new ToolCall("call_conformance_1", "uppercase", UPPERCASE_TOOL_ARGS))
+                );
             }
 
-            // For text steps, return the scripted text directly — it IS the step output.
+            // Steps a-d: plain text response.
             String text = matchedId != null ? scriptedResponses.get(matchedId) : null;
             return LlmResponse.of(text != null ? text : "");
         });
 
-        FlowExecutor executor = new FlowExecutor(new StepExecutor(provider));
-        // Execute the flow; the terminal step produces a FlowResult (typed path).
-        FlowResult result = executor.execute(flow, FlowResult.class, 1, Map.of()).get();
+        // 4. Execute ALL steps as plain text — the canonical default (no schema opt-in).
+        //    The ToolRegistry is wired so step-e's tool call is ACTUALLY executed.
+        FlowExecutor executor = new FlowExecutor(new StepExecutor(provider, registry));
+        Map<String, String> executionResults = executor.executeAllText(flow, 1, Map.of()).get();
 
-        // Sanity-check: typed terminal step deserialized correctly.
-        assertEquals("done", result.value(),
-            "Terminal step must produce a valid FlowResult via the JSON schema path");
+        // 5. Build the observed trace in golden-trace order (DAG topological order).
+        List<Map<String, String>> capturedTrace = new ArrayList<>();
+        for (StepConfig step : flow.steps()) {
+            String output = executionResults.get(step.id());
+            Map<String, String> entry = new LinkedHashMap<>();
+            entry.put("stepId", step.id());
+            entry.put("output", output != null ? output : "");
+            capturedTrace.add(entry);
+        }
 
-        // 4. Assert the normalized trace equals the golden trace loaded from disk.
-        List<Map<String, String>> capturedTrace = new ArrayList<>(observedTrace);
-
+        // 6. Assert the actual runtime output equals the golden trace — no normalization needed.
         assertEquals(goldenTrace.size(), capturedTrace.size(),
             "Trace length must match golden trace. Golden=" + goldenTrace.size()
                 + " Observed=" + capturedTrace.size());
@@ -360,8 +386,89 @@ class CrossRuntimeConformanceTest {
             assertEquals(expected.get("output"), actual.get("output"),
                 "Trace entry[" + i + "] output mismatch for stepId='" + expected.get("stepId") + "'. "
                     + "Expected=\"" + expected.get("output") + "\" Actual=\"" + actual.get("output") + "\". "
-                    + "NOTE: step-d output is recorded at the provider-text level (scripted text), "
-                    + "not the typed runtime output (FlowResult). See Javadoc for divergence note.");
+                    + "Both runtimes must propagate identical raw provider text (ARCH-074 + ARCH-075).");
         }
+    }
+
+    // ---- Tool-calling parity (ARCH-075) --------------------------------------------------
+
+    /**
+     * TOOL-CALLING CONFORMANCE PARITY (ARCH-075) — proves the Java runtime invokes the
+     * {@code uppercase} tool with the canonical arguments and integrates the result,
+     * matching {@code golden-tool-calls.json} byte-for-byte.
+     *
+     * <p>This test directly exercises {@link StepExecutor} with the {@link ToolRegistry}
+     * so the REAL tool-execution loop (provider → tool invocation → provider) runs — not
+     * a shortcut. The {@link FakeProvider} scripted queue delivers the same two-turn
+     * sequence used in {@link ToolCallingTest}: first a tool-call response, then the final
+     * text after the result is threaded back.
+     *
+     * <p>The TypeScript half of this assertion lives in {@code semantic-parity.test.ts}:
+     * the {@code uppercase} function is called directly and the result verified against the
+     * same fixture.
+     */
+    @Test
+    void toolCallingParityMatchesGoldenToolCalls() throws Exception {
+        // Load the golden tool-calls fixture.
+        Path goldenToolCallsPath = resolveConformanceFile("golden-tool-calls.json");
+        List<Map<String, String>> goldenToolCalls = Json.MAPPER.readValue(
+            goldenToolCallsPath.toFile(),
+            new TypeReference<List<Map<String, String>>>() {}
+        );
+
+        // Load the flow to get step-e's StepConfig.
+        Path flowFixture = resolveConformanceFile("conformance-chain.flow.json");
+        FlowDefinition flow = FlowImport.fromCanonicalFile(flowFixture);
+        StepConfig stepE = flow.steps().stream()
+            .filter(s -> "step-e".equals(s.id()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("step-e not found in fixture"));
+
+        // Register the real uppercase tool — the executor will ACTUALLY invoke it.
+        ToolRegistry registry = new ToolRegistry().register(new UppercaseTool());
+
+        // Scripted provider: turn 1 → tool call; turn 2 → final text.
+        FakeProvider provider = new FakeProvider()
+            .respondWithToolCall("call_conformance_1", "uppercase", UPPERCASE_TOOL_ARGS)
+            .respondWith(STEP_E_FINAL_TEXT);
+
+        StepExecutor stepExecutor = new StepExecutor(provider, registry);
+
+        // Execute step-e as plain text — the tool loop runs inside executeStepText.
+        String output = stepExecutor.executeStepText(stepE, 1).get();
+
+        // Assert the post-tool output matches the golden contract.
+        assertEquals(STEP_E_FINAL_TEXT, output,
+            "step-e post-tool output must match the golden fixture");
+
+        // Assert the provider was called twice (tool-call turn + final-text turn).
+        assertEquals(2, provider.requests.size(),
+            "Provider must be called exactly twice for step-e: tool-call request + final-text request");
+
+        // Assert the tool result was threaded back as a TOOL message in the second request.
+        boolean toolResultFedBack = provider.requests.get(1).messages().stream()
+            .anyMatch(m -> m.role() == ChatMessage.Role.TOOL
+                && m.content().contains(UPPERCASE_TOOL_RESULT));
+        assertTrue(toolResultFedBack,
+            "The tool result '" + UPPERCASE_TOOL_RESULT + "' must be fed back as a TOOL message");
+
+        // Assert against golden-tool-calls.json.
+        assertEquals(1, goldenToolCalls.size(),
+            "golden-tool-calls.json must contain exactly one entry");
+        Map<String, String> golden = goldenToolCalls.get(0);
+
+        assertEquals("step-e", golden.get("stepId"));
+        assertEquals("uppercase", golden.get("toolName"),
+            "Tool name must match the golden fixture");
+        assertEquals(UPPERCASE_TOOL_ARGS, golden.get("arguments"),
+            "Tool arguments must match the golden fixture");
+        assertEquals(UPPERCASE_TOOL_RESULT, golden.get("result"),
+            "Tool result must match the golden fixture");
+
+        // Verify the tool was ACTUALLY INVOKED by cross-checking the result independently.
+        UppercaseTool tool = new UppercaseTool();
+        String independentResult = tool.uppercase("hello conformance");
+        assertEquals(UPPERCASE_TOOL_RESULT, independentResult,
+            "The golden result must equal uppercase(\"hello conformance\") — verifying the tool logic");
     }
 }

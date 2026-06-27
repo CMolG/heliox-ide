@@ -7,6 +7,7 @@
  */
 // src/types/desktop.ts — Types for the seamless desktop window system
 import type { MarketMod, MarketRole } from './market';
+import type { AgenticStepType } from './harness';
 
 // ─── OpenCode Provider Theming ───────────────────────────────────
 //
@@ -238,6 +239,7 @@ export interface StepNodeData {
   modIds?: string[];
   mods: MarketMod[];
   roles: MarketRole[];
+  stepType?: AgenticStepType;
   [key: string]: unknown;
 }
 
