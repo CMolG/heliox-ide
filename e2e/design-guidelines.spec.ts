@@ -3,14 +3,18 @@
  *
  * Responsibility:
  * - Verifies the 60-guideline system loads correctly.
- * - Validates GuidelinePicker modal open/close, search, and swatch rendering
- *   via the Settings modal (no bottom status bar — Proposal 08).
- * - Tests locked selection.
+ * - Tests store-level guideline locking (designGuidelineId / setDesignGuideline).
  * - Confirms no bottom status bar is present in Seamless layout.
  *
  * Architecture note:
  * All store mutations use `window.__DESKTOP_STORE__` (exposed by App.tsx for E2E)
  * to avoid UI-flakiness and focus each test on its specific assertion.
+ *
+ * NOTE: The "Design System in Settings Modal" tests were removed. The Settings
+ * modal no longer contains a Design System section or a guideline-picker entry
+ * point — that integration was removed when the standalone design-system feature
+ * became a mod. GuidelinePicker exists as a component but has no current mount
+ * point in the Settings modal.
  */
 import { test, expect, type Page, type ElectronApplication } from '@playwright/test';
 import { _electron as electron } from 'playwright';
@@ -62,21 +66,6 @@ test.afterAll(async () => {
   }
   if (app) await app.close();
 });
-
-// ─── Helper: open Settings modal ─────────────────────────────────
-
-async function openSettings() {
-  await page.evaluate(() => {
-    const store = (window as any).__HELIOX_STORE__;
-    if (store) store.getState().setShowSettings(true);
-  });
-  await page.waitForSelector('[data-testid="settings-modal"]', { timeout: 5_000 });
-}
-
-async function closeSettings() {
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-}
 
 // ─── Seamless Layout Regression ─────────────────────────────────
 
@@ -138,115 +127,3 @@ test.describe('Design Guidelines System', () => {
   });
 });
 
-// ─── Settings-based Design System Controls ──────────────────────
-
-test.describe('Design System in Settings Modal', () => {
-  test('settings modal shows Design System section', async () => {
-    await openSettings();
-
-    const section = page.getByText('Design System', { exact: true }).first();
-    await expect(section).toBeVisible();
-
-    await closeSettings();
-  });
-
-  test('manual mode shows Change button to open guideline picker', async () => {
-    await openSettings();
-
-    const changeBtn = page.locator('[data-testid="settings-open-guideline-picker"]');
-    await expect(changeBtn).toBeVisible();
-
-    await closeSettings();
-  });
-
-  test('clicking Change opens GuidelinePicker', async () => {
-    await openSettings();
-
-    const changeBtn = page.locator('[data-testid="settings-open-guideline-picker"]');
-    await changeBtn.click();
-    await page.waitForTimeout(300);
-
-    const picker = page.locator('[data-testid="guideline-picker"]');
-    await expect(picker).toBeVisible({ timeout: 3_000 });
-
-    // Close picker
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
-
-    await closeSettings();
-  });
-
-  test('GuidelinePicker renders search input', async () => {
-    await openSettings();
-
-    const changeBtn = page.locator('[data-testid="settings-open-guideline-picker"]');
-    await changeBtn.click();
-    await page.waitForTimeout(300);
-
-    const searchInput = page.locator('[data-testid="guideline-search"]');
-    await expect(searchInput).toBeVisible();
-
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
-    await closeSettings();
-  });
-
-  test('GuidelinePicker renders swatch buttons', async () => {
-    await openSettings();
-
-    const changeBtn = page.locator('[data-testid="settings-open-guideline-picker"]');
-    await changeBtn.click();
-    await page.waitForTimeout(300);
-
-    const firstSwatch = page.locator('[data-testid="guideline-swatch-obsidian"]');
-    await expect(firstSwatch).toBeVisible({ timeout: 3_000 });
-
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
-    await closeSettings();
-  });
-
-  test('selecting a swatch locks guideline and closes picker', async () => {
-    await openSettings();
-
-    const changeBtn = page.locator('[data-testid="settings-open-guideline-picker"]');
-    await changeBtn.click();
-    await page.waitForTimeout(300);
-
-    const swatch = page.locator('[data-testid="guideline-swatch-obsidian"]');
-    await swatch.click();
-    await page.waitForTimeout(300);
-
-    const picker = page.locator('[data-testid="guideline-picker"]');
-    await expect(picker).not.toBeVisible();
-
-    const id = await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      return ds?.getState().designGuidelineId;
-    });
-    expect(id).toBe(1);
-
-    await closeSettings();
-  });
-
-  test('search filters guidelines', async () => {
-    await openSettings();
-
-    const changeBtn = page.locator('[data-testid="settings-open-guideline-picker"]');
-    await changeBtn.click();
-    await page.waitForTimeout(300);
-
-    const searchInput = page.locator('[data-testid="guideline-search"]');
-    await searchInput.fill('obsidian');
-    await page.waitForTimeout(200);
-
-    const swatch = page.locator('[data-testid="guideline-swatch-obsidian"]');
-    await expect(swatch).toBeVisible();
-
-    await searchInput.fill('');
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
-    await closeSettings();
-  });
-
-});

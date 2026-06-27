@@ -64,7 +64,11 @@ async function ensureDesktop() {
   }
   await page.evaluate(() => {
     const ds = (window as any).__DESKTOP_STORE__;
-    if (ds) ds.getState().updateSettings({ tourCompleted: true });
+    if (ds) {
+      ds.getState().updateSettings({ tourCompleted: true });
+      // Also clear any active tutorial so the backdrop does not intercept clicks.
+      ds.getState().setActiveTutorial(null);
+    }
   });
 }
 

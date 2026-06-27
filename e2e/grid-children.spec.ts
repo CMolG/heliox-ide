@@ -886,36 +886,6 @@ test('zoom indicator is visible at non-100% zoom', async () => {
   });
 });
 
-// ─── Marketplace Design Systems tab ─────────────────────────────
-
-test('marketplace has Design Systems tab', async () => {
-  await cleanState();
-
-  // Open marketplace
-  await page.evaluate(() => {
-    const store = (window as any).__DESKTOP_STORE__;
-    store.getState().setShowMarketplace(true);
-  });
-  await page.waitForTimeout(300);
-
-  const dsTab = page.locator('[data-testid="marketplace-tab-design-systems"]');
-  await expect(dsTab).toBeVisible({ timeout: 3000 });
-
-  // Click it and verify design system cards appear
-  await dsTab.click();
-  await page.waitForTimeout(300);
-
-  const cards = page.locator('[data-category="design-systems"]');
-  const count = await cards.count();
-  expect(count).toBeGreaterThan(0);
-
-  // Close marketplace
-  await page.evaluate(() => {
-    const store = (window as any).__DESKTOP_STORE__;
-    store.getState().setShowMarketplace(false);
-  });
-});
-
 // ─── Grid Resize / Cell Merge Tests ─────────────────────────────
 
 test('resize south merges 2 vertical cells', async () => {

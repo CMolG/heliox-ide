@@ -26,10 +26,13 @@ const INVENTORY_PATH = path.join(__dirname, '..', 'market', 'inventory.json');
 const FULL_INVENTORY = JSON.parse(fs.readFileSync(INVENTORY_PATH, 'utf-8'));
 
 // Counts derived from the real inventory
-const TOTAL_FLOWS = FULL_INVENTORY.flows.length;   // 9
+const TOTAL_FLOWS = FULL_INVENTORY.flows.length;   // 12
 const TOTAL_ROLES = FULL_INVENTORY.roles.length;    // 9
-const TOTAL_MODS = FULL_INVENTORY.mods.length;      // 9
-const TOTAL_ITEMS = TOTAL_FLOWS + TOTAL_ROLES + TOTAL_MODS; // 27
+const TOTAL_MODS = FULL_INVENTORY.mods.length;      // 15
+// The store initialises availablePlugins with 4 BUILTIN_PLUGINS (category 'tools')
+// and then merges in all inventory items — so the rendered "All" tab total is 40.
+const BUILTIN_PLUGIN_COUNT = 4;
+const TOTAL_ITEMS = TOTAL_FLOWS + TOTAL_ROLES + TOTAL_MODS + BUILTIN_PLUGIN_COUNT; // 40
 
 let app: ElectronApplication;
 let page: Page;
@@ -385,7 +388,9 @@ test.describe('Marketplace', () => {
   });
 
   test('marketplace has category tabs (no Tools tab)', async () => {
-    const tabs = page.locator('.marketplace-tabs .marketplace-tab');
+    // CATEGORY_TABS in MarketplaceApp renders buttons with data-testid="marketplace-tab-{key}"
+    // (no .marketplace-tabs / .marketplace-tab CSS classes on the container or buttons)
+    const tabs = page.locator('[data-testid^="marketplace-tab-"]');
     const count = await tabs.count();
     expect(count).toBe(4); // All, Flows, Roles, Modifiers
     const toolsTab = page.locator('[data-testid="marketplace-tab-tools"]');
@@ -629,30 +634,24 @@ test.describe('Attachable Lifecycle', () => {
     expect(result!.attachablesLeft).toBe(0);
   });
 
-  test('flow attachable attaches to chat window', async () => {
+  test('flow connects to chat window via connectFlow', async () => {
+    // Flows are no longer drag-attached via the attachable system (attachToWindow returns
+    // false for type=flow since the harness rework). They are linked directly via
+    // connectFlow / disconnectFlow. This test verifies that current-model path.
     await spawnChatWindow();
-    await page.evaluate(() => {
-      const store = (window as any).__DESKTOP_STORE__;
-      if (store) store.getState().spawnAttachable('flow', 'auto-optimizer', { x: 400, y: 300 });
-    });
-    await page.waitForTimeout(300);
     const result = await page.evaluate(() => {
       const store = (window as any).__DESKTOP_STORE__;
       if (!store) return null;
       const s = store.getState();
       const win = [...s.windows].reverse().find((w: any) => w.type === 'chat');
-      const att = s.attachables.find((a: any) => a.name === 'auto-optimizer');
-      if (win && att) {
-        s.attachToWindow(att.id, win.id);
-        const updated = store.getState();
-        const updatedWin = updated.windows.find((w: any) => w.id === win.id);
-        return { flowId: updatedWin?.flowId, attachablesLeft: updated.attachables.length };
-      }
-      return null;
+      if (!win) return null;
+      const connected = s.connectFlow(win.id, 'auto-optimizer');
+      const updatedWin = store.getState().windows.find((w: any) => w.id === win.id);
+      return { connected, flowId: updatedWin?.flowId };
     });
     expect(result).not.toBeNull();
+    expect(result!.connected).toBe(true);
     expect(result!.flowId).toBe('auto-optimizer');
-    expect(result!.attachablesLeft).toBe(0);
   });
 
   test('detaching a role respawns attachable on desktop', async () => {
@@ -803,41 +802,22 @@ test.describe('Attachable Lifecycle', () => {
     expect(result.attachables).toContain('frontend-engineer');
   });
 
-  test('replacing a flow detaches old and attaches new', async () => {
+  test('replacing a flow disconnects old and connects new via connectFlow', async () => {
+    // Flows attach to windows via connectFlow (not the attachable drag system).
+    // Calling connectFlow a second time simply overwrites the previous flowId.
     await spawnChatWindow();
-    await page.evaluate(() => {
-      const store = (window as any).__DESKTOP_STORE__;
-      const s = store.getState();
-      const win = [...s.windows].reverse().find((w: any) => w.type === 'chat');
-      if (win) {
-        s.spawnAttachable('flow', 'auto-optimizer', { x: 300, y: 300 });
-        const att = store.getState().attachables.find((a: any) => a.name === 'auto-optimizer');
-        if (att) store.getState().attachToWindow(att.id, win.id);
-      }
-    });
-    await page.waitForTimeout(200);
-    await page.evaluate(() => {
-      const store = (window as any).__DESKTOP_STORE__;
-      const s = store.getState();
-      const win = [...s.windows].reverse().find((w: any) => w.type === 'chat');
-      if (win) {
-        s.spawnAttachable('flow', 'auto-reducer', { x: 500, y: 300 });
-        const att = store.getState().attachables.find((a: any) => a.name === 'auto-reducer');
-        if (att) store.getState().attachToWindow(att.id, win.id);
-      }
-    });
-    await page.waitForTimeout(300);
     const result = await page.evaluate(() => {
       const store = (window as any).__DESKTOP_STORE__;
       const s = store.getState();
       const win = [...s.windows].reverse().find((w: any) => w.type === 'chat');
-      return {
-        flowId: win?.flowId,
-        attachables: s.attachables.map((a: any) => a.name),
-      };
+      if (!win) return null;
+      s.connectFlow(win.id, 'auto-optimizer');
+      store.getState().connectFlow(win.id, 'auto-reducer');
+      const updatedWin = store.getState().windows.find((w: any) => w.id === win.id);
+      return { flowId: updatedWin?.flowId };
     });
-    expect(result.flowId).toBe('auto-reducer');
-    expect(result.attachables).toContain('auto-optimizer');
+    expect(result).not.toBeNull();
+    expect(result!.flowId).toBe('auto-reducer');
   });
 
   test('multiple mods can stack on one window', async () => {
@@ -1044,27 +1024,22 @@ test.describe('Attachable Lifecycle', () => {
     }
   });
 
-  test('all inventory flows can be deployed and attached', async () => {
+  test('all inventory flows can be connected to a chat window', async () => {
+    // Flows are linked to windows via connectFlow (not the attachable drag system).
+    // attachToWindow deliberately returns false for type=flow since the harness rework.
     await spawnChatWindow();
     for (const flow of FULL_INVENTORY.flows) {
       const result = await page.evaluate((flowName) => {
         const store = (window as any).__DESKTOP_STORE__;
         const s = store.getState();
-        // Clear
-        for (const a of [...s.attachables]) s.removeAttachable(a.id);
         const win = [...s.windows].reverse().find((w: any) => w.type === 'chat');
-        if (!win) return { spawned: false, attached: false };
+        if (!win) return { connected: false, flowId: null };
         if (win.flowId) store.getState().disconnectFlow(win.id);
-        // Deploy and attach
-        store.getState().spawnAttachable('flow', flowName, { x: 300, y: 300 });
-        const att = store.getState().attachables.find((a: any) => a.name === flowName);
-        if (!att) return { spawned: false, attached: false };
-        const attached = store.getState().attachToWindow(att.id, win.id);
+        const connected = store.getState().connectFlow(win.id, flowName);
         const updatedWin = store.getState().windows.find((w: any) => w.id === win.id);
-        return { spawned: true, attached, flowId: updatedWin?.flowId };
+        return { connected, flowId: updatedWin?.flowId };
       }, flow.name);
-      expect(result.spawned).toBe(true);
-      expect(result.attached).toBe(true);
+      expect(result.connected).toBe(true);
       expect(result.flowId).toBe(flow.name);
     }
   });
@@ -2946,7 +2921,25 @@ test.describe('Backlog Widget', () => {
         size: { width: 720, height: 480 },
       });
     });
-    await page.waitForTimeout(600);
+    // Wait for the widget to leave the loading state before asserting.
+    // The picker view is hidden while `loading` is true (scanForBacklogs runs async),
+    // so we wait up to 5 s for any of the empty-state strings to appear in the DOM.
+    await page.waitForFunction(
+      () => {
+        const texts = [
+          'No backlog cards found',
+          'No project subdirectories found',
+          'Open a project to scan',
+        ];
+        return texts.some(t =>
+          Array.from(document.querySelectorAll('*')).some(
+            el => el.children.length === 0 && el.textContent?.includes(t),
+          ),
+        );
+      },
+      { timeout: 5_000 },
+    ).catch(() => null); // tolerate timeout — assertion below gives the real verdict
+
     // Widget shows picker view with no backlogs found, or kanban with empty state
     const emptyKanban = page.locator('text=No backlog cards found');
     const emptyPicker = page.locator('text=No project subdirectories found');
@@ -3393,9 +3386,9 @@ test.describe('Settings', () => {
     await page.waitForTimeout(400);
     const modal = page.locator('[data-testid="settings-modal"]');
     await expect(modal).toBeVisible({ timeout: 3000 });
-    // Should have radio buttons for CLI adapters
+    // Should have radio buttons for CLI adapters (one per known provider)
     const radios = modal.locator('[role="radio"]');
-    await expect(radios).toHaveCount(5); // copilot, claude, google, openai, custom
+    await expect(radios).toHaveCount(10); // opencode, xiaomi-ams, xiaomi-cn, openrouter, anthropic, openai, google, groq, deepseek, xai
   });
 
   test('settings modal shows canvas click animation toggle', async () => {
@@ -4221,9 +4214,9 @@ test.describe('TopBar shows only IDE name', () => {
     expect(text).toContain('HeO₂');
   });
 
-  test('topbar does NOT have notifications button', async () => {
-    const notif = page.locator('[aria-label="Notifications"]');
-    await expect(notif).not.toBeVisible({ timeout: 2000 });
+  test('topbar has notifications button', async () => {
+    const notif = page.locator('[data-testid="notification-bell"]');
+    await expect(notif).toBeVisible({ timeout: 2000 });
   });
 
   test('topbar does NOT have settings button', async () => {

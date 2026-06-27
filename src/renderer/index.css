@@ -1049,11 +1049,15 @@ body {
 .grid-cell-empty {
   background: rgba(0, 0, 0, 0.02);
   border: 1px dashed rgba(0, 0, 0, 0.10);
+  /* Non-interactive by default so clicks pass through to windows rendered above */
+  pointer-events: none;
 }
 .grid-cell-empty:hover { border-color: rgba(0, 0, 0, 0.18); background: rgba(0, 0, 0, 0.04); }
 .grid-cell-empty[data-drop-target] {
   border-color: rgba(80, 120, 220, 0.35);
   background: rgba(80, 120, 220, 0.06);
+  /* Restore pointer events during an active drag so mouseup/drop handlers fire */
+  pointer-events: auto;
 }
 
 .grid-cell-occupied {

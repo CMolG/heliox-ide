@@ -726,7 +726,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
       {/* Messages */}
       <div ref={messagesScrollRef} style={{ flex: 1, overflow: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {visibleMessages.length === 0 && !streamingContent && !streamingThinking && (
-          <div role="status" aria-live="polite" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textGhost, fontSize: 13 }}>
+          <div role="status" aria-live="polite" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textGhost, fontSize: 13, pointerEvents: 'none' }}>
             Start a conversation…
           </div>
         )}

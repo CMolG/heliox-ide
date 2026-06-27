@@ -11,7 +11,7 @@
  * - Does NOT own: node-level UI (delegated to MentalNode), edge styling (delegated to MentalEdge),
  *   or store persistence (delegated to desktop-store)
  */
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -40,6 +40,10 @@ import { FlowEdge } from '../nodes/FlowEdge';
 import { MentalAttachActionBubble } from './MentalAttachActionBubble';
 import { FrameNode } from '../nodes/FrameNode';
 import { MetaChat } from '../harness/MetaChat';
+import { ScorecardPanel } from '../harness/ScorecardPanel';
+import { ArenaButton } from '../harness/ArenaButton';
+import { TimeTravelPanel } from './TimeTravelPanel';
+import { LucideIcon } from '../LucideIcon';
 import type { CanvasGraphNode, FrameGraphNode, StepGraphNode } from '@/types/desktop';
 
 // ─── Custom node/edge type registrations ─────────────────────────
@@ -105,6 +109,17 @@ function MentalGraphCanvasInner() {
   // that was active when the user clicked "Fork from here").
   const lastForkRunId = useHarnessStore((s) => s.checkpointState.lastForkRunId);
   const forkOriginStepId = useHarnessStore((s) => s.checkpointState.highlightedStepId);
+
+  // ─── Harness panel visibility toggles ───────────────────────────
+  // Three panels are mounted on demand; visibility driven by local state.
+  const [showScorecard, setShowScorecard] = useState(false);
+  const [showArena, setShowArena] = useState(false);
+  const [showTimeTravel, setShowTimeTravel] = useState(false);
+
+  // activeFlow + lastForkRunId are sourced from harness-store to wire TimeTravelPanel.
+  // `runId` is derived: use the forkRunId if a fork was created, else the activeFlow id.
+  const activeFlow = useHarnessStore((s) => s.activeFlow);
+  const timeTravelRunId: string | null = lastForkRunId ?? activeFlow?.id ?? null;
 
   const { screenToFlowPosition } = useReactFlow();
   const connectingSourceRef = useRef<string | null>(null);
@@ -319,6 +334,10 @@ function MentalGraphCanvasInner() {
   }, [setCanvasPan, setCanvasZoom]);
 
   return (
+    <>
+    {/* Scoped motion preference: suppresses button transitions for reduced-motion users.
+        Cannot touch index.css (sibling owns it), so a once-rendered style tag is used. */}
+    <style>{`@media (prefers-reduced-motion: reduce) { [data-testid^="harness-"] { transition: none !important; } }`}</style>
     <div
       className="mental-graph-canvas-container"
       data-testid="mental-graph-canvas"
@@ -368,7 +387,164 @@ function MentalGraphCanvasInner() {
       </ReactFlow>
       <MentalAttachActionBubble />
       <MetaChat />
+
+      {/* ── Harness toolbar: toggles for Scorecard / Arena / TimeTravel ── */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 76,
+          left: 16,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+          gap: 8,
+          pointerEvents: 'auto',
+          zIndex: 190,
+        }}
+        aria-label="Harness panels toolbar"
+      >
+        {/* Panel containers — rendered above the toolbar row */}
+        {showScorecard && (
+          <div
+            data-testid="scorecard-panel"
+            style={{
+              background: 'var(--hx-surface, #1a1a2e)',
+              border: '1px solid var(--hx-border, rgba(255,255,255,0.08))',
+              borderRadius: 10,
+              overflow: 'auto',
+              maxHeight: 560,
+              width: 360,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+            }}
+          >
+            <ScorecardPanel />
+          </div>
+        )}
+
+        {showArena && (
+          <div
+            data-testid="arena-panel"
+            style={{
+              background: 'var(--hx-surface, #1a1a2e)',
+              border: '1px solid var(--hx-border, rgba(255,255,255,0.08))',
+              borderRadius: 10,
+              overflow: 'auto',
+              maxHeight: 560,
+              width: 400,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+            }}
+          >
+            <ArenaButton />
+          </div>
+        )}
+
+        {showTimeTravel && (
+          <TimeTravelPanel
+            runId={timeTravelRunId}
+            flow={activeFlow}
+            onClose={() => setShowTimeTravel(false)}
+          />
+        )}
+
+        {/* Toggle button row */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            gap: 6,
+            background: 'var(--hx-surface, #1a1a2e)',
+            border: '1px solid var(--hx-border, rgba(255,255,255,0.10))',
+            borderRadius: 8,
+            padding: '4px 6px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+          }}
+          role="toolbar"
+          aria-label="Harness panel toggles"
+        >
+          <button
+            type="button"
+            data-testid="harness-scorecard-toggle"
+            aria-label="Toggle Scorecard panel"
+            aria-pressed={showScorecard}
+            onClick={() => setShowScorecard((v) => !v)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 30,
+              height: 30,
+              borderRadius: 6,
+              border: 'none',
+              cursor: 'pointer',
+              background: showScorecard
+                ? 'var(--hx-accent, rgba(77,168,255,0.18))'
+                : 'transparent',
+              color: showScorecard
+                ? 'var(--hx-blue, #4DA8FF)'
+                : 'var(--hx-muted, #6b7280)',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            <LucideIcon name="Gauge" size={15} />
+          </button>
+
+          <button
+            type="button"
+            data-testid="harness-arena-toggle"
+            aria-label="Toggle Arena panel"
+            aria-pressed={showArena}
+            onClick={() => setShowArena((v) => !v)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 30,
+              height: 30,
+              borderRadius: 6,
+              border: 'none',
+              cursor: 'pointer',
+              background: showArena
+                ? 'var(--hx-accent, rgba(77,168,255,0.18))'
+                : 'transparent',
+              color: showArena
+                ? 'var(--hx-blue, #4DA8FF)'
+                : 'var(--hx-muted, #6b7280)',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            <LucideIcon name="GitCompareArrows" size={15} />
+          </button>
+
+          <button
+            type="button"
+            data-testid="harness-timetravel-toggle"
+            aria-label="Toggle Time Travel panel"
+            aria-pressed={showTimeTravel}
+            onClick={() => setShowTimeTravel((v) => !v)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 30,
+              height: 30,
+              borderRadius: 6,
+              border: 'none',
+              cursor: 'pointer',
+              background: showTimeTravel
+                ? 'var(--hx-accent, rgba(77,168,255,0.18))'
+                : 'transparent',
+              color: showTimeTravel
+                ? 'var(--hx-blue, #4DA8FF)'
+                : 'var(--hx-muted, #6b7280)',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            <LucideIcon name="History" size={15} />
+          </button>
+        </div>
+      </div>
     </div>
+    </>
   );
 }
 
