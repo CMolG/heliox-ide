@@ -158,6 +158,8 @@ export function buildCorrectivePrompt(findings: GuardrailFinding[]): string {
     '── GUARDRAIL FAILURE (automated, deterministic check) ──',
     "Your previous attempt did NOT satisfy this step's completion contract. Fix EXACTLY the following, then write the COMPLETE files (no TODO/placeholder stubs may remain):",
     ...findings.map((finding, index) => `${index + 1}. ${finding.detail}`),
-    'Use write_file to create or overwrite the artifacts now. Do not explain — produce the files.',
+    'If you previously explored (listed directories / re-read files) WITHOUT writing: STOP exploring now.',
+    'Call write_file for each artifact above immediately — that is the ONLY action that completes this step.',
+    'Content you put in your reply text does NOT count and is discarded. Produce the files; do not explain.',
   ].join('\n');
 }
