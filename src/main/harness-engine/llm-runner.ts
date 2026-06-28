@@ -13,8 +13,12 @@ import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/co
 import type { PFCognitiveTraceEntry } from '../performance-frontier/types';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-4o-mini';
-const DEFAULT_MAX_STEPS = 5;
+const DEFAULT_MAX_STEPS = Number(process.env.HELIOX_HARNESS_MAX_STEPS) || 5;
 const DEFAULT_TIMEOUT_MS = 120_000;
+// Explicit output budget. Reasoning models (e.g. Mimo) otherwise spend the
+// provider-default cap on reasoning tokens and emit empty content / zero tool
+// calls — the "wrote nothing" stall. A generous floor keeps them productive.
+const DEFAULT_MAX_OUTPUT_TOKENS = Number(process.env.HELIOX_HARNESS_MAX_OUTPUT_TOKENS) || 16_000;
 
 export interface LLMStepResult {
   text: string;
@@ -32,6 +36,7 @@ export interface RunLLMStepInput {
   model?: LanguageModel;
   modelId?: string;
   maxSteps?: number;
+  maxOutputTokens?: number;
   timeoutMs?: number;
   generateText?: (options: Record<string, unknown>) => Promise<{
     text: string;
@@ -278,6 +283,7 @@ export async function runLLMStep(input: RunLLMStepInput): Promise<LLMStepResult>
         prompt: input.userPrompt,
         tools: input.tools,
         stopWhen: stepCountIs(input.maxSteps ?? DEFAULT_MAX_STEPS),
+        maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
         maxRetries: 1,
         abortSignal: timeoutSignal(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
       });
@@ -333,6 +339,7 @@ export async function runLLMStep(input: RunLLMStepInput): Promise<LLMStepResult>
       prompt: input.userPrompt,
       tools: input.tools,
       stopWhen: stepCountIs(input.maxSteps ?? DEFAULT_MAX_STEPS),
+      maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       maxRetries: 1,
       abortSignal: timeoutSignal(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });

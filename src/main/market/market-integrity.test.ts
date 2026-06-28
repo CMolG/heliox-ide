@@ -20,6 +20,7 @@ const ALL_SUITES: PFSuite[] = [
   'business-knowledge',
   'design',
   'progression',
+  'from-scratch',
 ];
 
 interface InventoryEntry {

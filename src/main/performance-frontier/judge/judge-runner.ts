@@ -31,6 +31,7 @@ const SUITE_SEMANTIC_MAX_SCORE: Record<PFSuite, number> = {
   'business-knowledge': 110, // base 90 + domainLogicAdherence (20)
   design: 130, // base 90 + uxUiFidelity + accessibilityScore (2 × 20)
   progression: 120, // base 90 + regressionScore (30)
+  'from-scratch': 150, // base 90 + uxUiFidelity + accessibilityScore + algorithmicAccuracy (3 × 20)
 };
 
 function resolveSemanticSchema(suite: PFSuite) {
@@ -150,6 +151,12 @@ function suiteExtraDimensionLines(suite: PFSuite): string[] {
       ];
     case 'progression':
       return ['    "regressionScore": { "score": 0, "justification": "string", "brokenEpoch1Features": [], "unintendedDependencyChanges": [] } // score 0-30'];
+    case 'from-scratch':
+      return [
+        '    "uxUiFidelity": { "score": 0, "justification": "string", "themeViolations": [] }, // score 0-20',
+        '    "accessibilityScore": { "score": 0, "justification": "string", "a11yViolations": [] }, // score 0-20',
+        '    "algorithmicAccuracy": { "score": 0, "justification": "string", "edgeCasesCovered": [], "edgeCasesMissed": [] } // score 0-20',
+      ];
     default:
       return [];
   }

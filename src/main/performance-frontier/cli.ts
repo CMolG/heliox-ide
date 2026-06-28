@@ -19,6 +19,7 @@ const VALID_SUITES: PFSuite[] = [
   'development',
   'business-knowledge',
   'progression',
+  'from-scratch',
 ];
 
 const SUITE_ALIASES: Record<string, PFSuite> = {

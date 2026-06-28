@@ -408,6 +408,227 @@ export function createProgressionCase({ seed }: { seed: number }): PFCase {
   };
 }
 
+/**
+ * The "from-scratch" suite: a single complex DAG that builds an advanced project
+ * end-to-end, exercising the full atom catalog the marketplace just gained —
+ * 6 steps, 5 roles, and every web mod (one design system, since `ds-*` mods are
+ * mutually exclusive) wired across the pipeline.
+ */
+function makeFromScratchSteps(): Record<string, AgenticStep> {
+  const fileTools = [
+    { id: 'list-directory', name: 'list_directory' },
+    { id: 'read-file', name: 'read_file' },
+    { id: 'write-file', name: 'write_file' },
+  ];
+
+  const scaffold: AgenticStep = {
+    id: 'scaffold-structure',
+    type: 'llm_call',
+    contract: {
+      mustWriteFiles: true,
+      requiredArtifacts: [
+        { description: 'package.json (React 19 + Vite + Tailwind + Vitest)', pathPattern: 'package\\.json$', mustContain: ['react', 'vite', 'tailwind', 'vitest'] },
+        { description: 'app entry with routing', pathPattern: 'src/App\\.(tsx|jsx)$', mustContain: ['Route|Router|Routes|createBrowserRouter'] },
+        { description: 'app bootstrap (main entry)', pathPattern: 'src/main\\.(tsx|jsx)$' },
+        { description: 'i18n catalog + resolver', pathPattern: 'i18n/(index|en)\\.(ts|tsx)$' },
+        { description: 'tokenized stylesheet', pathPattern: '\\.css$' },
+      ],
+    },
+    prompt: [
+      'STEP 1/6 — scaffold-structure: lay the project skeleton (NO page logic yet).',
+      'Build, from scratch, a production-grade web-app skeleton for the product below.',
+      'Mandatory stack: React 19 + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui.',
+      'Create: package.json (scripts dev/build/test with vitest), vite.config.ts, tsconfig.json, a Tailwind config exposing design tokens, src/main.tsx, src/App.tsx routing to /, /login, /signup, /reset, a ThemeProvider (light/dark/system via CSS variables) + a ThemeToggle, an i18n scaffold (src/i18n with en + es message catalogs and a t() resolver), and clearly-stubbed pages (Landing, Login, Signup, Reset) marked TODO.',
+      'Set up the shadcn/ui structure (src/components/ui) and a tokenized, mobile-first foundation. Do NOT implement page bodies — leave obvious stubs for later steps.',
+      '',
+      HELIOX_IDE_PRODUCT_CONTEXT,
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: [],
+    nextStepIds: ['landing-page'],
+    mods: [
+      AntiVerificationInterceptor,
+      getMarketMod('ds-shadcn'),
+      getMarketMod('responsive-design'),
+      getMarketMod('dark-mode'),
+    ],
+    roles: [getMarketRole('software-architect')],
+    mentalContext: [],
+  };
+
+  const landing: AgenticStep = {
+    id: 'landing-page',
+    type: 'llm_call',
+    contract: {
+      forbidStubMarkers: true,
+      requiredArtifacts: [
+        { description: 'SEO document head (title/meta/OG/Twitter)', pathPattern: '(Landing|Seo|SEO|Head|Meta|Helmet)\\.(tsx|jsx|ts)$', mustContain: ['og:|twitter:|<meta|<title|[Hh]elmet'] },
+        { description: 'Schema.org JSON-LD structured data', pathPattern: '(Landing|Seo|SEO|Head|Meta|Jsonld|JsonLd|structured)\\.(tsx|jsx|ts)$', mustContain: ['application/ld\\+json|@context|schema\\.org'] },
+      ],
+    },
+    prompt: [
+      'STEP 2/6 — landing-page: build the conversion-focused marketing page as one artifact.',
+      'First read the scaffold (package.json, src/App.tsx, the Tailwind tokens, src/i18n) to match conventions and reuse shadcn components + design tokens.',
+      'Implement src/pages/Landing.tsx (plus small section components if useful) with: a hero (headline, subheadline, primary CTA "Download Alpha", secondary CTA "View Source on GitHub"), value-prop sections covering Steps/Flows/Roles & Mods, the Autonomous Orchestrator (Text-to-Pipeline), Performance Frontier + Cognitive Trace, and no vendor lock-in; social proof; a final CTA and footer.',
+      'Apply the active mods strictly: a complete SEO document head (unique title + meta description + canonical + Open Graph + Twitter cards via a Head/helmet component), valid Schema.org JSON-LD (SoftwareApplication + Organization + BreadcrumbList) reflecting the visible copy, a Core Web Vitals budget (explicit width/height or aspect-ratio on media, lazy-load offscreen assets, no layout-shifting injections), and WCAG semantics (landmarks, exactly one h1, logical headings, accessible names).',
+      'Use the exact product context for the copy — do not invent a different product.',
+      '',
+      HELIOX_IDE_PRODUCT_CONTEXT,
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: ['scaffold-structure'],
+    nextStepIds: ['auth-pages'],
+    mods: [
+      AntiVerificationInterceptor,
+      getMarketMod('seo-meta'),
+      getMarketMod('structured-data'),
+      getMarketMod('web-vitals'),
+      getMarketMod('a11y-enforcer'),
+    ],
+    roles: [getMarketRole('frontend-engineer')],
+    mentalContext: [],
+  };
+
+  const auth: AgenticStep = {
+    id: 'auth-pages',
+    type: 'llm_call',
+    contract: {
+      forbidStubMarkers: true,
+      requiredArtifacts: [
+        { description: 'shared Zod auth validation schema', pathPattern: 'auth-schema\\.(ts|tsx)$|lib/.*[Ss]chema.*\\.ts$', mustContain: ['zod|z\\.object'] },
+        { description: 'default-deny ProtectedRoute / route guard', pathPattern: '(ProtectedRoute|RequireAuth|auth-guard|guard)\\.(tsx|ts)$', mustContain: ['Navigate|redirect|isAuthenticated|requireAuth'] },
+      ],
+    },
+    prompt: [
+      'STEP 3/6 — auth-pages: build the authentication UI surface (login, signup, password-reset).',
+      'Read the scaffold and the i18n catalogs first. Reuse shadcn form primitives and the design tokens.',
+      'Implement src/pages/Login.tsx, Signup.tsx and Reset.tsx plus: a single shared Zod schema (src/lib/auth-schema.ts) used by every form; accessible forms (each input has a <label>, errors surfaced via aria-describedby + aria-invalid, never color alone); a typed, provider-agnostic authClient (src/lib/auth-client.ts) with signIn/signUp/resetPassword (no real secrets); and a default-deny ProtectedRoute that redirects unauthenticated users.',
+      'Apply the active mods strictly: every protected route enforces auth (default-deny, RBAC-ready), all form validation runs through the shared schema, and EVERY user-facing string is externalized to the en/es i18n catalogs (ICU, no hardcoded copy). Never store tokens or secrets in client-accessible storage.',
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: ['landing-page'],
+    nextStepIds: ['write-failing-tests'],
+    mods: [
+      AntiVerificationInterceptor,
+      getMarketMod('auth-guarded'),
+      getMarketMod('form-validation'),
+      getMarketMod('i18n-ready'),
+    ],
+    roles: [getMarketRole('frontend-engineer')],
+    mentalContext: [],
+  };
+
+  const writeTests: AgenticStep = {
+    id: 'write-failing-tests',
+    type: 'llm_call',
+    contract: {
+      mustWriteFiles: true,
+      requiredArtifacts: [
+        { description: 'Vitest unit tests for the auth schema and i18n resolver', pathPattern: '\\.test\\.(ts|tsx)$|__tests__/.*\\.(ts|tsx)$', mustContain: ['describe\\(|it\\(|test\\(', 'expect\\('] },
+      ],
+    },
+    prompt: [
+      'STEP 4/6 — write-failing-tests (TDD red): specify behavior as failing tests; do NOT implement.',
+      'Read src/lib/auth-schema.ts and the i18n resolver produced by the previous steps.',
+      'Write Vitest + @testing-library tests (src/lib/__tests__/auth-schema.test.ts and src/i18n/__tests__/i18n.test.ts) specifying: email-format validation, password-strength rules, required fields and confirm-password matching for the auth schema; and locale resolution, missing-key fallback and ICU interpolation/plurals for the i18n resolver.',
+      'Cover edge cases explicitly (empty string, whitespace-only, invalid types, missing locale key, unknown ICU variable). The tests MUST fail now because the logic is still stubbed. Do not write the implementation in this step.',
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: ['auth-pages'],
+    nextStepIds: ['implement-to-green'],
+    mods: [getMarketMod('test-driven')],
+    roles: [getMarketRole('qa-engineer')],
+    mentalContext: [],
+  };
+
+  const implement: AgenticStep = {
+    id: 'implement-to-green',
+    type: 'llm_call',
+    contract: {
+      forbidStubMarkers: true,
+      requiredArtifacts: [
+        { description: 'implemented auth schema with real validation logic', pathPattern: 'auth-schema\\.(ts|tsx)$', mustContain: ['z\\.object|safeParse|\\.parse|refine'] },
+      ],
+    },
+    prompt: [
+      'STEP 5/6 — implement-to-green (TDD green): write the smallest correct logic to pass the failing tests.',
+      'Read the failing tests from the previous step and the existing schema / i18n stubs.',
+      'Implement the real validation logic (auth-schema.ts) and the i18n resolver so ALL the step-4 tests pass. Write general, correct logic — never hardcode answers to satisfy specific assertions. Handle every edge case the tests cover (nulls, boundaries, invalid types, missing keys).',
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: ['write-failing-tests'],
+    nextStepIds: ['review-diff'],
+    mods: [
+      AntiVerificationInterceptor,
+      getMarketMod('edge-case-coverage'),
+    ],
+    roles: [getMarketRole('backend-engineer')],
+    mentalContext: [],
+  };
+
+  const review: AgenticStep = {
+    id: 'review-diff',
+    type: 'llm_call',
+    contract: {
+      requiredArtifacts: [
+        { description: 'REVIEW.md report with concrete findings', pathPattern: 'REVIEW\\.md$', minBytes: 600 },
+      ],
+    },
+    prompt: [
+      'STEP 6/6 — review-diff: review the assembled project against the brief; report, do NOT rewrite.',
+      'Read the key files produced across all steps (landing, auth pages, auth-schema, i18n, tests, config).',
+      'Write REVIEW.md with concrete, file-referenced findings assessing: cross-step cohesion (did landing/auth reuse the scaffold tokens, shadcn components and i18n catalogs?), and adherence to each mod dimension — design-system consistency, responsive + dark mode, SEO head + JSON-LD, Core Web Vitals, accessibility, auth default-deny, form validation, i18n externalization, and test coverage / edge cases. List concrete defects and risks with file:line references. Do not rewrite the code — produce a rigorous review only.',
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: ['implement-to-green'],
+    nextStepIds: [],
+    mods: [getMarketMod('self-review')],
+    roles: [getMarketRole('security-researcher')],
+    mentalContext: [],
+  };
+
+  return {
+    [scaffold.id]: scaffold,
+    [landing.id]: landing,
+    [auth.id]: auth,
+    [writeTests.id]: writeTests,
+    [implement.id]: implement,
+    [review.id]: review,
+  };
+}
+
+export function createFromScratchCase({ seed }: { seed: number }): PFCase {
+  const stepsRecord = makeFromScratchSteps();
+  const flow: AgenticFlow = {
+    id: `pf-from-scratch-${seed}`,
+    name: 'PF From Scratch: Advanced SaaS Project (full atom integration)',
+    rootStepId: 'scaffold-structure',
+    stepsRecord,
+  };
+  const prompt = [
+    'Build an advanced, production-grade web project FROM SCRATCH for the product below, end to end:',
+    'a marketing landing page plus a complete authentication surface (login / signup / password-reset), on a React 19 + Vite + TypeScript + Tailwind CSS v4 + shadcn/ui stack;',
+    'internationalized (en/es), accessible (WCAG), SEO-complete (meta tags + Schema.org JSON-LD), within a Core Web Vitals budget, themeable (light/dark/system), responsive (mobile-first);',
+    'with default-deny authenticated routes, accessible validated forms, and a TDD test suite (failing tests, then implementation), closed by a security/quality review.',
+    '',
+    HELIOX_IDE_PRODUCT_CONTEXT,
+  ].join('\n');
+
+  return {
+    id: `pf-from-scratch-saas-${seed}`,
+    suite: 'from-scratch',
+    seed,
+    prompt,
+    variables: {
+      product: 'Heliox IDE',
+      stack: 'React 19 + Vite + TypeScript + Tailwind CSS v4 + shadcn/ui',
+      locales: 'en,es',
+      steps: 6,
+    },
+    flow,
+  };
+}
+
 export function createPerformanceCase({ suite, seed }: { suite: PFSuite; seed: number }): PFCase {
   if (suite === 'architecture') return createArchitectureCase({ seed });
   if (suite === 'analysis') return createAnalysisCase({ seed });
@@ -417,5 +638,6 @@ export function createPerformanceCase({ suite, seed }: { suite: PFSuite; seed: n
   if (suite === 'business-knowledge') return createBusinessKnowledgeCase({ seed });
   if (suite === 'design') return createDesignCase({ seed });
   if (suite === 'progression') return createProgressionCase({ seed });
+  if (suite === 'from-scratch') return createFromScratchCase({ seed });
   throw new Error(`PF suite "${suite}" is not implemented yet.`);
 }

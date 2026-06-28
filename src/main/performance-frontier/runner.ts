@@ -60,6 +60,9 @@ const SUITE_STEP_TIMEOUT_MS: Partial<Record<PFSuite, number>> = {
   'team-work': 480_000,
   design: 600_000,
   progression: 300_000,
+  // from-scratch chains 6 file-writing steps (scaffold → landing → auth → tests
+  // → impl → review); each assembles multiple files, so it needs the wide budget.
+  'from-scratch': 480_000,
 };
 
 function createRunId(seed: number): string {

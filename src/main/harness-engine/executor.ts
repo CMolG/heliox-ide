@@ -15,6 +15,12 @@ import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/co
 import { saveCheckpoint } from './checkpoints';
 import { retrieve, type EmbedFn } from './retriever';
 import type { VectorStore } from './knowledge/vector-store';
+import {
+  snapshotWorkspace,
+  verifyStepContract,
+  buildCorrectivePrompt,
+  DEFAULT_GUARDRAIL_MAX_ATTEMPTS,
+} from './guardrails';
 
 export interface HarnessStepRunnerInput extends RunLLMStepInput {
   flowId: string;
@@ -50,6 +56,11 @@ export interface ExecuteAgenticFlowOptions {
    * Maximum number of chunks to retrieve per `retriever` step (default: 5).
    */
   retrieverK?: number;
+  /**
+   * Verify-and-retry attempt budget for steps that declare a `contract`
+   * (default: DEFAULT_GUARDRAIL_MAX_ATTEMPTS / HELIOX_GUARDRAIL_MAX_ATTEMPTS).
+   */
+  guardrailMaxAttempts?: number;
 }
 
 function now(): number {
@@ -200,29 +211,77 @@ async function executeStep(
 
   const runStep = options.runStep ?? runLLMStep;
 
+  // ── Model-agnostic guardrail: verify a step's completion contract and re-run
+  // it with concrete corrective feedback until it passes or the budget is spent.
+  // Steps without a `contract` keep the original single-pass behaviour exactly.
+  const contract = step.contract;
+  const guardrailActive = Boolean(contract) && Boolean(options.fileSystem);
+  const maxAttempts = guardrailActive
+    ? Math.max(1, contract!.maxAttempts ?? options.guardrailMaxAttempts ?? DEFAULT_GUARDRAIL_MAX_ATTEMPTS)
+    : 1;
+  const vfsBefore = guardrailActive ? await snapshotWorkspace(options.fileSystem, options.rootDir) : {};
+
   try {
-    const result = await runStep({
-      flowId: flow.id,
-      step,
-      systemPrompt: context.systemPrompt,
-      userPrompt: context.userPrompt,
-      tools,
-      modelId: options.modelId,
-      timeoutMs: options.timeoutMs,
-      onTelemetry: (event) => options.onLLMStepTelemetry?.({
-        ...event,
+    let result!: LLMStepResult;
+    let corrective = '';
+    let prevFindingSignature = '';
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      result = await runStep({
         flowId: flow.id,
-        stepId: step.id,
-      }),
-      onDelta: (d) => harnessEventBus.emitHarnessEvent({
-        type: 'StepThinkingDelta',
-        flowId: flow.id,
-        stepId: step.id,
-        kind: d.kind,
-        delta: d.delta,
-        timestamp: now(),
-      }),
-    });
+        step,
+        systemPrompt: context.systemPrompt,
+        userPrompt: corrective ? `${context.userPrompt}\n${corrective}` : context.userPrompt,
+        tools,
+        modelId: options.modelId,
+        timeoutMs: options.timeoutMs,
+        onTelemetry: (event) => options.onLLMStepTelemetry?.({
+          ...event,
+          flowId: flow.id,
+          stepId: step.id,
+        }),
+        onDelta: (d) => harnessEventBus.emitHarnessEvent({
+          type: 'StepThinkingDelta',
+          flowId: flow.id,
+          stepId: step.id,
+          kind: d.kind,
+          delta: d.delta,
+          timestamp: now(),
+        }),
+      });
+
+      if (!guardrailActive) break;
+
+      const vfsAfter = await snapshotWorkspace(options.fileSystem, options.rootDir);
+      const findings = verifyStepContract(contract!, vfsBefore, vfsAfter);
+      if (findings.length === 0) {
+        if (attempt > 1) {
+          emitStepStatus(flow.id, step.id, 'running', `[guardrail] step "${step.id}" satisfied its contract on attempt ${attempt}/${maxAttempts}.`);
+        }
+        break;
+      }
+
+      const summary = findings.map((finding) => finding.requirement).join(', ');
+      const signature = findings.map((finding) => finding.requirement).sort().join('|');
+      const stalled = signature === prevFindingSignature; // identical gaps as last attempt → no progress
+      prevFindingSignature = signature;
+
+      if (attempt < maxAttempts && !stalled) {
+        corrective = buildCorrectivePrompt(findings);
+        emitStepStatus(flow.id, step.id, 'running', `[guardrail] attempt ${attempt}/${maxAttempts} breached contract (${summary}); retrying with corrective feedback.`);
+        console.warn(`[guardrail] step "${step.id}" attempt ${attempt}/${maxAttempts} unmet: ${summary}`);
+        continue;
+      }
+
+      // Stop retrying: budget spent, or the model made zero progress versus the
+      // previous attempt (re-running would only burn tokens). Surface the breach.
+      const reason = stalled && attempt < maxAttempts
+        ? `no progress after attempt ${attempt}/${maxAttempts}`
+        : `after ${maxAttempts} attempts`;
+      emitStepStatus(flow.id, step.id, 'running', `[guardrail] step "${step.id}" breached contract ${reason} (${summary}).`);
+      console.warn(`[guardrail] step "${step.id}" BREACHED contract ${reason}: ${findings.map((finding) => finding.detail).join(' | ')}`);
+      break;
+    }
 
     emitStepStatus(flow.id, step.id, 'completed', result.text);
     return result;

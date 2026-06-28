@@ -13,7 +13,8 @@ export type PFSuite =
   | 'flow-assembler'
   | 'development'
   | 'business-knowledge'
-  | 'progression';
+  | 'progression'
+  | 'from-scratch';
 
 /**
  * A single mutation epoch in a brownfield (progression) case. Each epoch runs
