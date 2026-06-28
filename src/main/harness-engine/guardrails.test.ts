@@ -96,3 +96,34 @@ describe('buildCorrectivePrompt', () => {
     expect(prompt).toContain('Add Schema.org JSON-LD to Landing.');
   });
 });
+
+describe('verifyStepContract — dependency coherence', () => {
+  const pkg = (deps: string[]) => JSON.stringify({ dependencies: Object.fromEntries(deps.map((d) => [d, '1.0.0'])) });
+
+  it('flags a package imported but not declared in package.json', () => {
+    const after = {
+      '/workspace/package.json': pkg(['react']),
+      '/workspace/src/Form.tsx': "import { useForm } from 'react-hook-form';\nimport React from 'react';",
+    };
+    const findings = verifyStepContract({ requireDeclaredDependencies: true }, {}, after);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].requirement).toBe('undeclared-dependencies');
+    expect(findings[0].detail).toContain('react-hook-form');
+  });
+
+  it('ignores relative imports, the @/ alias and node builtins', () => {
+    const after = {
+      '/workspace/package.json': pkg(['react']),
+      '/workspace/src/x.ts': "import a from './a';\nimport b from '@/lib/b';\nimport { readFile } from 'node:fs';\nimport React from 'react';",
+    };
+    expect(verifyStepContract({ requireDeclaredDependencies: true }, {}, after)).toHaveLength(0);
+  });
+
+  it('normalizes scoped and subpath specifiers', () => {
+    const after = {
+      '/workspace/package.json': pkg(['@hookform/resolvers', 'react-dom']),
+      '/workspace/src/x.tsx': "import { zodResolver } from '@hookform/resolvers/zod';\nimport { createRoot } from 'react-dom/client';",
+    };
+    expect(verifyStepContract({ requireDeclaredDependencies: true }, {}, after)).toHaveLength(0);
+  });
+});

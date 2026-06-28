@@ -87,6 +87,47 @@ function changedFiles(before: Record<string, string>, after: Record<string, stri
   return Object.keys(after).filter((path) => after[path] !== before[path]);
 }
 
+/** Node built-in modules (importing these needs no package.json entry). */
+const NODE_BUILTINS = new Set([
+  'assert', 'buffer', 'child_process', 'cluster', 'console', 'constants', 'crypto', 'dgram',
+  'dns', 'domain', 'events', 'fs', 'http', 'http2', 'https', 'inspector', 'module', 'net', 'os',
+  'path', 'perf_hooks', 'process', 'punycode', 'querystring', 'readline', 'repl', 'stream',
+  'string_decoder', 'timers', 'tls', 'tty', 'url', 'util', 'v8', 'vm', 'worker_threads', 'zlib',
+]);
+
+/** The external package name for an import specifier, or null if relative / @-aliased / a builtin. */
+function externalPackageName(spec: string): string | null {
+  if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('@/') || spec.startsWith('~')) return null;
+  const bare = spec.startsWith('node:') ? spec.slice('node:'.length) : spec;
+  const parts = bare.split('/');
+  const pkg = bare.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+  if (!pkg || NODE_BUILTINS.has(pkg)) return null;
+  return pkg;
+}
+
+/** External packages imported across the workspace but absent from package.json. */
+function undeclaredDependencies(after: Record<string, string>): string[] {
+  const pkgPath = Object.keys(after).find((path) => /(^|\/)package\.json$/.test(path));
+  if (!pkgPath) return [];
+  let declared: Set<string>;
+  try {
+    const pkg = JSON.parse(after[pkgPath]) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    declared = new Set([...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})]);
+  } catch {
+    return [];
+  }
+  const importRe = /(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g;
+  const imported = new Set<string>();
+  for (const [path, content] of Object.entries(after)) {
+    if (!/\.(ts|tsx|js|jsx|mts|cts)$/.test(path) || /(^|\/)node_modules\//.test(path)) continue;
+    for (const match of content.matchAll(importRe)) {
+      const pkg = externalPackageName(match[1] ?? match[2] ?? match[3] ?? '');
+      if (pkg) imported.add(pkg);
+    }
+  }
+  return [...imported].filter((pkg) => !declared.has(pkg)).sort();
+}
+
 /** Pure, deterministic contract check — identical verdict for any model. */
 export function verifyStepContract(
   contract: StepContract,
@@ -155,6 +196,16 @@ export function verifyStepContract(
       findings.push({
         requirement: `forbidden-artifact:${forbidden.description}`,
         detail: `Do not create a parallel ${forbidden.description}: ${created.join(', ')}. The canonical file already exists — put your content there and leave these alone.`,
+      });
+    }
+  }
+
+  if (contract.requireDeclaredDependencies) {
+    const missing = undeclaredDependencies(after);
+    if (missing.length > 0) {
+      findings.push({
+        requirement: 'undeclared-dependencies',
+        detail: `These packages are imported but missing from package.json — add them to "dependencies" so the project installs and builds: ${missing.join(', ')}.`,
       });
     }
   }

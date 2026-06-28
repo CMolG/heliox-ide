@@ -535,11 +535,13 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       forbiddenArtifacts: [
         { description: 'parallel i18n module (use the canonical src/i18n)', pathPattern: '(src/locales/|src/i18n\\.(ts|tsx)$)' },
       ],
+      requireDeclaredDependencies: true,
     },
     prompt: [
       'STEP 3/6 — auth-pages: build the FULL authentication UI surface (login, signup, password-reset). No stubs.',
       'Reuse the scaffold: shadcn form primitives (Input, Label, Button), the design tokens, and the canonical i18n catalogs (src/i18n). Do NOT create a second i18n system — add any missing keys to src/i18n/en.ts and es.ts.',
       'IMPORT the form schemas from the canonical "@/lib/auth-schema" (loginSchema, signupSchema, resetSchema + the types) — do NOT redefine or fork the schema here; step 5 fills its logic.',
+      'Every external package you import (e.g. react-hook-form, @hookform/resolvers) MUST be added to package.json "dependencies" — otherwise the project will not install or build.',
       'Create or fully replace these files — completely implemented, ZERO TODO/placeholder:',
       '  - src/lib/auth-client.ts: a typed, provider-agnostic authClient with signIn/signUp/resetPassword (no real secrets).',
       '  - src/components/ProtectedRoute.tsx: a default-deny guard that redirects unauthenticated users (use <Navigate>).',
@@ -576,9 +578,10 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     prompt: [
       'STEP 4/6 — write-failing-tests (TDD red): create failing unit tests. Do NOT implement the logic.',
       'The auth schema (src/lib/auth-schema.ts) and the i18n resolver (src/i18n/index.ts, exporting t()) already exist from earlier steps — test against their real exports.',
+      'In the test files use RELATIVE imports (./auth-schema, ./index) — NOT the @/ alias — so the runner resolves them without alias config.',
       'Create EXACTLY these two test files, fully written (not described in prose):',
-      '  - src/lib/auth-schema.test.ts: Vitest tests importing the auth schema — valid email passes; malformed email fails; weak/short password fails; missing required fields fail; confirm-password mismatch fails. Edge cases: empty string, whitespace-only, null/undefined, wrong types.',
-      '  - src/i18n/index.test.ts: Vitest tests importing t() — a known key resolves; a missing key falls back; ICU interpolation substitutes a variable; an unknown variable is handled. Edge cases: missing locale, empty key.',
+      '  - src/lib/auth-schema.test.ts: Vitest tests importing the schema from "./auth-schema" — valid email passes; malformed email fails; weak/short password fails; missing required fields fail; confirm-password mismatch fails. Edge cases: empty string, whitespace-only, null/undefined, wrong types.',
+      '  - src/i18n/index.test.ts: Vitest tests importing t() from "./index" — a known key resolves; a missing key falls back; ICU interpolation substitutes a variable; an unknown variable is handled. Edge cases: missing locale, empty key.',
       'Each file MUST use describe(), it()/test() and expect() with real assertions.',
       'It is REQUIRED and CORRECT that these tests FAIL right now (red phase) because the implementation is still stubbed — a failing test here is SUCCESS, not a problem. Do NOT write or modify any implementation in this step.',
       '',

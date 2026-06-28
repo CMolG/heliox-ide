@@ -69,6 +69,12 @@ export interface StepContract {
    * canonical source of truth.
    */
   forbiddenArtifacts?: Array<{ description: string; pathPattern: string }>;
+  /**
+   * Assert every external package imported across the workspace is declared in
+   * package.json (dependencies or devDependencies) — catches a project that
+   * imports a package it never declares and so would not install/build.
+   */
+  requireDeclaredDependencies?: boolean;
   /** Override the default verify-and-retry attempt budget for this step. */
   maxAttempts?: number;
 }

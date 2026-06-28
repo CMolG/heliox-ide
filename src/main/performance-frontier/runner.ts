@@ -405,7 +405,7 @@ export async function runPerformanceFrontier(
     });
 
     let groundTruth: PFGroundTruth | undefined;
-    if (suite === 'development') {
+    if (suite === 'development' || suite === 'from-scratch') {
       const runVerify = options.verifyDevelopment ?? verifyDevelopment;
       try {
         const verifyResult = await runVerify(vfsSnapshot);
