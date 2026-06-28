@@ -148,6 +148,17 @@ export function verifyStepContract(
     }
   }
 
+  for (const forbidden of contract.forbiddenArtifacts ?? []) {
+    const pathRe = new RegExp(forbidden.pathPattern, 'i');
+    const created = written.filter((path) => pathRe.test(path));
+    if (created.length > 0) {
+      findings.push({
+        requirement: `forbidden-artifact:${forbidden.description}`,
+        detail: `Do not create a parallel ${forbidden.description}: ${created.join(', ')}. The canonical file already exists — put your content there and leave these alone.`,
+      });
+    }
+  }
+
   return findings;
 }
 

@@ -62,6 +62,18 @@ describe('verifyStepContract — model-agnostic definition of done', () => {
     // The model wrote lowercase `landing.tsx` with `Hero` — must still satisfy.
     expect(verifyStepContract(contract, {}, { '/workspace/src/pages/landing.tsx': 'const Hero = () => null;' })).toHaveLength(0);
   });
+
+  it('flags a forbidden artifact this step created (parallel system)', () => {
+    const contract: StepContract = { forbiddenArtifacts: [{ description: 'parallel i18n', pathPattern: 'src/locales/' }] };
+    const findings = verifyStepContract(contract, {}, { '/workspace/src/locales/en.json': '{}' });
+    expect(findings[0].requirement).toContain('forbidden-artifact');
+  });
+
+  it('does not flag a forbidden path the step did not touch', () => {
+    const fs = { '/workspace/src/locales/en.json': '{}' };
+    const contract: StepContract = { forbiddenArtifacts: [{ description: 'parallel i18n', pathPattern: 'src/locales/' }] };
+    expect(verifyStepContract(contract, fs, fs)).toHaveLength(0);
+  });
 });
 
 describe('snapshotWorkspace', () => {

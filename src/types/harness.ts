@@ -63,6 +63,12 @@ export interface StepContract {
   forbidStubMarkers?: boolean;
   /** Artifacts that must exist (with required content) when the step finishes. */
   requiredArtifacts?: StepArtifactRequirement[];
+  /**
+   * Path patterns (RegExp strings) this step must NOT create — used to forbid
+   * divergent parallel systems (e.g. a second i18n module) and keep one
+   * canonical source of truth.
+   */
+  forbiddenArtifacts?: Array<{ description: string; pathPattern: string }>;
   /** Override the default verify-and-retry attempt budget for this step. */
   maxAttempts?: number;
 }

@@ -421,6 +421,19 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     { id: 'write-file', name: 'write_file' },
   ];
 
+  // Canonical file/export map injected into every step so each agent extends the
+  // SAME modules instead of forking a parallel system (the cross-step incoherence
+  // the judge flagged: dual i18n, mismatched imports, an unwired ProtectedRoute).
+  const PROJECT_LAYOUT = [
+    'CANONICAL PROJECT LAYOUT (single source of truth — never fork alternatives):',
+    '- i18n: src/i18n/index.ts exports t(key, vars?) and setLocale; catalogs src/i18n/en.ts + es.ts. NEVER create src/locales/*, src/i18n.ts, or any other i18n module.',
+    '- Auth schema: src/lib/auth-schema.ts exports loginSchema, signupSchema, resetSchema (zod) and the inferred types LoginValues, SignupValues, ResetValues. Forms AND tests import these EXACT names from "@/lib/auth-schema".',
+    '- Auth client: src/lib/auth-client.ts exports authClient (signIn/signUp/resetPassword).',
+    '- Route guard: src/components/ProtectedRoute.tsx exports ProtectedRoute, wired into the route table in src/App.tsx.',
+    '- UI: shadcn primitives in src/components/ui/*; pages in src/pages/{Landing,Login,Signup,Reset}.tsx.',
+    'If a canonical file already exists, READ and EXTEND it — never create a second version, and import the EXACT names above.',
+  ].join('\n');
+
   // Coaching block (prompt-only) that breaks the observed failure mode on the
   // "meta" steps: the agent looping on list_directory/read_file and never
   // calling write_file (reactive exploration instead of proactive production).
@@ -431,6 +444,8 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     '- read_file takes a FILE path, never a directory (a directory path throws EISDIR).',
     '- The ONLY way to complete this step is to call write_file for each target file. Content written in your reply text is DISCARDED and the step FAILS — only files on disk count.',
     '- Do not loop reading/listing. After reading the few files you need, immediately write_file. Produce, do not deliberate.',
+    '',
+    PROJECT_LAYOUT,
   ].join('\n');
 
   const scaffold: AgenticStep = {
@@ -442,7 +457,8 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
         { description: 'package.json (React 19 + Vite + Tailwind + Vitest)', pathPattern: 'package\\.json$', mustContain: ['react', 'vite', 'tailwind', 'vitest'] },
         { description: 'app entry with routing', pathPattern: 'src/App\\.(tsx|jsx)$', mustContain: ['Route|Router|Routes|createBrowserRouter'] },
         { description: 'app bootstrap (main entry)', pathPattern: 'src/main\\.(tsx|jsx)$' },
-        { description: 'i18n catalog + resolver', pathPattern: 'i18n/(index|en)\\.(ts|tsx)$' },
+        { description: 'canonical i18n resolver (src/i18n/index.ts exporting t)', pathPattern: 'src/i18n/index\\.(ts|tsx)$', mustContain: ['export'] },
+        { description: 'canonical auth-schema stub exporting the form schemas', pathPattern: 'src/lib/auth-schema\\.(ts|tsx)$', mustContain: ['loginSchema', 'signupSchema'] },
         { description: 'tokenized stylesheet', pathPattern: '\\.css$' },
       ],
     },
@@ -450,8 +466,13 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       'STEP 1/6 — scaffold-structure: lay the project skeleton (NO page logic yet).',
       'Build, from scratch, a production-grade web-app skeleton for the product below.',
       'Mandatory stack: React 19 + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui.',
-      'Create: package.json (scripts dev/build/test with vitest), vite.config.ts, tsconfig.json, a Tailwind config exposing design tokens, src/main.tsx, src/App.tsx routing to /, /login, /signup, /reset, a ThemeProvider (light/dark/system via CSS variables) + a ThemeToggle, an i18n scaffold (src/i18n with en + es message catalogs and a t() resolver), and clearly-stubbed pages (Landing, Login, Signup, Reset) marked TODO.',
+      'Create: package.json (scripts dev/build/test with vitest), vite.config.ts, tsconfig.json (with the "@/*" path alias to src), a Tailwind config exposing design tokens, src/main.tsx, src/App.tsx routing to /, /login, /signup, /reset, a ThemeProvider (light/dark/system via CSS variables) + a ThemeToggle, and clearly-stubbed pages (Landing, Login, Signup, Reset) marked TODO.',
+      'Establish the canonical shared modules so later steps extend (never fork) them:',
+      '  - src/i18n/index.ts (export t + setLocale), src/i18n/en.ts and src/i18n/es.ts containing ALL keys later steps need — including the auth keys (auth.login.*, auth.signup.*, auth.reset.*) and validation error keys (auth.errors.*). This is the ONLY i18n module.',
+      '  - src/lib/auth-schema.ts: export loginSchema, signupSchema, resetSchema (zod) and the inferred types LoginValues, SignupValues, ResetValues. A minimal-but-valid stub is fine here; step 5 fills the real rules. The exports MUST exist so forms and tests can import them.',
       'Set up the shadcn/ui structure (src/components/ui) and a tokenized, mobile-first foundation. Do NOT implement page bodies — leave obvious stubs for later steps.',
+      '',
+      PROJECT_LAYOUT,
       '',
       HELIOX_IDE_PRODUCT_CONTEXT,
     ].join('\n'),
@@ -507,20 +528,24 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     contract: {
       forbidStubMarkers: true,
       requiredArtifacts: [
-        { description: 'shared Zod auth validation schema', pathPattern: 'auth-schema\\.(ts|tsx)$|lib/.*[Ss]chema.*\\.ts$', mustContain: ['zod|z\\.object'] },
-        { description: 'default-deny ProtectedRoute / route guard', pathPattern: '(ProtectedRoute|RequireAuth|auth-guard|guard)\\.(tsx|ts)$', mustContain: ['Navigate|redirect|isAuthenticated|requireAuth'] },
+        { description: 'default-deny ProtectedRoute / route guard', pathPattern: 'src/components/ProtectedRoute\\.(tsx|ts)$', mustContain: ['Navigate|redirect|isAuthenticated|requireAuth'] },
+        { description: 'ProtectedRoute wired into the App.tsx route table', pathPattern: 'src/App\\.(tsx|jsx)$', mustContain: ['ProtectedRoute'] },
+        { description: 'Login form imports the canonical auth-schema', pathPattern: 'src/pages/Login\\.(tsx|jsx)$', mustContain: ['auth-schema'] },
+      ],
+      forbiddenArtifacts: [
+        { description: 'parallel i18n module (use the canonical src/i18n)', pathPattern: '(src/locales/|src/i18n\\.(ts|tsx)$)' },
       ],
     },
     prompt: [
       'STEP 3/6 — auth-pages: build the FULL authentication UI surface (login, signup, password-reset). No stubs.',
-      'Reuse the scaffold: shadcn form primitives (Input, Label, Button), the design tokens, and the en/es i18n catalogs.',
+      'Reuse the scaffold: shadcn form primitives (Input, Label, Button), the design tokens, and the canonical i18n catalogs (src/i18n). Do NOT create a second i18n system — add any missing keys to src/i18n/en.ts and es.ts.',
+      'IMPORT the form schemas from the canonical "@/lib/auth-schema" (loginSchema, signupSchema, resetSchema + the types) — do NOT redefine or fork the schema here; step 5 fills its logic.',
       'Create or fully replace these files — completely implemented, ZERO TODO/placeholder:',
-      '  - src/lib/auth-schema.ts: a single shared Zod schema (email format, password strength, confirm-password match) used by all three forms.',
       '  - src/lib/auth-client.ts: a typed, provider-agnostic authClient with signIn/signUp/resetPassword (no real secrets).',
       '  - src/components/ProtectedRoute.tsx: a default-deny guard that redirects unauthenticated users (use <Navigate>).',
-      '  - src/pages/Login.tsx, Signup.tsx, Reset.tsx: real, accessible forms (each input has a <label>; errors via aria-describedby + aria-invalid; never color alone) wired to the shared schema + authClient. REPLACE any existing TODO stub entirely.',
-      '  - src/App.tsx: wire ProtectedRoute into the route table so protected routes are actually guarded.',
-      'Every user-facing string MUST come from the i18n catalogs (ICU, no hardcoded copy). Never store tokens/secrets in client-accessible storage.',
+      '  - src/pages/Login.tsx, Signup.tsx, Reset.tsx: real, accessible forms (each input has a <label>; errors via aria-describedby + aria-invalid; never color alone) that import the canonical schemas + authClient. REPLACE any existing TODO stub entirely.',
+      '  - src/App.tsx: import ProtectedRoute and wrap the protected routes with it so they are actually guarded.',
+      'Every user-facing string MUST come from the canonical i18n catalogs (ICU, no hardcoded copy). Never store tokens/secrets in client-accessible storage.',
       '',
       EXECUTION_DISCIPLINE,
       '',
