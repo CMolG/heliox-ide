@@ -21,6 +21,7 @@ const CATEGORY_BADGES: Record<PluginCategory, { label: string; color: string }> 
   flows: { label: 'Flow', color: '#A78BFA' },
   roles: { label: 'Role', color: '#E87040' },
   modifiers: { label: 'Modifier', color: '#4285F4' },
+  steps: { label: 'Step', color: '#2BB673' },
   tools: { label: 'Tool', color: '#A0F695' },
 };
 
@@ -36,6 +37,7 @@ export function PluginCard({ plugin }: { plugin: Plugin }) {
   const actionLabel = plugin.category === 'flows' ? 'Deploy Flow'
     : plugin.category === 'roles' ? 'Deploy Role'
     : plugin.category === 'modifiers' ? 'Deploy Mod'
+    : plugin.category === 'steps' ? 'Deploy Step'
     : 'Open';
 
   return (

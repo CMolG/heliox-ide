@@ -24,6 +24,7 @@ const TYPE_META: Record<AttachableType, { color: string; icon: string; label: st
   role: { color: '#E87040', icon: 'User', label: 'Role' },
   mod:  { color: '#4285F4', icon: 'Wrench', label: 'Mod' },
   flow: { color: '#A78BFA', icon: 'Route', label: 'Flow' },
+  step: { color: '#2BB673', icon: 'ListChecks', label: 'Step' },
 };
 
 function kebabToTitle(str: string): string {

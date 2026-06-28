@@ -324,6 +324,24 @@ describe('Plugins / Marketplace', () => {
     useDesktopStore.getState().setMarketplaceFilter('tools');
     expect(useDesktopStore.getState().marketplaceFilter).toBe('tools');
   });
+
+  it('loadInventoryPlugins surfaces steps as deployable marketplace plugins', () => {
+    useDesktopStore.setState({
+      marketInventory: {
+        flows: [],
+        roles: [],
+        mods: [],
+        steps: [
+          { name: 'landing-page', icon: 'MdWebAsset', iconLibrary: 'react-icons/md', description: 'Landing page step', tags: ['landing'] },
+        ],
+      },
+    });
+    useDesktopStore.getState().loadInventoryPlugins();
+    const stepPlugin = useDesktopStore.getState().availablePlugins.find(p => p.category === 'steps');
+    expect(stepPlugin).toBeDefined();
+    expect(stepPlugin!.id).toBe('inv-step-landing-page');
+    expect(stepPlugin!.name).toBe('Landing Page');
+  });
 });
 
 // ─── CLI Theming ─────────────────────────────────────────────────
@@ -478,6 +496,32 @@ describe('Deploy plugin', () => {
     const windowsBefore = useDesktopStore.getState().windows.length;
     useDesktopStore.getState().deployPlugin('nonexistent-id');
     expect(useDesktopStore.getState().windows.length).toBe(windowsBefore);
+  });
+
+  it('deployPlugin spawns a step attachable on the canvas (not a window) and closes the marketplace', () => {
+    useDesktopStore.getState().setShowMarketplace(true);
+    const windowsBefore = useDesktopStore.getState().windows.length;
+    useDesktopStore.setState((s) => ({
+      availablePlugins: [
+        ...s.availablePlugins,
+        {
+          id: 'inv-step-landing-page',
+          name: 'Landing Page',
+          description: 'Step test fixture',
+          iconName: 'MdWebAsset',
+          category: 'steps',
+          author: 'test',
+          installed: true,
+        },
+      ],
+    }));
+    useDesktopStore.getState().deployPlugin('inv-step-landing-page');
+    const { attachables, windows, showMarketplace } = useDesktopStore.getState();
+    const stepAtt = attachables.find(a => a.type === 'step');
+    expect(stepAtt).toBeDefined();
+    expect(stepAtt!.name).toBe('landing-page');
+    expect(windows.length).toBe(windowsBefore);
+    expect(showMarketplace).toBe(false);
   });
 });
 

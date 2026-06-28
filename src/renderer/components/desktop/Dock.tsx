@@ -75,10 +75,10 @@ export function Dock() {
 
   const projectName = projectPath?.split('/').pop() ?? 'project';
 
-  // Attachable items (roles, mods, flows)
+  // Attachable items (roles, mods, flows, steps)
   const attachableItems = useMemo(() =>
     availablePlugins.filter(p =>
-      p.category === 'roles' || p.category === 'modifiers' || p.category === 'flows'
+      p.category === 'roles' || p.category === 'modifiers' || p.category === 'flows' || p.category === 'steps'
     ), [availablePlugins]);
 
   // Infinite wrap-around scroll
@@ -331,7 +331,7 @@ export function Dock() {
 
       if (isOut) {
         // Map plugin category → attachable type
-        const typeMap: Record<string, AttachableType> = { roles: 'role', modifiers: 'mod', flows: 'flow' };
+        const typeMap: Record<string, AttachableType> = { roles: 'role', modifiers: 'mod', flows: 'flow', steps: 'step' };
         const attType = typeMap[plugin.category];
         if (attType) {
           // Convert screen coords → canvas coords (accounting for pan/zoom)

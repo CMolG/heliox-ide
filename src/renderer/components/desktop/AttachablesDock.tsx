@@ -29,9 +29,9 @@ export function AttachablesDock() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  // Only show roles, mods, flows (not tools)
+  // Only show roles, mods, flows, steps (not tools)
   const items = availablePlugins.filter(p =>
-    p.category === 'roles' || p.category === 'modifiers' || p.category === 'flows'
+    p.category === 'roles' || p.category === 'modifiers' || p.category === 'flows' || p.category === 'steps'
   );
 
   const scroll = useCallback((dir: number) => {

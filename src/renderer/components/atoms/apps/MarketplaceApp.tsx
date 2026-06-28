@@ -24,6 +24,7 @@ const CATEGORY_TABS: Array<{ key: PluginCategory | 'all'; label: string }> = [
   { key: 'flows', label: 'Flows' },
   { key: 'roles', label: 'Roles' },
   { key: 'modifiers', label: 'Modifiers' },
+  { key: 'steps', label: 'Steps' },
 ];
 
 export function MarketplaceApp() {

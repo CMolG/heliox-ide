@@ -165,7 +165,7 @@ export interface DockItem {
 
 // ─── Plugin / Marketplace ────────────────────────────────────────
 
-export type PluginCategory = 'roles' | 'modifiers' | 'tools' | 'flows';
+export type PluginCategory = 'roles' | 'modifiers' | 'tools' | 'flows' | 'steps';
 
 export interface Plugin {
   id: string;
@@ -203,7 +203,7 @@ export interface CanvasPan {
 
 // ─── Desktop Attachable (draggable market items on the canvas) ───
 
-export type AttachableType = 'role' | 'mod' | 'flow';
+export type AttachableType = 'role' | 'mod' | 'flow' | 'step';
 
 // ─── Mental Graph (xyflow source of truth) ──────────────────────
 //

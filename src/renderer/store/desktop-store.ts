@@ -783,6 +783,17 @@ export const useDesktopStore = create<DesktopStore>()(
             installed: true,
           });
         }
+        for (const step of inventory.steps ?? []) {
+          inventoryPlugins.push({
+            id: `inv-step-${step.name}`,
+            name: step.name.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+            description: step.description,
+            iconName: step.icon || 'MdLayers',
+            category: 'steps',
+            author: 'Heliox Market',
+            installed: true,
+          });
+        }
 
         const mergedAvailablePlugins = [
           ...BUILTIN_PLUGINS,
@@ -809,6 +820,7 @@ export const useDesktopStore = create<DesktopStore>()(
           roles: 'role',
           modifiers: 'mod',
           flows: 'flow',
+          steps: 'step',
         };
         const attachableType = typeMap[plugin.category];
         if (attachableType) {
@@ -816,6 +828,7 @@ export const useDesktopStore = create<DesktopStore>()(
           let inventoryName = pluginId;
           if (pluginId.startsWith('inv-role-')) inventoryName = pluginId.replace('inv-role-', '');
           else if (pluginId.startsWith('inv-mod-')) inventoryName = pluginId.replace('inv-mod-', '');
+          else if (pluginId.startsWith('inv-step-')) inventoryName = pluginId.replace('inv-step-', '');
           else if (pluginId.startsWith('flow-')) inventoryName = pluginId.replace('flow-', '');
           state.spawnAttachable(attachableType, inventoryName);
           set({ showMarketplace: false });
@@ -878,8 +891,8 @@ export const useDesktopStore = create<DesktopStore>()(
         const win = state.windows.find(w => w.id === windowId);
         if (!att || !win || win.type !== 'chat') return false;
 
-        // Flows are independent — they cannot be linked to windows.
-        if (att.type === 'flow') return false;
+        // Flows and steps are independent — they cannot be linked to a chat window.
+        if (att.type === 'flow' || att.type === 'step') return false;
 
         let success = false;
         if (att.type === 'role') {

@@ -702,6 +702,128 @@
         "algorithms",
         "correctness"
       ]
+    },
+    {
+      "name": "i18n-ready",
+      "icon": "MdTranslate",
+      "iconLibrary": "react-icons/md",
+      "description": "Externalizes every user-facing string, enforces ICU message format and locale-aware date, number, and currency formatting.",
+      "tags": [
+        "i18n",
+        "l10n",
+        "intl",
+        "localization"
+      ]
+    },
+    {
+      "name": "structured-data",
+      "icon": "MdDataObject",
+      "iconLibrary": "react-icons/md",
+      "description": "Emits valid Schema.org JSON-LD structured data for every page type (Article, Product, FAQ, Breadcrumb, Organization).",
+      "tags": [
+        "seo",
+        "schema",
+        "json-ld",
+        "structured-data"
+      ]
+    },
+    {
+      "name": "seo-meta",
+      "icon": "MdTravelExplore",
+      "iconLibrary": "react-icons/md",
+      "description": "Enforces a complete semantic document head: titles, meta description, canonical URLs, Open Graph and Twitter cards, sitemap and robots awareness.",
+      "tags": [
+        "seo",
+        "meta",
+        "open-graph",
+        "discoverability"
+      ]
+    },
+    {
+      "name": "web-vitals",
+      "icon": "MdSpeed",
+      "iconLibrary": "react-icons/md",
+      "description": "Holds rendering to Core Web Vitals budgets (LCP, INP, CLS) via lazy-loading, code-splitting, and layout-stable markup.",
+      "tags": [
+        "performance",
+        "core-web-vitals",
+        "lcp",
+        "cls"
+      ]
+    },
+    {
+      "name": "auth-guarded",
+      "icon": "MdLock",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires authentication and authorization (RBAC) on every route, endpoint, and server action; default-deny access with explicit grants.",
+      "tags": [
+        "auth",
+        "authentication",
+        "authorization",
+        "rbac"
+      ]
+    },
+    {
+      "name": "responsive-design",
+      "icon": "MdDevices",
+      "iconLibrary": "react-icons/md",
+      "description": "Forces mobile-first, fluid layouts with container queries and relative units; forbids fixed pixel widths that break on resize.",
+      "tags": [
+        "responsive",
+        "mobile-first",
+        "layout",
+        "container-queries"
+      ]
+    },
+    {
+      "name": "dark-mode",
+      "icon": "MdDarkMode",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires tokenized light/dark/system theming via CSS custom properties and prefers-color-scheme; forbids hardcoded colors.",
+      "tags": [
+        "theming",
+        "dark-mode",
+        "tokens",
+        "prefers-color-scheme"
+      ]
+    },
+    {
+      "name": "form-validation",
+      "icon": "MdPlaylistAddCheck",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires accessible client and server validation with typed schemas, inline error messaging tied to inputs, and no trust in client input.",
+      "tags": [
+        "forms",
+        "validation",
+        "accessibility",
+        "zod"
+      ]
+    },
+    {
+      "name": "ds-tailwind",
+      "icon": "MdStyle",
+      "iconLibrary": "react-icons/md",
+      "description": "Pins all styling to Tailwind CSS utility classes and design tokens; no ad-hoc CSS or competing styling systems.",
+      "tags": [
+        "design-system",
+        "tailwind",
+        "utility-css",
+        "tokens"
+      ],
+      "exclusiveGroup": "design-system"
+    },
+    {
+      "name": "ds-shadcn",
+      "icon": "MdViewQuilt",
+      "iconLibrary": "react-icons/md",
+      "description": "Pins all UI to the shadcn/ui design language and Radix primitives composed with Tailwind.",
+      "tags": [
+        "design-system",
+        "shadcn",
+        "radix",
+        "tailwind"
+      ],
+      "exclusiveGroup": "design-system"
     }
   ],
   "steps": [
@@ -762,6 +884,30 @@
         "refactor",
         "safe",
         "behavior-preserving",
+        "atomic"
+      ]
+    },
+    {
+      "name": "landing-page",
+      "icon": "MdWebAsset",
+      "iconLibrary": "react-icons/md",
+      "description": "Builds a single conversion-focused landing page (hero, value props, social proof, CTA) as one artifact, matching the project's design system.",
+      "tags": [
+        "landing",
+        "marketing",
+        "ui",
+        "atomic"
+      ]
+    },
+    {
+      "name": "auth-pages",
+      "icon": "MdLogin",
+      "iconLibrary": "react-icons/md",
+      "description": "Builds the authentication UI surface (login, signup, and password-reset screens) wired to the project's auth provider.",
+      "tags": [
+        "auth",
+        "ui",
+        "forms",
         "atomic"
       ]
     }
