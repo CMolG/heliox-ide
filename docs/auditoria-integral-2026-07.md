@@ -150,11 +150,11 @@ Estado verificado de la deuda conocida:
 |---|---|---|
 | Auth del serve | ✅ **CERRADO** | Bearer token obligatorio, loopback por defecto (`serve-flow.ts` cabecera "Security") |
 | Flags Electron | ✅ Correctos | §4 |
-| **RCE vía tool-provider MCP** | 🔴 **ABIERTO** | `mcp-adapter.ts:345-400`: los servers MCP se lanzan spawneando `command` + `args` desde config; un item de market/flow malicioso que declare un tool-provider ejecuta binarios arbitrarios |
-| **Inyección vía .md del market** | 🔴 ABIERTO | Los prompts del market se inyectan en agentes con herramientas; `market-integrity.test.ts` verifica *coherencia*, no *autenticidad* |
-| **PIN del bridge sobre HTTP** | 🔴 ABIERTO | `qr.ts:33`: `http://${ip}:${port}?pin=${pin}` — PIN en URL, en claro, en LAN |
-| **Sin root-of-trust del market** | 🔴 ABIERTO | No hay firma criptográfica de items; la regla "solo humanos editan market/" es social, no técnica |
-| CSP | 🔴 ABIERTO | §4-D3 |
+| **RCE vía tool-provider MCP** | ✅ **CERRADO** (2026-07-02) | `mcp-command-policy.ts`: gate en la frontera de spawn — match de prefijo contra el directorio curado, aprobaciones exactas persistidas, `HELIOX_MCP_ALLOW_ALL` como escape de dev; IPC approve/revoke. Pendiente follow-up: allowlist equivalente para MCP HTTP/SSE (SSRF) |
+| **Inyección vía .md del market** | 🟡 MITIGADO en autenticidad | La *autenticidad* la cubre el root-of-trust (fila siguiente); el riesgo *semántico* (prompt malicioso firmado) sigue siendo inherente al modelo de market curado por humanos |
+| **PIN del bridge sobre HTTP** | 🟡 **MITIGADO** (2026-07-02) | Token de pairing one-time (TTL 120 s) en fragment de URL (nunca llega a logs), intercambio por POST body, lockout 5/60 s, `timingSafeEqual`, WS token en subprotocolo, endpoint `/bridge/qr` sin auth eliminado. Residual: HTTP plano en LAN hasta TLS/PAKE (threat model en `SECURITY.md`) |
+| **Sin root-of-trust del market** | 🟡 IMPLEMENTADO en bootstrap | `market-trust.ts` (ed25519, manifest sha256, fail-closed empaquetado) + `scripts/market-sign.ts`. Inerte hasta que el maintainer genere la clave (`--gen-key`) y publique el pubkey en `TRUSTED_MARKET_KEYS` |
+| CSP | ✅ **CERRADO** (2026-07-02) | Inyectada vía `onHeadersReceived` solo en app empaquetada; webview de previews exento por partición de sesión propia; Monaco auto-hosteado (cargaba del CDN — habría roto bajo CSP) |
 
 **Por qué esto es estratégico y no solo técnico:** el pitch de Heliox es *confianza verificada* ("demuestras que tus agentes funcionan"). Un marketplace de prompts/tools sin firma, con un adaptador que spawnea comandos de config, es la contradicción exacta de ese pitch — y será lo primero que un evaluador serio (o un post de HN) encuentre. La seguridad aquí **es** marketing.
 
@@ -241,6 +241,8 @@ El producto tiene el perfil exacto para: **Show HN** (la conformance byte-idént
 ## 9. Plan de acción — "Operación Máximo Esplendor"
 
 > Regla de oro heredada del análisis competitivo y confirmada por esta auditoría: **cada semana de esfuerzo debe o (a) hacer instalable/confiable lo que ya existe, o (b) ensanchar un foso. Nada más.**
+
+> **Estado de ejecución (2026-07-02):** implementado en código por 6 subagentes Sonnet orquestados con quality gate (commits `021069fc`, `10f18845`, `94849757` en el IDE; `96f6cc6`, `07eba28` en la web): **0.1, 0.2, 0.4–0.8, 1.1–1.5, 1.6 (mitigado, TLS pendiente), 1.7–1.11 y 2.5**. Gate final: tsc limpio, 914/914 tests, lint 0 errores, build:bridge + bridge e2e 8/8, lint+build web verdes. **Bloqueado en acciones humanas:** 0.3 (tag + primera release), push de ambos repos, secrets de firma (1.1), clave del market (1.5), repo web público (0.8), trademark (0.7), y todos los entregables de media/lanzamiento (0.5-GIF, 2.1–2.4).
 
 ### Fase 0 — "Que exista" (semanas 1-2) · coste: bajo · impacto: existencial
 
