@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/dev]
+  pull_request:
+    branches: [main, feat/dev]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint + unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+  e2e-smoke:
+    name: E2E smoke (ubuntu, xvfb)
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 25
+    # Audit action 1.9 ("E2E in CI, even if a reduced smoke suite"): this is
+    # the first cut of running real Electron E2E tests in CI. Electron under
+    # a virtual display is more timing/rendering-sensitive than a local run,
+    # so this job is a soft gate (reports status, never blocks a PR) until it
+    # has proven stable over real runs. Remove `continue-on-error` once that
+    # holds true for a few weeks.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Install Playwright browser + OS dependencies
+        run: npx playwright install chromium --with-deps
+
+      - name: Build Electron main + preload bundles
+        # The E2E suite launches Electron directly against the repo root
+        # (see e2e/test-helpers.ts), which resolves package.json's "main" to
+        # .vite/build/index.js. That directory is .gitignore'd and is NOT
+        # produced by e2e/global-setup.ts (which only boots the renderer's
+        # Vite dev server on :5173) — it is electron-forge's Vite plugin
+        # build output. `electron-forge package` is the smallest Forge
+        # command that produces it without requiring a display.
+        run: npx electron-forge package
+
+      - name: Run E2E smoke suite
+        # Smallest and most self-contained specs in e2e/: bridge.spec.ts is
+        # IPC-surface + file-content checks (no pixel/mouse-gesture timing),
+        # context-map.spec.ts is a local IPC CRUD round-trip. Both avoid the
+        # pixel-bounding-box and mouse-drag-gesture assertions that specs like
+        # dock-fixed-on-pan.spec.ts use, which are more prone to flaking under
+        # a virtual display — good candidates for a *later* smoke addition
+        # once this job has proven itself.
+        run: xvfb-run --auto-servernum npx playwright test e2e/bridge.spec.ts e2e/context-map.spec.ts
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

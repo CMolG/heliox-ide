@@ -1,6 +1,14 @@
 <div align="center">
   <img src="assets/heliox-logo.png" alt="Heliox IDE" width="160" />
   <h1>Heliox IDE</h1>
+
+  <p>
+    <a href="https://github.com/CMolG/heliox-ide/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/CMolG/heliox-ide/ci.yml?label=CI" alt="CI status" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/CMolG/heliox-ide" alt="License: Apache-2.0" /></a>
+    <a href="https://github.com/CMolG/heliox-ide/releases"><img src="https://img.shields.io/github/v/release/CMolG/heliox-ide?include_prereleases&label=release" alt="Latest release" /></a>
+    <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome" /></a>
+  </p>
+
   <p><strong>Visual-first agentic IDE with E2E snapshot validation.</strong></p>
   <p>
     An open-source desktop IDE that orchestrates AI agents on a spatial canvas,<br/>
@@ -10,6 +18,7 @@
   <br/>
 
   <p>
+    <a href="https://www.helioxide.com">Website</a> ·
     <a href="#getting-started">Getting Started</a> ·
     <a href="#features">Features</a> ·
     <a href="#architecture">Architecture</a> ·
@@ -33,17 +42,18 @@ Most AI coding tools are chat windows bolted onto editors. Heliox is different:
 
 ---
 
-## Project Status (April 2026)
+## Project Status (July 2026)
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Release channel | **Alpha** (`v0.1.0`) | Core workflows are usable, but internal APIs and UI behavior are still evolving quickly. |
+| Release channel | **Alpha** (`v0.1.0`, pre-release) | Core workflows are usable, but internal APIs and UI behavior are still evolving quickly. |
 | Desktop IDE core | **Implemented** | Spatial desktop canvas, agent chat sessions, marketplace, file explorer/editor, backlog, design-system editor, and mental graph are all in active use. |
 | Bridge companion | **Implemented (beta)** | Remote bridge server + QR auth + mobile companion app (`src/main/bridge`, `src/bridge-app`). |
 | Context map + attachables | **Implemented** | Project graph, session sync, attach/detach flows, and export/search IPC are available. |
-| Persistence stack | **Implemented** | Startup now initializes SQLite (with migrations), settings storage, and filesystem storage before window boot. |
-| Test baseline | **In progress** | Unit suite is mostly green; a small set of marketplace/bootstrap store tests is currently failing on the main working branch. |
-| Lint baseline | **Needs migration** | `npm run lint` currently requires ESLint flat-config migration (`eslint.config.*`). |
+| Persistence stack | **Implemented** | Startup initializes SQLite (with migrations), settings storage, and filesystem storage before window boot. |
+| Unit tests | **873/873 passing** | 65 files, full `npm test` (Vitest) run completes in ~8s. |
+| Lint | **0 errors** | `npm run lint` (ESLint flat config) reports 242 warnings and 0 errors. |
+| E2E tests | **14 active suites** | `npm run test:e2e` (Playwright + Electron); a full run takes ~21 min, so CI (`.github/workflows/ci.yml`) only runs a smoke subset on every push/PR. |
 | Stability | **Active development** | Ongoing refactors expected; treat this branch as fast-moving rather than frozen/stable. |
 
 ---
@@ -225,7 +235,7 @@ Centralized notification system with OS-level integration.
 ### Install and Run
 
 ```bash
-git clone https://github.com/nicosolo/heliox-ide.git
+git clone https://github.com/CMolG/heliox-ide.git
 cd heliox-ide
 npm install
 npm start
