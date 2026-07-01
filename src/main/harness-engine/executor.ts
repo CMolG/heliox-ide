@@ -209,6 +209,13 @@ async function executeStep(
   const mcpModToolSet = await getMcpClientModToolSet(step);
   const tools = { ...baseTools, ...(mcpModToolSet?.tools ?? {}) };
 
+  // Surface MCP commands the allowlist rejected (mcp-command-policy.ts) on the
+  // step's status log — same visible surface as the guardrail warnings below —
+  // instead of silently running with a degraded toolset.
+  for (const blocked of mcpModToolSet?.blockedCommands ?? []) {
+    emitStepStatus(flow.id, step.id, 'running', `[mcp] ${blocked.message}`);
+  }
+
   const runStep = options.runStep ?? runLLMStep;
 
   // ── Model-agnostic guardrail: verify a step's completion contract and re-run

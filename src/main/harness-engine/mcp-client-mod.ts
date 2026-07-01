@@ -13,6 +13,7 @@
 import type { AgenticMod, AgenticStep } from '../../types/harness';
 import {
   createRemoteMcpToolSet,
+  type BlockedMcpCommandInfo,
   type RemoteMcpServerConfig,
   type RemoteMcpToolSet,
 } from './mcp-adapter';
@@ -76,26 +77,38 @@ export function findMcpClientMod(step: AgenticStep): McpClientMod | null {
 // Toolset builder — called by the executor
 // ---------------------------------------------------------------------------
 
+/** A built MCP client toolset, plus any stdio commands the allowlist rejected. */
+export interface McpClientModToolSet extends RemoteMcpToolSet {
+  /** One entry per server config blocked by mcp-command-policy.ts; empty when none were. */
+  blockedCommands: BlockedMcpCommandInfo[];
+}
+
 /**
  * Connects to all MCP servers declared in `mod.config.servers`, merges their
  * tools into a single toolset, and returns the toolset alongside a `close()`
  * method that tears down all connections.
  *
  * Each individual server failure degrades gracefully (empty contribution).
- * This function itself never throws.
+ * This function itself never throws — a rejected stdio command surfaces via
+ * `blockedCommands` instead, so the executor can log the exact command +
+ * approval instructions on the step without aborting the run.
  */
-export async function buildMcpClientModToolSet(mod: McpClientMod): Promise<RemoteMcpToolSet> {
+export async function buildMcpClientModToolSet(mod: McpClientMod): Promise<McpClientModToolSet> {
   const results = await Promise.all(
     mod.config.servers.map((serverConfig) => createRemoteMcpToolSet(serverConfig)),
   );
 
   const mergedTools: ToolSet = Object.assign({}, ...results.map((r) => r.tools));
+  const blockedCommands = results
+    .map((r) => r.blockedCommand)
+    .filter((info): info is BlockedMcpCommandInfo => info !== undefined);
 
   return {
     tools: mergedTools,
     close: async () => {
       await Promise.all(results.map((r) => r.close()));
     },
+    blockedCommands,
   };
 }
 
@@ -105,7 +118,7 @@ export async function buildMcpClientModToolSet(mod: McpClientMod): Promise<Remot
  */
 export async function getMcpClientModToolSet(
   step: AgenticStep,
-): Promise<RemoteMcpToolSet | null> {
+): Promise<McpClientModToolSet | null> {
   const mod = findMcpClientMod(step);
   if (!mod) return null;
   return buildMcpClientModToolSet(mod);

@@ -23,6 +23,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { McpToolTelemetryEvent } from '../performance-frontier/telemetry/tool-events';
+import { assertMcpCommandAllowed, MCPCommandBlockedError } from './mcp-command-policy';
 
 const DEFAULT_MAX_READ_BYTES = 1024 * 1024;
 
@@ -365,6 +366,13 @@ export interface HttpMcpServerConfig {
  */
 export type RemoteMcpServerConfig = StdioMcpServerConfig | HttpMcpServerConfig;
 
+/** Command + args rejected by the MCP command allowlist, with the operator-facing message. */
+export interface BlockedMcpCommandInfo {
+  command: string;
+  args: string[];
+  message: string;
+}
+
 /**
  * A connected remote MCP toolset that the caller must close when done.
  */
@@ -372,6 +380,14 @@ export interface RemoteMcpToolSet {
   tools: ToolSet;
   /** Closes the underlying transport / child process. */
   close: () => Promise<void>;
+  /**
+   * Populated instead of throwing when a stdio command was rejected by the MCP
+   * command allowlist (mcp-command-policy.ts). Connection failures degrade
+   * gracefully by design (see function doc below) — this field is how the
+   * caller distinguishes "blocked by policy" from an ordinary connection
+   * failure so it can surface the exact command + approval instructions.
+   */
+  blockedCommand?: BlockedMcpCommandInfo;
 }
 
 function callToolResultToText(result: Awaited<ReturnType<Client['callTool']>>): string {
@@ -385,7 +401,12 @@ function callToolResultToText(result: Awaited<ReturnType<Client['callTool']>>): 
  * tool shape alongside a `close()` method to tear down the connection.
  *
  * Connection failure is **graceful**: an empty toolset is returned and the
- * error is logged — the step continues without crashing.
+ * error is logged — the step continues without crashing. This includes a
+ * stdio `command` rejected by the MCP command allowlist (mcp-command-policy.ts):
+ * the spawn boundary check runs first, inside this same try block, so a
+ * blocked command degrades exactly like any other connection failure while
+ * still reporting `blockedCommand` on the returned toolset for the caller to
+ * surface (see executor.ts).
  *
  * Explicit config is required; nothing is auto-connected.
  */
@@ -396,6 +417,9 @@ export async function createRemoteMcpToolSet(
 
   try {
     if (config.type === 'stdio') {
+      // Spawn boundary — cannot be bypassed from the renderer. Must run before
+      // the transport (and therefore the child process) is constructed.
+      assertMcpCommandAllowed(config.command, config.args ?? []);
       transport = new StdioClientTransport({
         command: config.command,
         args: config.args ?? [],
@@ -445,6 +469,9 @@ export async function createRemoteMcpToolSet(
     return {
       tools: {},
       close: async () => { /* nothing to close */ },
+      ...(error instanceof MCPCommandBlockedError
+        ? { blockedCommand: { command: error.command, args: error.args, message: error.message } }
+        : {}),
     };
   }
 }

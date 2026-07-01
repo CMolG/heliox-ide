@@ -46,6 +46,13 @@ export interface SettingsSchema {
   };
   recentProjects: string[];
   lastOpenedProject: string | null;
+  /**
+   * Stdio MCP server commands the user has explicitly approved (audit 1.4).
+   * A command not covered by the curated `mcp-directory` must appear here
+   * (exact command + args match) before the spawn boundary in mcp-adapter.ts
+   * will allow it. See mcp-command-policy.ts for the enforcement logic.
+   */
+  approvedMcpCommands: Array<{ command: string; args: string[]; approvedAt: string }>;
 }
 
 const DEFAULTS: SettingsSchema = {
@@ -64,6 +71,7 @@ const DEFAULTS: SettingsSchema = {
   },
   recentProjects: [],
   lastOpenedProject: null,
+  approvedMcpCommands: [],
 };
 
 // ─── Singleton ─────────────────────────────────────────────────────────────────

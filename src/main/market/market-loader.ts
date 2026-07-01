@@ -17,10 +17,65 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { AgenticMod, AgenticRole } from '../../types/harness';
 import type { MarketMod, MarketRole } from '../../types/market';
+import { verifyMarket, TRUSTED_MARKET_KEYS } from './market-trust';
 
 /** Market root. Defaults to `<cwd>/market`; override with HELIOX_MARKET_DIR. */
 export function getMarketDir(): string {
   return process.env.HELIOX_MARKET_DIR ?? join(process.cwd(), 'market');
+}
+
+// ─── Signature verification policy (audit 1.5) ─────────────────────────────
+//
+// This loader runs headless (CLI/serve) as well as inside Electron, so it
+// cannot hard-depend on the `electron` module — `require('electron')` outside
+// a running Electron process does not expose `app`, so every access is guarded
+// exactly like the existing dev/packaged detection in dev-session-logger.ts.
+let _electron: typeof import('electron') | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- must be synchronous and swallow failure; matches dev-session-logger.ts/logger.ts.
+  _electron = require('electron');
+} catch { /* headless CLI/tests — no Electron */ }
+
+function isPackagedApp(): boolean {
+  try {
+    if (_electron?.app && typeof _electron.app.isPackaged === 'boolean') {
+      return _electron.app.isPackaged;
+    }
+  } catch { /* app not ready yet */ }
+  return false;
+}
+
+let marketVerified = false;
+
+/**
+ * Verification policy (runs at most once per process — reset by
+ * clearMarketModCache for tests):
+ *   - TRUSTED_MARKET_KEYS empty (bootstrap mode, today) → skip, one warning.
+ *   - Keys configured + packaged build → fail closed: throw, refuse to load.
+ *   - Keys configured + dev build → warn on invalid/missing, keep loading.
+ * Called BEFORE the try/catch below that swallows read errors, so a fail-closed
+ * throw actually propagates instead of being absorbed into "no mods available".
+ */
+function ensureMarketVerified(dir: string): void {
+  if (marketVerified) return;
+  marketVerified = true;
+
+  if (Object.keys(TRUSTED_MARKET_KEYS).length === 0) {
+    console.warn(
+      '[market-loader] Market signature verification is SKIPPED — TRUSTED_MARKET_KEYS is empty ' +
+      '(bootstrap mode). Provision a key with `npx tsx scripts/market-sign.ts --gen-key`.',
+    );
+    return;
+  }
+
+  const result = verifyMarket(dir, TRUSTED_MARKET_KEYS);
+  if (result.ok) return;
+
+  const message = `[market-loader] Market signature verification FAILED (${result.reason}) for ${dir}.`;
+  if (isPackagedApp()) {
+    throw new Error(`${message} Refusing to load an unverified market in a packaged build.`);
+  }
+  console.warn(`${message} Continuing in dev mode — this is a fatal error in a packaged build.`);
 }
 
 interface RawInventory {
@@ -52,6 +107,7 @@ function loadMarketMods(): Map<string, AgenticMod> {
   if (modCache) return modCache;
 
   const dir = getMarketDir();
+  ensureMarketVerified(dir);
   const mods = new Map<string, AgenticMod>();
 
   try {
@@ -104,6 +160,7 @@ function loadMarketMods(): Map<string, AgenticMod> {
 export function clearMarketModCache(): void {
   modCache = null;
   roleCache = null;
+  marketVerified = false;
 }
 
 export function getMarketMods(): AgenticMod[] {
@@ -145,6 +202,7 @@ function loadMarketRoles(): Map<string, MarketRoleEntry> {
   if (roleCache) return roleCache;
 
   const dir = getMarketDir();
+  ensureMarketVerified(dir);
   const roles = new Map<string, MarketRoleEntry>();
 
   try {

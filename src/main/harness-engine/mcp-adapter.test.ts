@@ -1,8 +1,18 @@
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createLocalMcpClient, createLocalMcpToolSet, type McpFileSystem } from './mcp-adapter';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// mcp-command-policy.ts (the MCP command allowlist, audit 1.4) reads settings-store
+// for user-approved commands. electron-store calls electron's app.getPath()
+// internally, which is unavailable outside a running Electron process — stand in
+// with an always-empty approval list (no test below approves a command).
+vi.mock('../storage/settings-store', () => ({
+  settingsGet: (key: string) => (key === 'approvedMcpCommands' ? [] : undefined),
+  settingsSet: () => { /* no-op — nothing in this file approves a command */ },
+}));
+
+import { createLocalMcpClient, createLocalMcpToolSet, createRemoteMcpToolSet, type McpFileSystem } from './mcp-adapter';
 
 let rootDir: string;
 
@@ -147,5 +157,31 @@ describe('local MCP adapter', () => {
       'write:/workspace/src/server.js',
     ]);
     expect(telemetry).toEqual(['success', 'intercepted', 'intercepted']);
+  });
+});
+
+describe('createRemoteMcpToolSet — MCP command allowlist (audit 1.4)', () => {
+  // The allowlist check runs BEFORE the StdioClientTransport is constructed, so
+  // a blocked command never spawns a process — this stays fast/hermetic and
+  // never touches the network, unlike testing an *allowed* stdio command would.
+  it('blocks a non-curated, unapproved stdio command without throwing to the caller', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await createRemoteMcpToolSet({
+      type: 'stdio',
+      command: 'rm',
+      args: ['-rf', '/'],
+    });
+
+    expect(result.tools).toEqual({});
+    expect(result.blockedCommand).toMatchObject({
+      command: 'rm',
+      args: ['-rf', '/'],
+    });
+    expect(result.blockedCommand?.message).toContain('rm -rf /');
+    await expect(result.close()).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('MCP server command blocked'));
+
+    warnSpy.mockRestore();
   });
 });

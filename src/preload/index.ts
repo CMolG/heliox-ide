@@ -369,6 +369,14 @@ const helioxAPI: HelioxAPI = {
     ipcRenderer.on('pf:arena-progress', handler);
     return () => { ipcRenderer.removeListener('pf:arena-progress', handler); };
   },
+
+  // ── MCP command allowlist + consent (audit 1.4) ─────────────────
+  mcpListApprovedCommands: () =>
+    ipcRenderer.invoke('mcp:listApprovedCommands'),
+  mcpApproveCommand: (command: string, args?: string[]) =>
+    ipcRenderer.invoke('mcp:approveCommand', command, args ?? []),
+  mcpRevokeCommand: (command: string, args?: string[]) =>
+    ipcRenderer.invoke('mcp:revokeCommand', command, args ?? []),
 };
 
 // Menu events from main process

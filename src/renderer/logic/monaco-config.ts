@@ -6,6 +6,20 @@
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
 // src/renderer/logic/monaco-config.ts — Monaco Editor language mapping & theme for Heliox IDE
+import { loader } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
+
+// ─── Self-hosted Monaco (audit 1.3 / CSP) ────────────────────────
+// `@monaco-editor/react` defaults to fetching its AMD loader + workers from the
+// jsdelivr CDN unless given a monaco instance directly — that violates
+// `script-src 'self'` under the packaged CSP (src/main/index.ts) and would
+// silently break the code editor offline. Point it at the bundled npm package
+// (already a project dependency) instead of the CDN. Every module that mounts
+// <Editor>/<DiffEditor> imports this file, so the config lands before any editor
+// instantiates. Worker creation is unaffected by this change either way: Monaco
+// falls back to a main-thread language-service mode when no
+// `MonacoEnvironment.getWorker` is configured (unchanged pre-existing behavior).
+loader.config({ monaco });
 
 // ─── Extension → Monaco Language ID ──────────────────────────────
 

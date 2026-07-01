@@ -19,6 +19,17 @@ import { App } from './App';
 // titles render crisply instead of falling back to a system font (the font tokens
 // listed 'Atkinson Hyperlegible' with no @font-face, so titles silently fell back).
 import '@fontsource-variable/doto';
+// Self-hosted UI/body + code-editor typefaces (audit 1.3 — previously loaded from
+// Google Fonts CDN in index.html: broke offline, leaked a request to Google from a
+// local-first IDE, and caused a flash of unstyled text). Only families with a real
+// `font-family` reference somewhere in src/renderer/ are bundled here; Manrope and
+// Lexend tokens already resolve to Atkinson Hyperlegible/Inter (never rendered) and
+// Permanent Marker / Space Mono have zero references, so none of those four ship.
+import '@fontsource/atkinson-hyperlegible/400.css';
+import '@fontsource/atkinson-hyperlegible/700.css';
+import '@fontsource-variable/inter';
+import '@fontsource-variable/jetbrains-mono';
+import '@fontsource-variable/space-grotesk';
 import './index.css';
 
 const root = createRoot(document.getElementById('root')!);

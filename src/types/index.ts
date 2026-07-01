@@ -520,6 +520,26 @@ export interface HelioxAPI {
    * while an Arena run is in flight.  Returns an unsubscribe function.
    */
   onArenaProgress(cb: (event: import('./ipc-events').ArenaProgressEvent) => void): () => void;
+
+  // ── MCP command allowlist + consent (audit 1.4) ────────────────────────────
+  /** List stdio MCP commands the user has explicitly approved. */
+  mcpListApprovedCommands(): Promise<{
+    success: boolean;
+    data?: Array<{ command: string; args: string[]; approvedAt: string }>;
+    error?: string;
+  }>;
+  /** Approve an exact command+args pair so future spawns of it are allowed. */
+  mcpApproveCommand(command: string, args?: string[]): Promise<{
+    success: boolean;
+    data?: Array<{ command: string; args: string[]; approvedAt: string }>;
+    error?: string;
+  }>;
+  /** Revoke a previously approved command+args pair. */
+  mcpRevokeCommand(command: string, args?: string[]): Promise<{
+    success: boolean;
+    data?: Array<{ command: string; args: string[]; approvedAt: string }>;
+    error?: string;
+  }>;
 }
 
 /** Payload emitted by the main-process dev-server watcher when a new port comes up. */

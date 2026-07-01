@@ -17,7 +17,7 @@
  *  Phase 2 — Load renderer entrypoint
  *  Phase 3 — Platform integrations + app menu
  */
-import { app, BrowserWindow, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, session } from 'electron';
 import path from 'path';
 import { registerIpcHandlers } from './ipc-handlers';
 import { registerContextMapIpcHandlers } from './context-map';
@@ -62,6 +62,53 @@ function saveWindowState(win: BrowserWindow): void {
   try {
     settingsSet('windowState', state);
   } catch { /* non-critical — silently ignore */ }
+}
+
+// ── Content-Security-Policy (audit 1.3) — packaged builds only ──────────────
+// Dev is intentionally exempt: Vite's dev server needs eval'd HMR chunks and a
+// ws:// connection that this policy would otherwise block, and dev has no
+// untrusted end user to protect. Constraints each directive serves:
+//   default-src 'self'   — deny-by-default fallback for any directive not listed
+//   script-src 'self'    — renderer JS ships in the app bundle only; Monaco is
+//                          self-hosted (monaco-config.ts) so no CDN script is needed
+//   style-src  ... 'unsafe-inline' — Tailwind + inline React style props
+//   font-src   'self' data:        — self-hosted @fontsource packages
+//   img-src    ... data: blob:     — data-URI icons/avatars + generated blob previews
+//   media-src  ... blob:           — generated/recorded audio-video blobs
+//   worker-src ... blob:           — Monaco language workers / blob-constructed workers
+//   connect-src 'self' https: ws://localhost:* http://localhost:*
+//                                  — LLM/API calls (https), local MCP HTTP servers
+//                                    and the dev-server preview ports
+//   frame-src  http: https:        — <webview> previews (WebPreviewApp.tsx) navigate
+//                                    arbitrary dev-server/user URLs; already restricted
+//                                    to http/https by the will-navigate guard below
+//   object-src 'none'    — no plugin/embed content
+//   base-uri   'self'    — blocks <base>-tag injection from redirecting relative URLs
+//   form-action 'none'   — the app renders no HTML forms that should ever submit
+const PACKAGED_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "worker-src 'self' blob:",
+  "connect-src 'self' https: ws://localhost:* http://localhost:*",
+  'frame-src http: https:',
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+].join('; ');
+
+function registerPackagedContentSecurityPolicy(): void {
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [PACKAGED_CSP],
+      },
+    });
+  });
 }
 
 function createWindow(): BrowserWindow {
@@ -150,6 +197,12 @@ app.whenReady().then(() => {
   // ── Phase 0: Initialize all storage before anything else ────────────────────
   // Order: SQLite migrations → electron-store → fs roots → storage IPC handlers
   initializeStorage();
+
+  // Packaged only — see registerPackagedContentSecurityPolicy for rationale.
+  // Vite's dev server (HMR eval + ws) would break under this policy.
+  if (app.isPackaged) {
+    registerPackagedContentSecurityPolicy();
+  }
 
   // ── Phase 3: Platform integrations + app menu ───────────────────────────────
   // Set macOS dock icon

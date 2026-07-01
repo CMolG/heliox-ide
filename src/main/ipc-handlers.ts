@@ -29,6 +29,7 @@ import { executeAgenticFlow } from './harness-engine/executor';
 import { setHarnessEventWindow } from './harness-engine/event-bus';
 import { assemblePipeline } from './meta-agent/pipeline-generator';
 import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
+import { registerMcpCommandPolicyIpcHandlers } from './harness-engine/mcp-command-policy';
 import { registerScorecardIpc, registerArenaIpc } from './performance-frontier/ipc';
 
 const execFileAsync = promisify(execFile);
@@ -1117,6 +1118,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // ── Time-travel checkpoint IPC (ARCH-073) ─────────────────────────────────
   // Delegated to a dedicated module to keep this file additive.
   registerCheckpointIpcHandlers();
+
+  // ── MCP command allowlist + consent (audit 1.4) ───────────────────────────
+  // mcp:listApprovedCommands / mcp:approveCommand / mcp:revokeCommand.
+  registerMcpCommandPolicyIpcHandlers();
 
   // ── Performance Frontier Scorecard + Arena IPC (ARCH-079) ─────────────────
   // Registers pf:run-scorecard / pf:scorecard-progress and
