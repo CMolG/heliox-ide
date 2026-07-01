@@ -8,18 +8,40 @@
 // src/renderer/store/desktop-store.ts — Zustand store for seamless desktop state
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { getConnectedComponent } from '../logic/mental-graph';
 import { CLI_THEME_COLORS } from '@/types/desktop';
 import type {
   DesktopWindow, WindowPosition, WindowSize, WindowConnection,
   DockItem, Plugin, PluginCategory, SnapGuide, CliProvider, ConnectionPort, CanvasPan,
   DesktopAttachable, AttachableType, DesktopGrid, MentalMode, MentalShape,
   MentalTool, MentalGraphNode, MentalGraphEdge, StepGraphNode, CanvasGraphNode, FrameGraphNode,
+  StepNodeData,
 } from '@/types/desktop';
 import type { MarketInventory, MarketMod, MarketRole, BacklogCard } from '@/types/market';
 import type { TutorialScenarioId, TutorialProgress } from '@/types/tutorial';
 import type { PipelineAssembly } from '@/types/meta-agent';
 import type { AgenticStepType } from '@/types/harness';
 
+
+// ─── Unified z-stack helper ───────────────────────────────────────
+// Computes the globally highest z-index across windows, attachables, and
+// mental nodes, then returns that value + 1 so the caller can place content
+// on top of everything in the unified stack.
+
+function globalTopZ(s: {
+  nextZIndex: number;
+  windows: Array<{ zIndex?: number }>;
+  attachables: Array<{ zIndex?: number }>;
+  mentalZ: Record<string, number>;
+}): number {
+  return Math.max(
+    s.nextZIndex,
+    0,
+    ...s.windows.map(w => w.zIndex ?? 0),
+    ...s.attachables.map(a => a.zIndex ?? 0),
+    ...Object.values(s.mentalZ ?? {}),
+  ) + 1;
+}
 
 // ─── Grid cell geometry helper ───────────────────────────────────
 // Computes the absolute canvas position and size for a grid cell.
@@ -83,9 +105,9 @@ const DEFAULT_DOCK_ITEMS: DockItem[] = [
   { id: 'dock-new-chat', type: 'action', label: 'New Chat', iconName: 'MessageSquare', action: 'new-chat' },
   { id: 'dock-file-explorer', type: 'action', label: 'Files', iconName: 'FileText', action: 'file-explorer' },
   { id: 'dock-backlog', type: 'action', label: 'Backlog', iconName: 'KanbanSquare', action: 'backlog' },
-  { id: 'dock-grid', type: 'action', label: 'Grid', iconName: 'LayoutGrid', action: 'grid' },
-  { id: 'dock-mental-draw-toggle', type: 'action', label: 'Mental', iconName: 'PenTool', action: 'mental-draw-toggle' },
-  { id: 'dock-arena', type: 'action', label: 'Heliox Arena', iconName: 'Trophy', action: 'arena' },
+  { id: 'dock-mental-draw-toggle', type: 'action', label: 'Enable Mental Authoring', iconName: 'PenTool', action: 'mental-draw-toggle' },
+  { id: 'dock-new-step', type: 'action', label: 'New Step', iconName: 'SquarePlus', action: 'new-step' },
+  { id: 'dock-new-flow', type: 'action', label: 'New Flow', iconName: 'Workflow', action: 'new-flow' },
   { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
   ...(import.meta.env.DEV ? [
     { id: 'dock-prompt-dev-zone', type: 'action', label: 'Prompt Dev Zone', iconName: 'FlaskConical', action: 'prompt-dev-zone' } satisfies DockItem,
@@ -125,7 +147,7 @@ const MIN_WINDOW_SIZE: WindowSize = { width: 320, height: 250 };
 const SNAP_THRESHOLD = 8; // px
 const DEFAULT_MENTAL_WIDTH = 220;
 const DEFAULT_MENTAL_HEIGHT = 120;
-const DEFAULT_MENTAL_EDGE_COLOR = '#7C3AED';
+const DEFAULT_MENTAL_EDGE_COLOR = '#4DA8FF';
 const DEFAULT_STEP_WIDTH = 300;
 const DEFAULT_STEP_HEIGHT = 190;
 
@@ -177,6 +199,23 @@ interface InsertPipelineAssemblyResult {
   frameId: string;
   stepIds: string[];
 }
+
+// ─── HUD Widget Types ─────────────────────────────────────────────
+
+export type HudWidgetType = 'agent-sessions' | 'text-to-flow' | 'notifications';
+
+export interface HudWidget {
+  type: HudWidgetType;
+  visible: boolean;
+  position: { x: number; y: number };
+}
+
+// Default positions (fixed px, not window-relative so they work before mount)
+const DEFAULT_HUD_WIDGETS: HudWidget[] = [
+  { type: 'agent-sessions',   visible: false, position: { x: 900, y: 80 } },
+  { type: 'text-to-flow', visible: true,  position: { x: 360, y: 140 } },
+  { type: 'notifications',    visible: false, position: { x: 900, y: 360 } },
+];
 
 // ─── Store Interface ─────────────────────────────────────────────
 
@@ -320,6 +359,13 @@ interface DesktopStore {
   removeModFromStep: (stepId: string, modId: string) => void;
   addRoleToStep: (stepId: string, roleData: MarketRole) => boolean;
   removeRoleFromStep: (stepId: string, roleId: string) => void;
+  /**
+   * Patch arbitrary fields on a Step node's `data` (e.g. `prompt`). Powers the
+   * Step Config panel's instructions editor — the compiler's `normalizePrompt`
+   * reads `data.prompt` first, so edits made here feed execution directly.
+   * No-ops (does not mutate) if `stepId` doesn't name a Step node.
+   */
+  updateStepData: (stepId: string, patch: Partial<StepNodeData>) => void;
   removeMentalNode: (nodeId: string) => void;
   addMentalEdge: (sourceId: string, targetId: string, edgeType?: MentalGraphEdge['type'], sourceHandle?: string, targetHandle?: string) => string | null;
   removeMentalEdge: (edgeId: string) => void;
@@ -329,6 +375,12 @@ interface DesktopStore {
   // ─── Mental Graph selection (mirrors xyflow's selected nodes) ─
   selectedMentalNodeIds: string[];
   setSelectedMentalNodeIds: (ids: string[]) => void;
+
+  // ─── Unified z-stack: per-node recency z-index ────────────────
+  // Transient — NOT persisted. Drives interleaved z-ordering of mental nodes
+  // and windows within the single React Flow viewport stacking context.
+  mentalZ: Record<string, number>;
+  bringMentalToFront: (nodeId: string) => void;
 
   // ─── Mental → Chat attachments ───────────────────────────────
   // Each chat window keeps a matrix of attached subgraphs: each inner
@@ -359,10 +411,6 @@ interface DesktopStore {
   selectedAttachableId: string | null;
   setSelectedAttachableId: (id: string | null) => void;
   focusAttachable: (attachableId: string) => void;
-
-  // Design Guidelines
-  designGuidelineId: number | null;
-  setDesignGuideline: (id: number | null) => void;
 
   // Settings
   settings: {
@@ -398,6 +446,12 @@ interface DesktopStore {
   }>;
   setFileExplorerState: (windowId: string, state: DesktopStore['fileExplorerStates'][string]) => void;
   clearFileExplorerState: (windowId: string) => void;
+
+  // ─── HUD Widgets ───────────────────────────────────────────────
+  hudWidgets: HudWidget[];
+  setHudWidgetVisible: (type: HudWidgetType, visible: boolean) => void;
+  moveHudWidget: (type: HudWidgetType, position: { x: number; y: number }) => void;
+  toggleHudWidget: (type: HudWidgetType) => void;
 }
 
 // ─── Helper: Stagger position for new windows ────────────────────
@@ -471,12 +525,35 @@ export const useDesktopStore = create<DesktopStore>()(
       activeWindowId: null,
       nextZIndex: 10,
 
+      // ─── Unified z-stack ────────────────────────────────
+      mentalZ: {},
+      bringMentalToFront: (nodeId) => set((s) => {
+        const component = getConnectedComponent([nodeId], s.mentalEdges);
+        // Include parent frame(s) of any component node, and if a frame was
+        // clicked, include its children too.
+        const clicked = s.mentalNodes.find(n => n.id === nodeId);
+        const ids = new Set<string>(component);
+        for (const id of component) {
+          const n = s.mentalNodes.find(m => m.id === id);
+          if (n && (n as any).parentId) ids.add((n as any).parentId);
+        }
+        if (clicked && (clicked as any).type === 'frame') {
+          for (const n of s.mentalNodes) {
+            if ((n as any).parentId === nodeId) ids.add(n.id);
+          }
+        }
+        const z = globalTopZ(s);
+        const mentalZ = { ...s.mentalZ };
+        for (const id of ids) mentalZ[id] = z;
+        return { mentalZ, nextZIndex: z + 1 };
+      }),
+
       addWindow: (type, opts) => {
         const state = get();
         const id = `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const position = opts?.position ?? getViewportCenteredSpawnPosition(state.canvasPan, state.canvasZoom);
         const size = opts?.size ?? DEFAULT_WINDOW_SIZE;
-        const zIndex = state.nextZIndex;
+        const zIndex = globalTopZ(state);
         const cliProv = opts?.cliProvider ?? state.cliProvider;
         const defaultTitle = type === 'chat'
           ? (CLI_THEME_COLORS[cliProv]?.label ?? cliProv)
@@ -546,7 +623,12 @@ export const useDesktopStore = create<DesktopStore>()(
       })),
 
       focusWindow: (windowId) => set((s) => {
-        const z = s.nextZIndex;
+        // Always rise ABOVE every existing window, attachable, AND mental node.
+        // `nextZIndex` is NOT persisted (it resets to its initial value each
+        // launch) while window `zIndex` IS persisted — so trusting the counter
+        // alone can hand a clicked window a z BELOW its peers, making it sink
+        // behind instead of coming to the front. globalTopZ covers all layers.
+        const z = globalTopZ(s);
         return {
           windows: s.windows.map(w => w.id === windowId ? { ...w, zIndex: z, state: w.state === 'minimized' ? 'normal' : w.state } : w),
           activeWindowId: windowId,
@@ -1320,7 +1402,14 @@ export const useDesktopStore = create<DesktopStore>()(
           shape: input.shape,
           createdAt: Date.now(),
         };
-        set((s) => ({ mentalNodes: [...s.mentalNodes, node] }));
+        set((s) => {
+          const z = globalTopZ(s);
+          return {
+            mentalNodes: [...s.mentalNodes, node],
+            mentalZ: { ...s.mentalZ, [id]: z },
+            nextZIndex: z + 1,
+          };
+        });
         return id;
       },
 
@@ -1388,7 +1477,14 @@ export const useDesktopStore = create<DesktopStore>()(
           },
           createdAt: Date.now(),
         };
-        set((s) => ({ mentalNodes: [...s.mentalNodes, node] }));
+        set((s) => {
+          const z = globalTopZ(s);
+          return {
+            mentalNodes: [...s.mentalNodes, node],
+            mentalZ: { ...s.mentalZ, [id]: z },
+            nextZIndex: z + 1,
+          };
+        });
         return id;
       },
 
@@ -1473,19 +1569,43 @@ export const useDesktopStore = create<DesktopStore>()(
           })
         ));
 
-        set((s) => ({
-          mentalNodes: [...s.mentalNodes, frameNode, ...stepNodes],
-          mentalEdges: [...s.mentalEdges, ...edges],
-          selectedMentalNodeIds: [frameId],
-          mentalEditingNodeId: null,
-        }));
+        set((s) => {
+          const z = globalTopZ(s);
+          const newMentalZ = { ...s.mentalZ, [frameId]: z };
+          for (const sid of stepIds) newMentalZ[sid] = z;
+          return {
+            mentalNodes: [...s.mentalNodes, frameNode, ...stepNodes],
+            mentalEdges: [...s.mentalEdges, ...edges],
+            selectedMentalNodeIds: [frameId],
+            mentalEditingNodeId: null,
+            mentalZ: newMentalZ,
+            nextZIndex: z + 1,
+          };
+        });
 
         return { frameId, stepIds };
       },
 
       addModToStep: (stepId, modData) => {
-        let didAdd = false;
         const modId = marketEntityId(modData);
+
+        // Validate compatibility against mods already on this step (mirrors
+        // `addModifier`'s window-modifier check). `incompatibleWith` already
+        // encodes exclusive-group siblings at load time (see market-loader),
+        // so a bidirectional name check here is sufficient.
+        const targetNode = get().mentalNodes.find((n) => n.id === stepId);
+        if (targetNode && isStepGraphNode(targetNode)) {
+          const conflict = targetNode.data.mods.some((existing) => {
+            const existingId = marketEntityId(existing);
+            return (
+              modData.incompatibleWith?.includes(existingId) ||
+              existing.incompatibleWith?.includes(modId)
+            );
+          });
+          if (conflict) return false;
+        }
+
+        let didAdd = false;
         set((s) => ({
           mentalNodes: s.mentalNodes.map((node) => {
             if (node.id !== stepId || !isStepGraphNode(node)) return node;
@@ -1519,18 +1639,23 @@ export const useDesktopStore = create<DesktopStore>()(
       })),
 
       addRoleToStep: (stepId, roleData) => {
+        // One role per step — roles are mutually exclusive, so attaching a
+        // new (different) role always replaces whatever was assigned before.
+        // Re-attaching the exact same already-sole role is a no-op.
         let didAdd = false;
         const roleId = marketEntityId(roleData);
         set((s) => ({
           mentalNodes: s.mentalNodes.map((node) => {
             if (node.id !== stepId || !isStepGraphNode(node)) return node;
-            if (node.data.roles.some((role) => marketEntityId(role) === roleId)) return node;
+            const alreadySoleRole =
+              node.data.roles.length === 1 && marketEntityId(node.data.roles[0]) === roleId;
+            if (alreadySoleRole) return node;
             didAdd = true;
             return {
               ...node,
               data: {
                 ...node.data,
-                roles: [...node.data.roles, { ...roleData }],
+                roles: [{ ...roleData }],
               },
             };
           }),
@@ -1548,6 +1673,19 @@ export const useDesktopStore = create<DesktopStore>()(
             data: {
               ...node.data,
               roles: nextRoles,
+            },
+          };
+        }),
+      })),
+
+      updateStepData: (stepId, patch) => set((s) => ({
+        mentalNodes: s.mentalNodes.map((node) => {
+          if (node.id !== stepId || !isStepGraphNode(node)) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              ...patch,
             },
           };
         }),
@@ -1735,10 +1873,6 @@ export const useDesktopStore = create<DesktopStore>()(
         }));
       },
 
-      // Design Guidelines
-      designGuidelineId: null,
-      setDesignGuideline: (id) => set({ designGuidelineId: id }),
-
       // Settings
       settings: {
         canvasClickAnimation: true,
@@ -1783,10 +1917,26 @@ export const useDesktopStore = create<DesktopStore>()(
         const { [windowId]: _, ...rest } = s.fileExplorerStates;
         return { fileExplorerStates: rest };
       }),
+
+      // ─── HUD Widgets ───────────────────────────────────────────────
+      // Positions are stored already-snapped (callers must call snapToHudGrid before moveHudWidget).
+      hudWidgets: DEFAULT_HUD_WIDGETS,
+
+      setHudWidgetVisible: (type, visible) => set((s) => ({
+        hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, visible } : w),
+      })),
+
+      moveHudWidget: (type, position) => set((s) => ({
+        hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, position } : w),
+      })),
+
+      toggleHudWidget: (type) => set((s) => ({
+        hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, visible: !w.visible } : w),
+      })),
     }),
     {
       name: 'heliox-desktop',
-      version: 13,
+      version: 17,
       partialize: (state) => ({
         windows: state.windows,
         connections: state.connections,
@@ -1796,14 +1946,14 @@ export const useDesktopStore = create<DesktopStore>()(
         attachables: state.attachables,
         cliProvider: state.cliProvider,
         canvasPan: state.canvasPan,
-        canvasZoom: state.canvasZoom,
+        // canvasZoom intentionally NOT persisted — always boots at 100% (Req1)
         // mentalMode intentionally NOT persisted — always boots as 'off'
         mentalNodes: state.mentalNodes,
         mentalEdges: state.mentalEdges,
         mentalTool: state.mentalTool,
-        designGuidelineId: state.designGuidelineId,
         settings: state.settings,
         fileExplorerStates: state.fileExplorerStates,
+        hudWidgets: state.hudWidgets,
       }),
       // Migrate old persisted data (v1 had icon: emoji, v2 has iconName)
       migrate: (persisted: any, version: number) => {
@@ -2019,11 +2169,140 @@ export const useDesktopStore = create<DesktopStore>()(
           }
         }
 
+        // v13 → v14: drop stale zoom, strip arena + design-system dock items/windows (Req1, Req7, Req10)
+        if (version < 14 && persisted) {
+          // Req1: never restore a stale zoom — always boot at 100%
+          delete persisted.canvasZoom;
+          // Req7 + Req10: strip legacy arena + design-system/guideline dock items
+          if (Array.isArray(persisted.dockItems)) {
+            persisted.dockItems = persisted.dockItems.filter((d: any) =>
+              d?.action !== 'arena' &&
+              d?.action !== 'design-system' &&
+              !/design.?system|guideline/i.test(`${d?.id ?? ''} ${d?.label ?? ''} ${d?.action ?? ''}`)
+            );
+          }
+          // Req7: drop persisted Arena windows
+          if (Array.isArray(persisted.windows)) {
+            persisted.windows = persisted.windows.filter((w: any) => w?.type !== 'arena');
+          }
+        }
+
+        // v14 → v15: remove Grid dock item and clear stale grid data so old
+        // sessions don't show orphaned grid containers. Window-to-window snap
+        // (calculateSnapGuides / SnapGuides) is the new implicit "grid".
+        if (version < 15 && persisted) {
+          persisted.grids = [];
+          if (Array.isArray(persisted.dockItems)) {
+            persisted.dockItems = persisted.dockItems.filter((d: any) => d?.action !== 'grid');
+          }
+          if (Array.isArray(persisted.windows)) {
+            persisted.windows = persisted.windows.map((w: any) => {
+              if (w && w.gridId) {
+                // Destructure to omit grid fields; prefixed with _ to satisfy no-unused-vars
+                const { gridId: _gridId, gridCellIndex: _gridCellIndex, gridColSpan: _gridColSpan, gridRowSpan: _gridRowSpan, ...rest } = w;
+                return rest;
+              }
+              return w;
+            });
+          }
+        }
+
+        // v15 → v16: inject new-step and new-flow dock actions for existing
+        // users who don't have them. Reuses the same ordered-insert pattern
+        // as the v3→v4 migration block above.
+        if (version < 16 && persisted && Array.isArray(persisted.dockItems)) {
+          type DockAction = NonNullable<DockItem['action']>;
+          const actionOrder = DEFAULT_DOCK_ITEMS
+            .map((item) => item.action)
+            .filter((action): action is DockAction => Boolean(action));
+          const persistedActions = new Set<DockAction>(
+            persisted.dockItems
+              .map((item: any) => item?.action)
+              .filter((action: unknown): action is DockAction => actionOrder.includes(action as DockAction))
+          );
+          const insertAction = (action: DockAction) => {
+            if (persistedActions.has(action)) return;
+            const defaultItem = DEFAULT_DOCK_ITEMS.find((item) => item.action === action);
+            if (!defaultItem) return;
+            const desiredIndex = actionOrder.indexOf(action);
+            const insertAt = persisted.dockItems.findIndex((item: any) => {
+              const itemAction = item?.action;
+              if (!actionOrder.includes(itemAction)) return false;
+              return actionOrder.indexOf(itemAction) > desiredIndex;
+            });
+            if (insertAt >= 0) persisted.dockItems.splice(insertAt, 0, { ...defaultItem });
+            else persisted.dockItems.push({ ...defaultItem });
+            persistedActions.add(action);
+          };
+          insertAction('new-step');
+          insertAction('new-flow');
+        }
+
+        // v16 → v17: rename the 'text-to-pipeline' HUD widget to 'text-to-flow'
+        if (version < 17 && persisted && Array.isArray(persisted.hudWidgets)) {
+          persisted.hudWidgets = persisted.hudWidgets.map((w: any) =>
+            w?.type === 'text-to-pipeline' ? { ...w, type: 'text-to-flow' } : w,
+          );
+        }
+
         return persisted ?? {};
+      },
+      merge: (persistedState, currentState) => {
+        const persisted = (persistedState ?? {}) as Partial<DesktopStore>;
+        const savedWidgets = Array.isArray(persisted.hudWidgets) ? persisted.hudWidgets : [];
+        // Reconcile HUD widgets against the canonical defaults: drop unknown/removed
+        // types and carry persisted visibility/position by type (aliasing the legacy
+        // 'text-to-pipeline' → 'text-to-flow'), so no invalid type can ever hydrate
+        // and crash the Desktop via WIDGET_META[type].
+        const hudWidgets = DEFAULT_HUD_WIDGETS.map((def) => {
+          const saved = savedWidgets.find((w) =>
+            w?.type === def.type || (def.type === 'text-to-flow' && (w?.type as string) === 'text-to-pipeline'),
+          );
+          return saved
+            ? { ...def, visible: saved.visible ?? def.visible, position: saved.position ?? def.position }
+            : def;
+        });
+        const merged = { ...currentState, ...persisted, hudWidgets };
+        // Re-seed the (un-persisted) z-index counter above the highest persisted z
+        // so newly-focused/created windows always stack on top across sessions.
+        const persistedZ = [
+          ...merged.windows.map((w) => w.zIndex ?? 0),
+          ...merged.attachables.map((a) => a.zIndex ?? 0),
+          ...merged.grids.map((g) => g.zIndex ?? 0),
+        ];
+        merged.nextZIndex = Math.max(merged.nextZIndex, ...persistedZ, 0) + 1;
+        return merged;
       },
     }
   )
 );
+
+// ─── Step mental attachment selector ─────────────────────────────────────────
+//
+// Returns the ids of mental nodes (type: 'mental') directly connected to a given
+// step node via any mentalEdge (either direction: mental→step or step→mental).
+//
+// This is the read-side of the "attach mental map to step via xyflow edge" model
+// introduced in Req6 Phase 3b. The write-side is the existing onConnect handler
+// in MentalGraphCanvas, which calls addMentalEdge for all cross-type connections.
+//
+// Separate from the chat-window mentalAttachments matrix (attachMentalToWindow /
+// DesktopWindow.mentalAttachments), which remains the send-time injection path
+// for attaching context to chat messages.
+//
+export function getStepMentalAttachments(stepId: string): string[] {
+  const { mentalNodes, mentalEdges } = useDesktopStore.getState();
+  const mentalIdSet = new Set(
+    mentalNodes.filter((n) => n.type === 'mental').map((n) => n.id),
+  );
+  return mentalEdges
+    .filter(
+      (e) =>
+        (e.sourceId === stepId && mentalIdSet.has(e.targetId)) ||
+        (e.targetId === stepId && mentalIdSet.has(e.sourceId)),
+    )
+    .map((e) => (e.sourceId === stepId ? e.targetId : e.sourceId));
+}
 
 // ─── M2 selector — agent-linked surface (RENDERER-ONLY) ───────────────────────
 //

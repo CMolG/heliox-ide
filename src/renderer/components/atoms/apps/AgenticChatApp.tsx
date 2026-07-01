@@ -109,6 +109,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
   const effectiveCwd = win?.childProjectPath || projectPath;
 
   const [input, setInput] = useState('');
+  const [showFlows, setShowFlows] = useState(true);
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingThinking, setStreamingThinking] = useState('');
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
@@ -582,6 +583,34 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'row', height: '100%', background: theme.bg, position: 'relative' }}>
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, height: '100%' }}>
+      {/* Chat header bar — always visible, hosts the flows toggle at top-right */}
+      <div
+        data-testid="chat-header-bar"
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+          padding: '3px 8px', borderBottom: `1px solid ${theme.border}`,
+          background: theme.surface, flexShrink: 0, minHeight: 28,
+        }}
+      >
+        <button
+          type="button"
+          data-testid="chat-flows-toggle"
+          aria-label="Toggle flows"
+          aria-pressed={showFlows}
+          onClick={() => setShowFlows(v => !v)}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 24, height: 24, borderRadius: 6,
+            border: `1px solid ${showFlows ? accentBorder : 'transparent'}`,
+            background: showFlows ? accentBg : 'transparent',
+            color: showFlows ? accent : theme.textDim,
+            cursor: 'pointer', padding: 0,
+            transition: 'all 140ms ease',
+          }}
+        >
+          <LucideIcon name="Route" size={13} />
+        </button>
+      </div>
       {/* Mental attachment chips — visible whenever this chat has subgraphs attached */}
       {(win?.mentalAttachments?.length ?? 0) > 0 && (
         <div
@@ -960,7 +989,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
         </div>
       </div>
     </div>
-      <FlowQuickRail windowId={windowId} accent={roleAccent ?? undefined} />
+      {showFlows && <FlowQuickRail windowId={windowId} accent={roleAccent ?? undefined} />}
     </div>
   );
 }

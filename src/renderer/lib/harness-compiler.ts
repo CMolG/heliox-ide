@@ -24,6 +24,21 @@ type UnknownRecord = Record<string, unknown>;
 export interface CompileFlowOptions {
   flowId?: string;
   name?: string;
+  /**
+   * Force this step id to be treated as the compiled flow's root, bypassing the
+   * zero-in-degree root inference below. Used by scoped (single-step / downstream)
+   * compiles where the step's real canvas predecessors are intentionally excluded.
+   * Must be a member of the compiled step set (either `includeIds`, or all Step
+   * nodes on the canvas when `includeIds` is omitted) or compilation throws.
+   */
+  rootStepId?: string;
+  /**
+   * Restrict compilation to this subset of Step node ids. Step-to-step edges are
+   * only honored when BOTH endpoints are included, so prev/next lists come out
+   * pre-trimmed to the included set. Omit to compile every Step node on the
+   * canvas (existing whole-flow behavior).
+   */
+  includeIds?: Set<string>;
 }
 
 export class HarnessCompilerError extends Error {
@@ -247,7 +262,10 @@ export function compileFlowFromCanvas(
   edges: MentalGraphEdge[],
   options: CompileFlowOptions = {},
 ): AgenticFlow {
-  const stepNodes = nodes.filter(isStepGraphNode);
+  const allStepNodes = nodes.filter(isStepGraphNode);
+  const stepNodes = options.includeIds
+    ? allStepNodes.filter((step) => options.includeIds!.has(step.id))
+    : allStepNodes;
   if (stepNodes.length === 0) {
     throw new HarnessCompilerError('Cannot compile canvas without Step nodes.');
   }
@@ -266,15 +284,23 @@ export function compileFlowFromCanvas(
 
   assertAcyclic(stepIds, nextByStepId);
 
-  const rootStepIds = stepIds.filter((stepId) => (prevByStepId.get(stepId) ?? []).length === 0);
-  if (rootStepIds.length === 0) {
-    throw new HarnessCompilerError('Cannot compile flow without a root Step node.');
-  }
-  if (rootStepIds.length > 1) {
-    throw new HarnessCompilerError(`Cannot compile flow with multiple root Step nodes: ${rootStepIds.join(', ')}`);
+  let rootStepId: string;
+  if (options.rootStepId) {
+    if (!stepById.has(options.rootStepId)) {
+      throw new HarnessCompilerError(`Cannot compile flow: root step "${options.rootStepId}" is not part of the included step set.`);
+    }
+    rootStepId = options.rootStepId;
+  } else {
+    const rootStepIds = stepIds.filter((stepId) => (prevByStepId.get(stepId) ?? []).length === 0);
+    if (rootStepIds.length === 0) {
+      throw new HarnessCompilerError('Cannot compile flow without a root Step node.');
+    }
+    if (rootStepIds.length > 1) {
+      throw new HarnessCompilerError(`Cannot compile flow with multiple root Step nodes: ${rootStepIds.join(', ')}`);
+    }
+    rootStepId = rootStepIds[0];
   }
 
-  const rootStepId = rootStepIds[0];
   const rootStep = stepById.get(rootStepId)!;
   const flowName = options.name ?? rootStep.data.title ?? rootStep.text ?? 'Agentic Flow';
   const stepsRecord: Record<string, AgenticStep> = {};
@@ -300,4 +326,45 @@ export function compileFlowFromCanvas(
     rootStepId,
     stepsRecord,
   };
+}
+
+/**
+ * Walks step-to-step edges forward, transitively, from `rootStepId` and returns
+ * `rootStepId` plus every Step node reachable via outgoing `mentalEdges` — i.e.
+ * the downstream subgraph a "run from here" action should execute.
+ *
+ * Non-step neighbors (mental-context nodes, frames) are ignored — only edges
+ * whose source AND target are Step nodes are followed. Already-included ids
+ * are never re-queued, which doubles as the cycle guard: a cycle simply stops
+ * expanding once every node on it has been visited once.
+ *
+ * Returns an empty Set if `rootStepId` does not name a Step node on the canvas,
+ * so callers can distinguish "unknown step" from "step with no descendants"
+ * (the latter still returns a singleton Set containing just `rootStepId`).
+ */
+export function collectDownstreamStepIds(
+  rootStepId: string,
+  nodes: CanvasGraphNode[],
+  edges: MentalGraphEdge[],
+): Set<string> {
+  const stepIds = new Set(nodes.filter(isStepGraphNode).map((node) => node.id));
+  if (!stepIds.has(rootStepId)) return new Set();
+
+  const nextByStepId = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (!stepIds.has(edge.sourceId) || !stepIds.has(edge.targetId)) continue;
+    appendUnique(nextByStepId, edge.sourceId, edge.targetId);
+  }
+
+  const included = new Set<string>([rootStepId]);
+  const queue: string[] = [rootStepId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const nextStepId of nextByStepId.get(current) ?? []) {
+      if (included.has(nextStepId)) continue; // visited already — also the cycle guard
+      included.add(nextStepId);
+      queue.push(nextStepId);
+    }
+  }
+  return included;
 }

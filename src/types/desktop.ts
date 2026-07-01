@@ -158,7 +158,9 @@ export interface DockItem {
     | 'mental-ramification-tool'
     | 'prompt-dev-zone'
     | 'grid'
-    | 'arena';
+    | 'arena'
+    | 'new-step'
+    | 'new-flow';
   /** For plugin items — the plugin ID to spawn */
   pluginId?: string;
 }

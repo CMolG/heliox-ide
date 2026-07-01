@@ -52,7 +52,7 @@ export function FlowEdge(props: EdgeProps) {
   });
 
   const strokeColor = hovered || selected
-    ? '#A78BFA'
+    ? '#7FC1FF'
     : flowing
       ? `color-mix(in srgb, ${edgeColor} 100%, white 20%)`
       : edgeColor;

@@ -265,12 +265,12 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
 
     const onUp = () => {
       cancelAnimationFrame(rafId);
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
     };
 
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   }, [win, resizeWindowInGrid]);
 
   // ─── Drag/Resize handlers ──────────────────────────────────
@@ -431,8 +431,8 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
       // ── 2. Synchronous cleanup ──
       inter.type = null;
       lastDragPos = null;
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('pointermove', onMouseMove);
+      window.removeEventListener('pointerup', onMouseUp);
 
       // ── 3. Deferred state reset ──
       // Wait one frame so the browser has PAINTED the committed position
@@ -446,8 +446,8 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
       });
     };
 
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('pointermove', onMouseMove);
+    window.addEventListener('pointerup', onMouseUp);
   }, [win, windowId, focusWindow, moveWindow, moveSelectedWindows, resizeWindow, calculateSnapGuides, setActiveSnapGuides, selectedWindowIds, removeWindow]);
 
   const onInteractionStart = useCallback((e: React.MouseEvent, type: InteractionState['type']) => {
@@ -481,11 +481,11 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
       startInteraction('drag', arm.startX, arm.startY, false);
     };
     const onUp = () => { dragArmRef.current = null; };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
     };
   }, [startInteraction]);
 
@@ -539,7 +539,7 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
   const windowNode = (
     <div
       ref={shellRef}
-      className="desktop-window-shell"
+      className="desktop-window-shell nopan nodrag nowheel"
       data-state={win.state}
       data-interacting={interacting}
       data-has-role={!!roleColor}
@@ -607,10 +607,32 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
         data-drop-active={dropActive}
         data-has-role={!!roleColor}
         style={roleColor ? { '--role-color': roleColor } as React.CSSProperties : undefined}
-        onMouseDown={handleSurfaceMouseDown}
-        onDoubleClick={handleSurfaceDoubleClick}
+        onMouseDownCapture={() => win && focusWindow(windowId)}
         onContextMenu={handleContextMenu}
       >
+        {/* Slim titlebar drag/maximize zone — only this element arms drag and double-click maximize */}
+        <div
+          className="window-titlebar"
+          data-testid="window-titlebar"
+          onPointerDownCapture={(e) => { try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* not all envs */ } }}
+          onMouseDown={handleSurfaceMouseDown}
+          onDoubleClick={handleSurfaceDoubleClick}
+        >
+          {projectName && (
+            <span
+              data-testid="window-project-name"
+              style={{
+                fontSize: 10, fontWeight: 500, color: theme.textGhost,
+                fontFamily: theme.fontMono, letterSpacing: '0.03em',
+                maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap', pointerEvents: 'none',
+              }}
+            >
+              {projectName}
+            </span>
+          )}
+        </div>
+
         {/* Pulse glow overlay for running agents */}
         {isAgentRunning && <span className="agent-glow" />}
 
@@ -678,9 +700,9 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
                   if (s.draggingWindowId === windowId) {
                     s.setDraggingWindowId(null);
                   }
-                  window.removeEventListener('mouseup', onUp);
+                  window.removeEventListener('pointerup', onUp);
                 };
-                window.addEventListener('mouseup', onUp);
+                window.addEventListener('pointerup', onUp);
               }}
               onPointerDown={(e) => e.stopPropagation()}
             >
@@ -688,20 +710,6 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
             </button>
           )}
         </div>
-        {projectName && (
-          <span
-            data-testid="window-project-name"
-            style={{
-              position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
-              fontSize: 10, fontWeight: 500, color: theme.textGhost,
-              fontFamily: theme.fontMono, letterSpacing: '0.03em',
-              maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 1,
-            }}
-          >
-            {projectName}
-          </span>
-        )}
 
         {/* Content area */}
         <div className="window-content">

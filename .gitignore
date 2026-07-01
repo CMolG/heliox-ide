@@ -34,3 +34,6 @@ __pycache__/
 # Agent planning artifacts (not product source)
 docs/superpowers/
 /docs/competitive-analysis/
+
+# Atoms execution history — local dogfooding log (also matched by *.log above; pinned for intent)
+atoms-history.log

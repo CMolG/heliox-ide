@@ -11,7 +11,7 @@
  * - Does NOT own: node-level UI (delegated to MentalNode), edge styling (delegated to MentalEdge),
  *   or store persistence (delegated to desktop-store)
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -20,6 +20,7 @@ import {
   ConnectionMode,
   Position,
   MarkerType,
+  ViewportPortal,
 } from '@xyflow/react';
 import type {
   Node,
@@ -33,17 +34,12 @@ import type {
 import '@xyflow/react/dist/style.css';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
+import { getConnectedComponent } from '../../../logic/mental-graph';
 import { MentalNode } from './MentalNode';
 import { StepNode } from './StepNode';
 import { MentalEdge } from './MentalEdge';
 import { FlowEdge } from '../nodes/FlowEdge';
-import { MentalAttachActionBubble } from './MentalAttachActionBubble';
 import { FrameNode } from '../nodes/FrameNode';
-import { MetaChat } from '../harness/MetaChat';
-import { ScorecardPanel } from '../harness/ScorecardPanel';
-import { ArenaButton } from '../harness/ArenaButton';
-import { TimeTravelPanel } from './TimeTravelPanel';
-import { LucideIcon } from '../LucideIcon';
 import type { CanvasGraphNode, FrameGraphNode, StepGraphNode } from '@/types/desktop';
 
 // ─── Custom node/edge type registrations ─────────────────────────
@@ -88,7 +84,11 @@ function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
 // Also owns the container div so it can access useReactFlow() for
 // the pane double-click → new node handler.
 
-function MentalGraphCanvasInner() {
+interface MentalGraphCanvasInnerProps {
+  viewportChildren?: React.ReactNode;
+}
+
+function MentalGraphCanvasInner({ viewportChildren }: MentalGraphCanvasInnerProps) {
   const mentalNodes = useDesktopStore((s) => s.mentalNodes);
   const mentalEdges = useDesktopStore((s) => s.mentalEdges);
   const mentalTool = useDesktopStore((s) => s.mentalTool);
@@ -99,9 +99,12 @@ function MentalGraphCanvasInner() {
   const addMentalEdge = useDesktopStore((s) => s.addMentalEdge);
   const createRamificationFromDrop = useDesktopStore((s) => s.createRamificationFromDrop);
   const setMentalEditingNodeId = useDesktopStore((s) => s.setMentalEditingNodeId);
+  const selectedMentalNodeIds = useDesktopStore((s) => s.selectedMentalNodeIds);
   const setSelectedMentalNodeIds = useDesktopStore((s) => s.setSelectedMentalNodeIds);
   const setCanvasPan = useDesktopStore((s) => s.setCanvasPan);
   const setCanvasZoom = useDesktopStore((s) => s.setCanvasZoom);
+  const mentalZ = useDesktopStore((s) => s.mentalZ);
+  const bringMentalToFront = useDesktopStore((s) => s.bringMentalToFront);
 
   // ─── Fork-indicator state (READ ONLY from harness store) ────────
   // When a fork exists, `lastForkRunId` is set and `highlightedStepId`
@@ -109,17 +112,6 @@ function MentalGraphCanvasInner() {
   // that was active when the user clicked "Fork from here").
   const lastForkRunId = useHarnessStore((s) => s.checkpointState.lastForkRunId);
   const forkOriginStepId = useHarnessStore((s) => s.checkpointState.highlightedStepId);
-
-  // ─── Harness panel visibility toggles ───────────────────────────
-  // Three panels are mounted on demand; visibility driven by local state.
-  const [showScorecard, setShowScorecard] = useState(false);
-  const [showArena, setShowArena] = useState(false);
-  const [showTimeTravel, setShowTimeTravel] = useState(false);
-
-  // activeFlow + lastForkRunId are sourced from harness-store to wire TimeTravelPanel.
-  // `runId` is derived: use the forkRunId if a fork was created, else the activeFlow id.
-  const activeFlow = useHarnessStore((s) => s.activeFlow);
-  const timeTravelRunId: string | null = lastForkRunId ?? activeFlow?.id ?? null;
 
   const { screenToFlowPosition } = useReactFlow();
   const connectingSourceRef = useRef<string | null>(null);
@@ -155,7 +147,13 @@ function MentalGraphCanvasInner() {
 
   const rfNodes: Node[] = useMemo(() =>
     mentalNodes.map((n) => {
+      // Controlled selection: React Flow derives selection from the `nodes` prop,
+      // so without an explicit `selected` field it deselects on every rebuild —
+      // which made the selection-order z-elevation flicker off immediately.
+      const isSelected = selectedMentalNodeIds.includes(n.id);
+
       if (isFrameGraphNode(n)) {
+        // Frames render below their step children; explicit mentalZ or 0 baseline.
         return {
           id: n.id,
           type: 'frame',
@@ -165,7 +163,8 @@ function MentalGraphCanvasInner() {
           height: n.height,
           style: { width: n.width, height: n.height },
           dragHandle: '.pipeline-frame-node',
-          zIndex: 0,
+          zIndex: mentalZ[n.id] ?? 0,
+          selected: isSelected,
           selectable: true,
         };
       }
@@ -189,7 +188,8 @@ function MentalGraphCanvasInner() {
           style: { width: n.width, height: n.height },
           dragHandle: '.step-node-drag-handle',
           handles: buildHandles(n.width, n.height, 'square'),
-          zIndex: 2,
+          zIndex: mentalZ[n.id] ?? 2,
+          selected: isSelected,
         };
       }
 
@@ -210,9 +210,11 @@ function MentalGraphCanvasInner() {
         style: { width: n.width, height: n.height },
         dragHandle: '.mental-card',
         handles: buildHandles(n.width, n.height, shape),
+        zIndex: mentalZ[n.id] ?? 2,
+        selected: isSelected,
       };
     }),
-    [mentalNodes, lastForkRunId, forkOriginStepId]
+    [mentalNodes, lastForkRunId, forkOriginStepId, mentalZ, selectedMentalNodeIds]
   );
 
   // ─── Map store edges → React Flow edges ──────────────────────
@@ -224,11 +226,21 @@ function MentalGraphCanvasInner() {
 
     return mentalEdges.map((e) => {
       const isFlowEdge = stepIds.has(e.sourceId) && stepIds.has(e.targetId);
+      // Mixed edge: one end is a step node, the other is a mental node.
+      // Rendered as a dashed MentalEdge to visually read as an "attachment" link.
+      const isMixedEdge = (stepIds.has(e.sourceId) && !stepIds.has(e.targetId)) ||
+                          (!stepIds.has(e.sourceId) && stepIds.has(e.targetId));
       const edgeColor = e.color ?? '#4DA8FF';
+      // Edges ride with their connected component: take the higher z of their two
+      // endpoints so the whole map (nodes + links) elevates as a single unit when
+      // any part of it is brought to front. Without this the cards rise above a
+      // window but the connecting lines stay behind it.
+      const edgeZ = Math.max(mentalZ[e.sourceId] ?? 1, mentalZ[e.targetId] ?? 1);
 
       if (isFlowEdge) {
         return {
           id: e.id,
+          zIndex: edgeZ,
           source: e.sourceId,
           target: e.targetId,
           sourceHandle: e.sourceHandle || 'right',
@@ -249,6 +261,7 @@ function MentalGraphCanvasInner() {
 
       return {
         id: e.id,
+        zIndex: edgeZ,
         source: e.sourceId,
         target: e.targetId,
         sourceHandle: e.sourceHandle || 'bottom',
@@ -256,11 +269,12 @@ function MentalGraphCanvasInner() {
         type: 'mental',
         data: {
           edgeColor: e.color,
-          edgeType: e.type,
+          edgeType: isMixedEdge ? 'attachment' : e.type,
+          isAttachment: isMixedEdge,
         },
       };
     });
-  }, [mentalEdges, mentalNodes]);
+  }, [mentalEdges, mentalNodes, mentalZ]);
 
   // ─── Handle node position/dimension changes ─────────────────
 
@@ -346,7 +360,7 @@ function MentalGraphCanvasInner() {
         position: 'absolute',
         inset: 0,
         pointerEvents: 'none',
-        zIndex: 1,
+        zIndex: 2,
       }}
     >
       <ReactFlow
@@ -359,6 +373,7 @@ function MentalGraphCanvasInner() {
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
+        onEdgeClick={(_, edge) => bringMentalToFront(edge.source)}
         onSelectionChange={({ nodes }) => setSelectedMentalNodeIds(nodes.map(n => n.id))}
         selectionOnDrag
         multiSelectionKeyCode="Shift"
@@ -382,167 +397,12 @@ function MentalGraphCanvasInner() {
         elementsSelectable={true}
         viewport={{ x: canvasPan.x, y: canvasPan.y, zoom: canvasZoom }}
         onViewportChange={onViewportChange}
+        elevateNodesOnSelect={false}
+        elevateEdgesOnSelect={false}
       >
         {showGraphBackdrop && <Background color="rgba(255,255,255,0.03)" gap={24} />}
+        {viewportChildren && <ViewportPortal>{viewportChildren}</ViewportPortal>}
       </ReactFlow>
-      <MentalAttachActionBubble />
-      <MetaChat />
-
-      {/* ── Harness toolbar: toggles for Scorecard / Arena / TimeTravel ── */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 76,
-          left: 16,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-start',
-          gap: 8,
-          pointerEvents: 'auto',
-          zIndex: 190,
-        }}
-        aria-label="Harness panels toolbar"
-      >
-        {/* Panel containers — rendered above the toolbar row */}
-        {showScorecard && (
-          <div
-            data-testid="scorecard-panel"
-            style={{
-              background: 'var(--hx-surface, #1a1a2e)',
-              border: '1px solid var(--hx-border, rgba(255,255,255,0.08))',
-              borderRadius: 10,
-              overflow: 'auto',
-              maxHeight: 560,
-              width: 360,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
-            }}
-          >
-            <ScorecardPanel />
-          </div>
-        )}
-
-        {showArena && (
-          <div
-            data-testid="arena-panel"
-            style={{
-              background: 'var(--hx-surface, #1a1a2e)',
-              border: '1px solid var(--hx-border, rgba(255,255,255,0.08))',
-              borderRadius: 10,
-              overflow: 'auto',
-              maxHeight: 560,
-              width: 400,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
-            }}
-          >
-            <ArenaButton />
-          </div>
-        )}
-
-        {showTimeTravel && (
-          <TimeTravelPanel
-            runId={timeTravelRunId}
-            flow={activeFlow}
-            onClose={() => setShowTimeTravel(false)}
-          />
-        )}
-
-        {/* Toggle button row */}
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'row',
-            gap: 6,
-            background: 'var(--hx-surface, #1a1a2e)',
-            border: '1px solid var(--hx-border, rgba(255,255,255,0.10))',
-            borderRadius: 8,
-            padding: '4px 6px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
-          }}
-          role="toolbar"
-          aria-label="Harness panel toggles"
-        >
-          <button
-            type="button"
-            data-testid="harness-scorecard-toggle"
-            aria-label="Toggle Scorecard panel"
-            aria-pressed={showScorecard}
-            onClick={() => setShowScorecard((v) => !v)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 30,
-              height: 30,
-              borderRadius: 6,
-              border: 'none',
-              cursor: 'pointer',
-              background: showScorecard
-                ? 'var(--hx-accent, rgba(77,168,255,0.18))'
-                : 'transparent',
-              color: showScorecard
-                ? 'var(--hx-blue, #4DA8FF)'
-                : 'var(--hx-muted, #6b7280)',
-              transition: 'background 0.15s, color 0.15s',
-            }}
-          >
-            <LucideIcon name="Gauge" size={15} />
-          </button>
-
-          <button
-            type="button"
-            data-testid="harness-arena-toggle"
-            aria-label="Toggle Arena panel"
-            aria-pressed={showArena}
-            onClick={() => setShowArena((v) => !v)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 30,
-              height: 30,
-              borderRadius: 6,
-              border: 'none',
-              cursor: 'pointer',
-              background: showArena
-                ? 'var(--hx-accent, rgba(77,168,255,0.18))'
-                : 'transparent',
-              color: showArena
-                ? 'var(--hx-blue, #4DA8FF)'
-                : 'var(--hx-muted, #6b7280)',
-              transition: 'background 0.15s, color 0.15s',
-            }}
-          >
-            <LucideIcon name="GitCompareArrows" size={15} />
-          </button>
-
-          <button
-            type="button"
-            data-testid="harness-timetravel-toggle"
-            aria-label="Toggle Time Travel panel"
-            aria-pressed={showTimeTravel}
-            onClick={() => setShowTimeTravel((v) => !v)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 30,
-              height: 30,
-              borderRadius: 6,
-              border: 'none',
-              cursor: 'pointer',
-              background: showTimeTravel
-                ? 'var(--hx-accent, rgba(77,168,255,0.18))'
-                : 'transparent',
-              color: showTimeTravel
-                ? 'var(--hx-blue, #4DA8FF)'
-                : 'var(--hx-muted, #6b7280)',
-              transition: 'background 0.15s, color 0.15s',
-            }}
-          >
-            <LucideIcon name="History" size={15} />
-          </button>
-        </div>
-      </div>
     </div>
     </>
   );
@@ -550,10 +410,14 @@ function MentalGraphCanvasInner() {
 
 // ─── Public export (wraps in provider) ───────────────────────────
 
-export function MentalGraphCanvas() {
+interface MentalGraphCanvasProps {
+  viewportChildren?: React.ReactNode;
+}
+
+export function MentalGraphCanvas({ viewportChildren }: MentalGraphCanvasProps = {}) {
   return (
     <ReactFlowProvider>
-      <MentalGraphCanvasInner />
+      <MentalGraphCanvasInner viewportChildren={viewportChildren} />
     </ReactFlowProvider>
   );
 }

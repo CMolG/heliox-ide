@@ -6,7 +6,7 @@
  * - Mental edge right-click context menu (Change color, Delete edge)
  * - NodeTree right-click context menu for windows (Rename, Locate, Minimize, Delete)
  * - NodeTree right-click context menu for mental cards (Rename, Locate, Delete)
- * - NodeTree right-click context menu for grids (Rename, Locate, Delete)
+ * - NodeTree right-click context menu for grids: REMOVED (Grid feature removed)
  * - Mental card edges render without arrowheads (plain lines)
  */
 import { test, expect, type Page, type ElectronApplication } from '@playwright/test';
@@ -79,7 +79,6 @@ async function resetState() {
     for (const e of [...(s.mentalEdges ?? [])]) s.removeMentalEdge(e.id);
     for (const n of [...s.mentalNodes]) s.removeMentalNode(n.id);
     for (const w of [...s.windows]) s.removeWindow(w.id);
-    for (const g of [...s.grids]) s.removeGrid(g.id);
     s.setMentalMode('square');
     s.setMentalTool('select');
     s.setMentalEditingNodeId(null);
@@ -431,95 +430,5 @@ test.describe('NodeTree mental card context menu', () => {
   });
 });
 
-// ─── NodeTree Context Menu — Grids ────────────────────────────────
-
-test.describe('NodeTree grid context menu', () => {
-  test('right-clicking a grid in NodeTree shows context menu with rename, locate, delete', async () => {
-    const gridId = await page.evaluate(() => {
-      return (window as any).__DESKTOP_STORE__?.getState()?.addGrid({
-        position: { x: 100, y: 100 },
-        size: { width: 640, height: 480 },
-        columns: 2,
-        rows: 2,
-      });
-    });
-    await page.waitForTimeout(300);
-
-    const navItem = page.locator(`[data-testid="nav-grid-${gridId}"]`);
-    if (await navItem.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await navItem.click({ button: 'right' });
-      await page.waitForTimeout(300);
-
-      const ctxMenu = page.locator('[data-testid="nodetree-context-menu"]');
-      await expect(ctxMenu).toBeVisible({ timeout: 3_000 });
-
-      // Grids should have Rename, Locate, Delete but NOT Minimize
-      await expect(page.locator('[data-testid="nodetree-ctx-rename"]')).toBeVisible();
-      await expect(page.locator('[data-testid="nodetree-ctx-locate"]')).toBeVisible();
-      await expect(page.locator('[data-testid="nodetree-ctx-delete"]')).toBeVisible();
-      await expect(page.locator('[data-testid="nodetree-ctx-delete"]')).toHaveText('Delete');
-      await expect(page.locator('[data-testid="nodetree-ctx-minimize"]')).not.toBeVisible();
-    }
-  });
-
-  test('rename updates the grid title in the store', async () => {
-    const gridId = await page.evaluate(() => {
-      return (window as any).__DESKTOP_STORE__?.getState()?.addGrid({
-        position: { x: 100, y: 100 },
-        size: { width: 640, height: 480 },
-        columns: 2,
-        rows: 2,
-      });
-    });
-    await page.waitForTimeout(300);
-
-    const navItem = page.locator(`[data-testid="nav-grid-${gridId}"]`);
-    if (await navItem.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await navItem.click({ button: 'right' });
-      await page.waitForTimeout(300);
-
-      await page.locator('[data-testid="nodetree-ctx-rename"]').click();
-      await page.waitForTimeout(300);
-
-      const renameInput = page.locator(`[data-testid="nav-grid-rename-input-${gridId}"]`);
-      await expect(renameInput).toBeVisible({ timeout: 3_000 });
-
-      await renameInput.fill('My Custom Grid');
-      await renameInput.press('Enter');
-      await page.waitForTimeout(200);
-
-      const newTitle = await page.evaluate(
-        (id: string) => (window as any).__DESKTOP_STORE__?.getState()?.grids?.find((g: any) => g.id === id)?.title,
-        gridId,
-      );
-      expect(newTitle).toBe('My Custom Grid');
-    }
-  });
-
-  test('delete removes the grid from the store', async () => {
-    const gridId = await page.evaluate(() => {
-      return (window as any).__DESKTOP_STORE__?.getState()?.addGrid({
-        position: { x: 100, y: 100 },
-        size: { width: 640, height: 480 },
-        columns: 2,
-        rows: 2,
-      });
-    });
-    await page.waitForTimeout(300);
-
-    const navItem = page.locator(`[data-testid="nav-grid-${gridId}"]`);
-    if (await navItem.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await navItem.click({ button: 'right' });
-      await page.waitForTimeout(300);
-
-      await page.locator('[data-testid="nodetree-ctx-delete"]').click();
-      await page.waitForTimeout(300);
-
-      const found = await page.evaluate(
-        (id: string) => !!(window as any).__DESKTOP_STORE__?.getState()?.grids?.find((g: any) => g.id === id),
-        gridId,
-      );
-      expect(found).toBe(false);
-    }
-  });
-});
+// NOTE: NodeTree grid context menu tests REMOVED — the Grid feature has been
+// removed entirely (no grid dock button, no grid containers, no grid context-menu).

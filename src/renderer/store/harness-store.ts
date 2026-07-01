@@ -17,7 +17,7 @@ import type {
   ArenaProgressEvent,
   ArenaResult,
 } from '@/types/ipc-events';
-import { compileFlowFromCanvas } from '../lib/harness-compiler';
+import { collectDownstreamStepIds, compileFlowFromCanvas } from '../lib/harness-compiler';
 import { useDesktopStore } from './desktop-store';
 
 const MAX_EXECUTION_LOGS = 500;
@@ -131,6 +131,20 @@ interface HarnessStore {
   resetCheckpoints: () => void;
   compileCurrentCanvas: () => AgenticFlow | null;
   startExecution: () => Promise<void>;
+  /**
+   * Compile and dispatch a single step in isolation — its `prevStepIds`/`nextStepIds`
+   * come out empty regardless of the step's real neighbors on the canvas. Sets the
+   * scoped flow as `activeFlow` before dispatching. Unknown `stepId` fails softly:
+   * `executionStatus` becomes 'error' with a log entry, `startHarness` is never called.
+   */
+  runStep: (stepId: string) => Promise<void>;
+  /**
+   * Compile and dispatch `stepId` plus every step transitively reachable via
+   * outgoing `mentalEdges` (the downstream subgraph), with prev/next lists
+   * trimmed to that included set. Sets the scoped flow as `activeFlow` before
+   * dispatching. Unknown `stepId` fails softly, same as `runStep`.
+   */
+  runFromStep: (stepId: string) => Promise<void>;
   stopExecution: () => void;
   setStepStatus: (stepId: string | null, status?: AgenticExecutionStatus) => void;
   handleHarnessEvent: (event: HarnessEventPayload) => void;
@@ -160,6 +174,20 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Strip the leading ISO-timestamp token `formatLog` prepends to every entry,
+ * leaving just the human-readable message from the latest `executionLogs`
+ * line (or `null` if there are no logs yet). Exported so consumers outside
+ * this store — namely App.tsx's error-toast wiring — can render a clean
+ * message without re-deriving, or hardcoding a regex against, this store's
+ * private log format themselves.
+ */
+export function lastLogMessage(logs: string[]): string | null {
+  const entry = logs.at(-1);
+  if (!entry) return null;
+  return entry.replace(/^\S+\s+/, '');
+}
+
 const STEP_THINKING_MAX_CHARS = 8000;
 
 const INITIAL_SCORECARD_STATE: ScorecardState = {
@@ -170,7 +198,54 @@ const INITIAL_SCORECARD_STATE: ScorecardState = {
   scorecardProgressUnsubscribe: null,
 };
 
-export const useHarnessStore = create<HarnessStore>((set, get) => ({
+export const useHarnessStore = create<HarnessStore>((set, get) => {
+  /**
+   * Shared dispatch path for an already-scoped AgenticFlow: subscribes to harness
+   * events, marks the flow's root step 'running', and invokes the harness IPC
+   * bridge. `startExecution` (whole canvas), `runStep`, and `runFromStep` (step-
+   * scoped flows) all funnel through here so event-wiring and error handling stay
+   * identical no matter how the dispatched flow was scoped.
+   */
+  const executeFlow = async (flow: AgenticFlow): Promise<void> => {
+    const api = window.helioxAPI;
+    if (!api?.startHarness) {
+      set((state) => ({
+        executionStatus: 'error',
+        currentStepId: null,
+        executionLogs: appendLog(state.executionLogs, 'Cannot start execution because the harness IPC bridge is unavailable.'),
+      }));
+      return;
+    }
+
+    get().subscribeToHarnessEvents();
+
+    set((state) => ({
+      executionStatus: 'running',
+      currentStepId: flow.rootStepId,
+      stepStatuses: {
+        ...state.stepStatuses,
+        [flow.rootStepId]: 'running',
+      },
+      executionLogs: appendLog(state.executionLogs, `Execution cursor started at "${flow.rootStepId}".`),
+    }));
+
+    try {
+      const result = await api.startHarness(flow);
+      if (!result.success) {
+        set((state) => ({
+          executionStatus: 'error',
+          executionLogs: appendLog(state.executionLogs, `Harness failed to start: ${result.error ?? 'Unknown error'}`),
+        }));
+      }
+    } catch (error) {
+      set((state) => ({
+        executionStatus: 'error',
+        executionLogs: appendLog(state.executionLogs, `Harness IPC start failed: ${getErrorMessage(error)}`),
+      }));
+    }
+  };
+
+  return {
   activeFlow: null,
   executionStatus: 'idle',
   currentStepId: null,
@@ -223,42 +298,77 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
       return;
     }
 
-    const api = window.helioxAPI;
-    if (!api?.startHarness) {
+    await executeFlow(activeFlow);
+  },
+
+  runStep: async (stepId) => {
+    const { mentalNodes, mentalEdges } = useDesktopStore.getState();
+
+    let flow: AgenticFlow;
+    try {
+      // A singleton include-set means no step-to-step edge can have both endpoints
+      // inside it, so prev/next come back empty regardless of the step's real
+      // canvas neighbors — exactly the isolated one-step flow this action needs.
+      flow = compileFlowFromCanvas(mentalNodes, mentalEdges, {
+        rootStepId: stepId,
+        includeIds: new Set([stepId]),
+      });
+    } catch (error) {
+      // Covers the unknown-stepId edge case too: an id that names no Step node
+      // yields an empty compiled step set, which compileFlowFromCanvas rejects.
       set((state) => ({
         executionStatus: 'error',
-        currentStepId: null,
-        executionLogs: appendLog(state.executionLogs, 'Cannot start execution because the harness IPC bridge is unavailable.'),
+        executionLogs: appendLog(state.executionLogs, `Cannot run step "${stepId}": ${getErrorMessage(error)}`),
       }));
       return;
     }
 
-    get().subscribeToHarnessEvents();
-
     set((state) => ({
-      executionStatus: 'running',
-      currentStepId: activeFlow.rootStepId,
-      stepStatuses: {
-        ...state.stepStatuses,
-        [activeFlow.rootStepId]: 'running',
-      },
-      executionLogs: appendLog(state.executionLogs, `Execution cursor started at "${activeFlow.rootStepId}".`),
+      activeFlow: flow,
+      currentStepId: null,
+      stepStatuses: {},
+      modStatuses: {},
+      stepThinkings: {},
+      executionLogs: appendLog(state.executionLogs, `Compiled single-step run for "${stepId}".`),
     }));
 
+    await executeFlow(flow);
+  },
+
+  runFromStep: async (stepId) => {
+    const { mentalNodes, mentalEdges } = useDesktopStore.getState();
+    // Unknown stepId -> collectDownstreamStepIds returns an empty Set (guarded
+    // against cycles internally), which likewise makes compileFlowFromCanvas
+    // reject with "no Step nodes" below — same graceful failure as runStep.
+    const includeIds = collectDownstreamStepIds(stepId, mentalNodes, mentalEdges);
+
+    let flow: AgenticFlow;
     try {
-      const result = await api.startHarness(activeFlow);
-      if (!result.success) {
-        set((state) => ({
-          executionStatus: 'error',
-          executionLogs: appendLog(state.executionLogs, `Harness failed to start: ${result.error ?? 'Unknown error'}`),
-        }));
-      }
+      flow = compileFlowFromCanvas(mentalNodes, mentalEdges, {
+        rootStepId: stepId,
+        includeIds,
+      });
     } catch (error) {
       set((state) => ({
         executionStatus: 'error',
-        executionLogs: appendLog(state.executionLogs, `Harness IPC start failed: ${getErrorMessage(error)}`),
+        executionLogs: appendLog(state.executionLogs, `Cannot run from step "${stepId}": ${getErrorMessage(error)}`),
       }));
+      return;
     }
+
+    set((state) => ({
+      activeFlow: flow,
+      currentStepId: null,
+      stepStatuses: {},
+      modStatuses: {},
+      stepThinkings: {},
+      executionLogs: appendLog(
+        state.executionLogs,
+        `Compiled downstream run from "${stepId}" with ${Object.keys(flow.stepsRecord).length} step(s).`,
+      ),
+    }));
+
+    await executeFlow(flow);
   },
 
   stopExecution: () => {
@@ -706,4 +816,5 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
       arena: { ...state.arena, deployChosenModelId: modelId },
     }));
   },
-}));
+  };
+});

@@ -12,10 +12,20 @@
  *
  * Execution is entirely delegated to executeAgenticFlow.  This module never
  * forks execution logic.
+ *
+ * Security:
+ *   - /run and /flow require `Authorization: Bearer <token>`; /health is open.
+ *     The token is caller-supplied (ServeFlowOptions.token) or, when omitted,
+ *     randomly generated at server-creation time and exposed on the returned
+ *     ServeFlowServer.token — /run can never be stood up unauthenticated.
+ *   - listen() binds 127.0.0.1 (loopback) by default. Binding wider (e.g.
+ *     0.0.0.0 to expose the flow on the network) requires explicitly passing
+ *     a `host` argument — it is never the default.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Server } from 'node:http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { importFlow, type HelioxFlowExport } from '../flow-export/heliox-flow';
 import { executeAgenticFlow, type ExecuteAgenticFlowOptions } from '../harness-engine/executor';
 import { harnessEventBus, HARNESS_EVENT_NAME } from '../harness-engine/event-bus';
@@ -36,6 +46,12 @@ export interface ServeFlowOptions {
   /** Injectable runStep; defaults to the real LLM runner when omitted. */
   runStep?: ExecuteAgenticFlowOptions['runStep'];
   modelId?: string;
+  /**
+   * Bearer token required on /run and /flow. If omitted or empty, a random
+   * token is generated at server-creation time (see ServeFlowServer.token) —
+   * there is no way to end up with /run left unauthenticated.
+   */
+  token?: string;
 }
 
 /**
@@ -64,8 +80,14 @@ export interface ServeFlowServer {
    * Trigger modules use this to mount webhook routes without owning the server.
    */
   registerRoute: RouteRegistrar;
-  /** Start listening on the given port (defaults to 7878). */
-  listen(port?: number): Promise<number>;
+  /** The effective bearer token (caller-supplied or generated) guarding /run and /flow. */
+  token: string;
+  /**
+   * Start listening on the given port (defaults to 7878) and host (defaults
+   * to '127.0.0.1' — loopback only). Pass an explicit host (e.g. '0.0.0.0')
+   * to deliberately expose the server beyond localhost.
+   */
+  listen(port?: number, host?: string): Promise<number>;
   /** Gracefully close the HTTP server. */
   close(): Promise<void>;
 }
@@ -103,6 +125,57 @@ function parseJsonBody(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+// ---------------------------------------------------------------------------
+// Auth helpers
+// ---------------------------------------------------------------------------
+
+/** Generate a cryptographically random bearer token (256 bits, hex-encoded). */
+function generateToken(): string {
+  return randomBytes(32).toString('hex');
+}
+
+/**
+ * Constant-time string comparison for secret tokens. `crypto.timingSafeEqual`
+ * throws when buffer lengths differ, so a length mismatch is treated as a
+ * definite non-match up front rather than allowed to throw — an attacker
+ * must not be able to distinguish "wrong length" from "wrong content" via a
+ * crash, and callers must never see this throw.
+ */
+function safeTokenEquals(provided: string, expected: string): boolean {
+  const providedBuf = Buffer.from(provided, 'utf-8');
+  const expectedBuf = Buffer.from(expected, 'utf-8');
+  if (providedBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(providedBuf, expectedBuf);
+}
+
+/**
+ * Extract the bearer token from an `Authorization: Bearer <token>` header.
+ * Returns null for: a missing header, a non-Bearer scheme, "Bearer" with no
+ * value, or a value that is empty/whitespace-only once trimmed.
+ */
+function extractBearerToken(req: IncomingMessage): string | null {
+  const header = req.headers['authorization'];
+  const value = Array.isArray(header) ? header[0] : header;
+  if (!value) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+  if (!match) return null;
+  const token = match[1].trim();
+  return token.length > 0 ? token : null;
+}
+
+/** Whether the request carries a valid bearer token for this server instance. */
+function isAuthorized(req: IncomingMessage, token: string): boolean {
+  const provided = extractBearerToken(req);
+  if (!provided) return false;
+  return safeTokenEquals(provided, token);
+}
+
+function handleUnauthorized(res: ServerResponse): void {
+  jsonResponse(res, 401, {
+    error: 'Unauthorized: missing or invalid Authorization: Bearer <token> header',
+  });
 }
 
 function extractFlowCompleted(events: HarnessEventPayload[]): FlowRunResult {
@@ -267,6 +340,12 @@ export function createFlowServer(
     }
   }
 
+  // Resolve the bearer token guarding /run and /flow. A caller-supplied token
+  // (e.g. from the CLI's --token/env) is honored verbatim; otherwise generate
+  // one so this server can never be reached on /run without authentication,
+  // even if a caller forgets to supply one.
+  const authToken = options.token && options.token.length > 0 ? options.token : generateToken();
+
   // ---------------------------------------------------------------------------
   // Dynamic route table — allows trigger modules to mount additional routes.
   // Key: `${METHOD} ${path}`, e.g. 'POST /triggers/my-flow'
@@ -301,11 +380,19 @@ export function createFlowServer(
       }
 
       if (urlPath === '/flow' && method === 'GET') {
+        if (!isAuthorized(req, authToken)) {
+          handleUnauthorized(res);
+          return;
+        }
         handleFlow(req, res, flow);
         return;
       }
 
       if (urlPath === '/run' && method === 'POST') {
+        if (!isAuthorized(req, authToken)) {
+          handleUnauthorized(res);
+          return;
+        }
         await handleRun(req, res, flow, options);
         return;
       }
@@ -335,11 +422,12 @@ export function createFlowServer(
   return {
     server,
     registerRoute,
+    token: authToken,
 
-    listen(port = 7878): Promise<number> {
+    listen(port = 7878, host = '127.0.0.1'): Promise<number> {
       return new Promise<number>((resolve, reject) => {
         server.once('error', reject);
-        server.listen(port, '0.0.0.0', () => {
+        server.listen(port, host, () => {
           const addr = server.address();
           const bound =
             addr && typeof addr === 'object' ? addr.port : port;

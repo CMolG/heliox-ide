@@ -38,7 +38,7 @@ export const TopBar = React.memo(function TopBar() {
           style={{ fontFamily: theme.fontDisplay, color: theme.textSecondary, letterSpacing: '0.03em' }}
           data-testid="topbar-brand"
         >
-          Heliox <span style={{ color: theme.textFaint, fontWeight: 400 }}>(HeO₂)</span>
+          Heliox
         </span>
       </div>
     </header>

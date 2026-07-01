@@ -46,7 +46,7 @@ export function SideBar() {
         }}
       >
         <LucideIcon name="Blocks" size={13} />
-        Windows
+        Components
         <span style={{
           marginLeft: 'auto', fontSize: 10, fontWeight: 400,
           color: theme.textGhost, marginRight: 4,

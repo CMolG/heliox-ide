@@ -4,9 +4,13 @@
  * Verifies that:
  *   1. POST /run produces stepOutputs and completion order identical to a
  *      direct executeAgenticFlow call (with the same scripted runStep).
- *   2. GET /health returns { ok: true }.
- *   3. GET /flow returns the expected flow metadata.
+ *   2. GET /health returns { ok: true } — with no auth required.
+ *   3. GET /flow returns the expected flow metadata — when authorized.
  *   4. SSE streaming emits step events when Accept: text/event-stream.
+ *   5. /run and /flow require `Authorization: Bearer <token>`; every
+ *      rejection edge case (missing/malformed/empty/wrong token) is denied
+ *      with 401 and never reaches execution.
+ *   6. listen() binds loopback by default and honors an explicit host opt-in.
  *
  * The conformance fixture is sdk/conformance/conformance-chain.flow.json — a
  * four-step linear chain: step-a → step-b → step-c → step-d.
@@ -90,10 +94,19 @@ async function postRun(
   return { status: res.status, body };
 }
 
-async function getEndpoint(baseUrl: string, path: string): Promise<RunViaHttp> {
-  const res = await fetch(`${baseUrl}${path}`);
+async function getEndpoint(
+  baseUrl: string,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<RunViaHttp> {
+  const res = await fetch(`${baseUrl}${path}`, { headers });
   const body: unknown = await res.json();
   return { status: res.status, body };
+}
+
+/** Build an `Authorization: Bearer <token>` header map for postRun/getEndpoint. */
+function authHeader(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -130,8 +143,8 @@ describe('GET /health', () => {
 });
 
 describe('GET /flow', () => {
-  it('returns the loaded flow metadata', async () => {
-    const { status, body } = await getEndpoint(baseUrl, '/flow');
+  it('returns the loaded flow metadata when authorized', async () => {
+    const { status, body } = await getEndpoint(baseUrl, '/flow', authHeader(serverHandle.token));
     expect(status).toBe(200);
     const b = body as Record<string, unknown>;
     expect(b.id).toBe(exported.id);
@@ -180,7 +193,11 @@ describe('POST /run — parity', () => {
 
     let servedResult: Record<string, unknown>;
     try {
-      const { status, body } = await postRun(`http://127.0.0.1:${servedPort}`);
+      const { status, body } = await postRun(
+        `http://127.0.0.1:${servedPort}`,
+        {},
+        authHeader(servedHandle.token),
+      );
       expect(status).toBe(200);
       servedResult = body as Record<string, unknown>;
     } finally {
@@ -217,7 +234,11 @@ describe('POST /run — parity', () => {
 
     let result: RunViaHttp;
     try {
-      result = await postRun(`http://127.0.0.1:${failingPort}`);
+      result = await postRun(
+        `http://127.0.0.1:${failingPort}`,
+        {},
+        authHeader(failingHandle.token),
+      );
     } finally {
       await failingHandle.close();
     }
@@ -249,6 +270,7 @@ describe('POST /run — SSE streaming', () => {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
+          Authorization: `Bearer ${sseHandle.token}`,
         },
         body: JSON.stringify({}),
       });
@@ -296,6 +318,115 @@ describe('POST /run — SSE streaming', () => {
     expect([...(done.completedStepIds as string[])].sort()).toEqual(
       exported.steps.map((s) => s.id).sort(),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auth: /run and /flow require a bearer token; /health does not.
+//
+// The rejection cases below intentionally reuse the shared `serverHandle`
+// from beforeEach, which is created with NO scripted runStep (i.e. it would
+// fall through to the real LLM runner if execution were ever reached). That
+// is deliberate: it proves the auth gate runs strictly BEFORE dispatch —
+// if it didn't, these tests would hang or fail trying to reach a real model
+// instead of returning a fast 401.
+// ---------------------------------------------------------------------------
+
+describe('POST /run — auth', () => {
+  it('rejects a request with no Authorization header', async () => {
+    const { status, body } = await postRun(baseUrl);
+    expect(status).toBe(401);
+    expect((body as Record<string, unknown>).error).toMatch(/unauthorized/i);
+  });
+
+  it('rejects a malformed Authorization header (wrong scheme)', async () => {
+    const { status } = await postRun(baseUrl, {}, { Authorization: `Basic ${serverHandle.token}` });
+    expect(status).toBe(401);
+  });
+
+  it('rejects a Bearer header with no token value', async () => {
+    const { status } = await postRun(baseUrl, {}, { Authorization: 'Bearer' });
+    expect(status).toBe(401);
+  });
+
+  it('rejects a Bearer header whose token is empty/whitespace-only', async () => {
+    const { status } = await postRun(baseUrl, {}, { Authorization: 'Bearer    ' });
+    expect(status).toBe(401);
+  });
+
+  it('rejects an incorrect token', async () => {
+    const { status } = await postRun(baseUrl, {}, { Authorization: 'Bearer wrong-token-entirely' });
+    expect(status).toBe(401);
+  });
+
+  it('accepts the correct bearer token and executes the flow', async () => {
+    // Uses its own scripted-runStep server so a genuinely authorized request
+    // exercises real execution without touching the LLM runner.
+    const authPort = await pickFreePort();
+    const authHandle = createFlowServer(exported, { runStep: makeScriptedRunStep() });
+    await authHandle.listen(authPort);
+    try {
+      const { status, body } = await postRun(
+        `http://127.0.0.1:${authPort}`,
+        {},
+        authHeader(authHandle.token),
+      );
+      expect(status).toBe(200);
+      expect((body as Record<string, unknown>).completedStepIds).toBeDefined();
+    } finally {
+      await authHandle.close();
+    }
+  });
+});
+
+describe('GET /flow — auth', () => {
+  it('rejects an unauthenticated request', async () => {
+    const { status } = await getEndpoint(baseUrl, '/flow');
+    expect(status).toBe(401);
+  });
+
+  it('rejects an incorrect token', async () => {
+    const { status } = await getEndpoint(baseUrl, '/flow', { Authorization: 'Bearer nope' });
+    expect(status).toBe(401);
+  });
+
+  it('accepts the correct bearer token', async () => {
+    const { status } = await getEndpoint(baseUrl, '/flow', authHeader(serverHandle.token));
+    expect(status).toBe(200);
+  });
+});
+
+describe('GET /health — auth-exempt', () => {
+  it('returns 200 with no Authorization header at all', async () => {
+    const { status, body } = await getEndpoint(baseUrl, '/health');
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true });
+  });
+});
+
+describe('listen — host binding', () => {
+  it('binds loopback (127.0.0.1) by default', async () => {
+    const p = await pickFreePort();
+    const handle = createFlowServer(exported);
+    await handle.listen(p);
+    try {
+      const addr = handle.server.address();
+      expect(addr && typeof addr === 'object' ? addr.address : null).toBe('127.0.0.1');
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('binds an explicit host when the caller opts in (e.g. 0.0.0.0)', async () => {
+    const p = await pickFreePort();
+    const handle = createFlowServer(exported);
+    await handle.listen(p, '0.0.0.0');
+    try {
+      const addr = handle.server.address();
+      expect(addr && typeof addr === 'object' ? addr.address : null).toBe('0.0.0.0');
+    } finally {
+      await handle.close();
+    }
   });
 });
 

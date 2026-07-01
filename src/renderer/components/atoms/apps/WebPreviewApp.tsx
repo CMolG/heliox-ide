@@ -82,9 +82,8 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
 
   const webviewRef = useRef<WebviewEl>(null);
 
-  // Address bar mirrors the live URL; starts with the prop value
+  // Address bar mirrors the live URL; starts with the prop value (read-only display)
   const [addressValue, setAddressValue] = useState(initialUrl);
-  const [isEditing, setIsEditing] = useState(false);
   // Tracks whether the link/unlink IPC call is in-flight (prevents double-click)
   const [linkPending, setLinkPending] = useState(false);
 
@@ -121,17 +120,6 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
     }
   }, [linkPending, webContentsId, agentLinked, linkWindowToAgent, windowId]);
 
-  // Navigate to whatever the user types in the address bar
-  const commitNavigation = useCallback(() => {
-    const el = webviewRef.current;
-    if (!el) return;
-    let target = addressValue.trim();
-    // Prepend https:// if the user typed a bare hostname without a scheme
-    if (target && !/^https?:\/\//i.test(target)) target = `http://${target}`;
-    if (target) el.loadURL(target);
-    setIsEditing(false);
-  }, [addressValue]);
-
   // On dom-ready: capture webContentsId for M2, and update address bar
   useEffect(() => {
     const el = webviewRef.current;
@@ -147,7 +135,7 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
     // Keep the address bar in sync with page navigations initiated inside the webview
     const handleNavigate = (e: Event) => {
       const ev = e as CustomEvent<{ url: string }>;
-      if (ev.detail?.url && !isEditing) {
+      if (ev.detail?.url) {
         setAddressValue(ev.detail.url);
       }
     };
@@ -161,7 +149,7 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
       el.removeEventListener('did-navigate', handleNavigate);
       el.removeEventListener('did-navigate-in-page', handleNavigate);
     };
-  }, [windowId, _updateWindow, isEditing]);
+  }, [windowId, _updateWindow]);
 
   // ─── Render ─────────────────────────────────────────────────────
 
@@ -251,10 +239,7 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
           <LucideIcon name="Globe" size={11} style={{ color: theme.textGhost, flexShrink: 0 }} />
           <input
             value={addressValue}
-            onChange={e => { setAddressValue(e.target.value); setIsEditing(true); }}
-            onBlur={() => { setIsEditing(false); }}
-            onFocus={e => e.currentTarget.select()}
-            onKeyDown={e => { if (e.key === 'Enter') commitNavigation(); if (e.key === 'Escape') setIsEditing(false); }}
+            readOnly
             style={{
               flex: 1,
               minWidth: 0,
@@ -264,6 +249,10 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
               color: theme.textSecondary,
               fontSize: 11,
               fontFamily: 'inherit',
+              cursor: 'default',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
             }}
             spellCheck={false}
             autoCorrect="off"

@@ -99,7 +99,7 @@ const roles: TutorialScenario = {
     },
     {
       target: '[data-testid="desktop-canvas-bg"]',
-      title: 'Attach to Windows',
+      title: 'Attach to Components',
       description: 'Drag a Role card near a chat window to bind it. The agent will adopt that persona for the entire session.',
       position: 'top',
       highlightViewport: true,
@@ -132,7 +132,7 @@ const mods: TutorialScenario = {
     },
     {
       target: '[data-testid="desktop-canvas-bg"]',
-      title: 'Stack on Windows',
+      title: 'Stack on Components',
       description: 'Drag Mods near a chat window to attach them. They stack — combine brevity, humor, and domain expertise.',
       position: 'top',
       highlightViewport: true,
@@ -192,7 +192,7 @@ const chat: TutorialScenario = {
     },
     {
       target: '[data-testid="desktop-canvas-bg"]',
-      title: 'Chat Windows',
+      title: 'Chat Components',
       description: 'Chat windows live on the canvas. Resize, move, and arrange them freely. Each has its own agent session.',
       position: 'top',
       highlightViewport: true,
@@ -219,7 +219,7 @@ const fileExplorer: TutorialScenario = {
     },
     {
       target: '[data-testid="desktop-canvas-bg"]',
-      title: 'File Windows',
+      title: 'File Components',
       description: 'Navigate the file tree, open tabs, and drag files onto the canvas. Supports all common file types.',
       position: 'top',
       highlightViewport: true,
@@ -274,7 +274,7 @@ const marketplace: TutorialScenario = {
     {
       target: '[data-testid="desktop-canvas-bg"]',
       title: 'Deploy Items',
-      description: 'Click any item to deploy it. Deployed items appear in the attachable dock for drag-and-drop use.',
+      description: 'Click any item to open its product sheet, then "Deploy" to deploy it. Deployed items appear in the attachable dock for drag-and-drop use.',
       position: 'top',
       highlightViewport: true,
     },
@@ -295,7 +295,7 @@ const diffViewer: TutorialScenario = {
   steps: [
     {
       target: '[data-testid="desktop-canvas-bg"]',
-      title: 'Diff Windows',
+      title: 'Diff Components',
       description: 'Diff Viewer windows appear when agents propose code changes. Review additions and deletions side-by-side.',
       position: 'top',
       highlightViewport: true,

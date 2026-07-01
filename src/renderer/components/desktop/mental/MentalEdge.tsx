@@ -17,7 +17,8 @@ import { useDesktopStore } from '../../../store/desktop-store';
 
 export interface MentalEdgeData {
   edgeColor: string;
-  edgeType: 'ramification' | 'link';
+  edgeType: 'ramification' | 'link' | 'attachment';
+  isAttachment?: boolean;
   [key: string]: unknown;
 }
 
@@ -35,7 +36,7 @@ export function MentalEdge(props: EdgeProps) {
   } = props;
 
   const edgeData = data as unknown as MentalEdgeData | undefined;
-  const edgeColor = edgeData?.edgeColor ?? '#7C3AED';
+  const edgeColor = edgeData?.edgeColor ?? '#4DA8FF';
 
   const removeMentalEdge = useDesktopStore((s) => s.removeMentalEdge);
   const updateMentalEdgeColor = useDesktopStore((s) => s.updateMentalEdgeColor);
@@ -54,7 +55,7 @@ export function MentalEdge(props: EdgeProps) {
     borderRadius: 16,
   });
 
-  const strokeColor = hovered || selected ? '#A78BFA' : edgeColor;
+  const strokeColor = hovered || selected ? '#7FC1FF' : edgeColor;
   const strokeWidth = hovered || selected ? 3 : 2;
   const haloColor = 'rgba(0, 0, 0, 0.25)';
 
@@ -78,7 +79,9 @@ export function MentalEdge(props: EdgeProps) {
         }}
       />
 
-      {/* Primary edge stroke — plain line, no arrowhead */}
+      {/* Primary edge stroke — plain line, no arrowhead.
+          Attachment edges (mental↔step) render dashed to visually distinguish
+          them from mental→mental hierarchy edges. */}
       <BaseEdge
         id={id}
         path={edgePath}
@@ -86,6 +89,7 @@ export function MentalEdge(props: EdgeProps) {
           stroke: strokeColor,
           strokeWidth,
           strokeLinecap: 'round',
+          strokeDasharray: edgeData?.isAttachment ? '6 4' : undefined,
           fill: 'none',
         }}
       />

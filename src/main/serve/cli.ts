@@ -2,7 +2,7 @@
  * cli.ts — `heliox serve` entrypoint
  *
  * Usage:
- *   npx tsx src/main/serve/cli.ts <flow.json> [--port <n>] [--model <id>] [--mcp] [--select <strategy>]
+ *   npx tsx src/main/serve/cli.ts <flow.json> [--port <n>] [--host <host>] [--token <token>] [--model <id>] [--mcp] [--select <strategy>]
  *
  * Loads the supplied HelioxFlowExport, validates the DAG, and either:
  *   - (default) binds an HTTP server and prints the address to stdout.
@@ -11,6 +11,13 @@
  * When --select <strategy> is given, the model is resolved from the latest
  * Arena leaderboard using the specified strategy (best-score|cheapest|fastest|
  * best-value).  An explicit --model always overrides --select.
+ *
+ * Networking & auth (HTTP transport only — --mcp is stdio and unaffected):
+ *   - Binds 127.0.0.1 (loopback) by default. Pass --host 0.0.0.0 (or another
+ *     address) to deliberately expose the server beyond localhost.
+ *   - /run and /flow require `Authorization: Bearer <token>`; /health does not.
+ *     The token comes from --token, else the HELIOX_SERVE_TOKEN env var, else
+ *     a random token generated at startup and printed to stdout.
  *
  * Responds to SIGINT / SIGTERM for graceful shutdown.
  */
@@ -39,6 +46,8 @@ interface CliArgs {
   modelId: string | undefined;
   mcp: boolean;
   selectStrategy: SelectionStrategy | undefined;
+  host: string | undefined;
+  token: string | undefined;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -50,6 +59,8 @@ function parseArgs(argv: string[]): CliArgs {
   let modelId: string | undefined;
   let mcp = false;
   let selectStrategy: SelectionStrategy | undefined;
+  let host: string | undefined;
+  let token: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -72,6 +83,18 @@ function parseArgs(argv: string[]): CliArgs {
         );
       }
       selectStrategy = next as SelectionStrategy;
+    } else if (arg === '--host') {
+      const next = args[++i];
+      if (!next || next.startsWith('--')) {
+        throw new Error('Invalid --host: expected a hostname or IP address (e.g. 127.0.0.1 or 0.0.0.0).');
+      }
+      host = next;
+    } else if (arg === '--token') {
+      const next = args[++i];
+      if (!next || next.startsWith('--')) {
+        throw new Error('Invalid --token: expected a non-empty token value.');
+      }
+      token = next;
     } else if (!arg.startsWith('--')) {
       flowPath = arg;
     }
@@ -79,11 +102,23 @@ function parseArgs(argv: string[]): CliArgs {
 
   if (!flowPath) {
     throw new Error(
-      'Usage: heliox serve <flow.json> [--port 7878] [--model <id>] [--mcp] [--select best-score|cheapest|fastest|best-value]',
+      'Usage: heliox serve <flow.json> [--port 7878] [--host 127.0.0.1] [--token <token>] ' +
+      '[--model <id>] [--mcp] [--select best-score|cheapest|fastest|best-value]',
     );
   }
 
-  return { flowPath, port, modelId, mcp, selectStrategy };
+  return { flowPath, port, modelId, mcp, selectStrategy, host, token };
+}
+
+/**
+ * Resolve the effective bearer token: --token wins, else HELIOX_SERVE_TOKEN,
+ * else undefined (createFlowServer then generates one). An empty string from
+ * either source is treated as "not provided" rather than as a literal token.
+ */
+function resolveToken(cliToken: string | undefined): string | undefined {
+  if (cliToken && cliToken.length > 0) return cliToken;
+  const envToken = process.env.HELIOX_SERVE_TOKEN;
+  return envToken && envToken.length > 0 ? envToken : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,10 +213,16 @@ async function main(): Promise<void> {
 
   // ---------------------------------------------------------------------------
   // Default: HTTP/REST transport.
+  //
+  // Binds loopback-only unless --host explicitly opts into a wider bind, and
+  // always requires a bearer token on /run and /flow (see resolveToken()).
   // ---------------------------------------------------------------------------
+  const effectiveHost = args.host && args.host.length > 0 ? args.host : '127.0.0.1';
+  const resolvedToken = resolveToken(args.token);
+
   let flowServer: ReturnType<typeof createFlowServer>;
   try {
-    flowServer = createFlowServer(exported, { modelId: resolvedModelId });
+    flowServer = createFlowServer(exported, { modelId: resolvedModelId, token: resolvedToken });
   } catch (error) {
     process.stderr.write(
       `error: invalid flow — ${error instanceof Error ? error.message : String(error)}\n`,
@@ -191,17 +232,27 @@ async function main(): Promise<void> {
 
   let boundPort: number;
   try {
-    boundPort = await flowServer.listen(args.port);
+    boundPort = await flowServer.listen(args.port, effectiveHost);
   } catch (error) {
     process.stderr.write(
-      `error: failed to bind port ${args.port} — ${error instanceof Error ? error.message : String(error)}\n`,
+      `error: failed to bind ${effectiveHost}:${args.port} — ${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exit(1);
   }
 
+  const isLoopbackHost =
+    effectiveHost === '127.0.0.1' || effectiveHost === '::1' || effectiveHost === 'localhost';
+
   process.stdout.write(
-    `heliox serve: "${exported.name}" listening on http://0.0.0.0:${boundPort}\n`,
+    `heliox serve: "${exported.name}" listening on http://${effectiveHost}:${boundPort}\n`,
   );
+  process.stdout.write(`  auth token: ${flowServer.token}\n`);
+  process.stdout.write(`  send requests with header: Authorization: Bearer ${flowServer.token}\n`);
+  if (!isLoopbackHost) {
+    process.stderr.write(
+      `warning: "${effectiveHost}" is not loopback — this flow is reachable beyond localhost; keep the auth token secret.\n`,
+    );
+  }
 
   // Graceful shutdown.
   const shutdown = async (): Promise<void> => {

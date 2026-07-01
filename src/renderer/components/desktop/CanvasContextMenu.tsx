@@ -27,14 +27,13 @@ const CANVAS_ACTIONS: CanvasContextMenuAction[] = [
   { label: 'New Chat Window', icon: 'MessageSquare', action: 'new-chat' },
   { label: 'New File Explorer', icon: 'FileText', action: 'file-explorer' },
   { label: 'New Backlog Board', icon: 'KanbanSquare', action: 'backlog' },
-  { label: 'Enable Mental Authoring', icon: 'PenTool', action: 'mental-draw-toggle' },
-  { label: 'New Grid Layout', icon: 'LayoutGrid', action: 'grid', dividerAfter: true },
+  { label: 'Enable Mental Authoring', icon: 'PenTool', action: 'mental-draw-toggle', dividerAfter: true },
   { label: 'Open Marketplace', icon: 'Store', action: 'marketplace', dividerAfter: true },
   ...(import.meta.env.DEV ? [
     { label: 'Prompt Dev Zone', icon: 'FlaskConical', action: 'prompt-dev-zone', dividerAfter: true } as CanvasContextMenuAction,
   ] : []),
-  { label: 'Arrange Windows', icon: 'Grid2x2', action: 'arrange' },
-  { label: 'Stack Windows', icon: 'Layers', action: 'stack' },
+  { label: 'Arrange Components', icon: 'Grid2x2', action: 'arrange' },
+  { label: 'Stack Components', icon: 'Layers', action: 'stack' },
   { label: 'Reset Canvas View', icon: 'Maximize2', action: 'reset-view' },
 ];
 

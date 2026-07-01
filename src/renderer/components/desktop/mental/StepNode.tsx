@@ -9,7 +9,7 @@
  * - Owns: StepNode presentation and local drop-target registration.
  * - Does NOT own: drag-end policy, persistence, or market inventory lookup.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDroppable } from '@dnd-kit/core';
 import type { NodeProps } from '@xyflow/react';
@@ -18,6 +18,7 @@ import type { StepNodeData } from '@/types/desktop';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
 import { LucideIcon } from '../LucideIcon';
+import { HelioxSpinner } from '../../brand/HelioxSpinner';
 import { kebabToTitle } from '../attachable-helpers';
 import { stepTypeMeta } from './step-type-meta';
 import { StepThinkingPopover } from './StepThinkingPopover';
@@ -26,6 +27,17 @@ import { StepInfoModal } from '../StepInfoModal';
 function roleColor(role: MarketRole): string {
   return role.color?.startsWith('#') ? role.color : role.color ? `#${role.color}` : '#E87040';
 }
+
+// Non-color status glyph shown before the inline Run button — status must
+// never be color-only (a11y). "running" is special-cased to the branded
+// HelioxSpinner (mirrors FrameNode's header Run control); "idle" renders
+// nothing at all.
+const STEP_STATUS_GLYPH: Record<string, { icon: string; label: string }> = {
+  compiling: { icon: 'Loader2', label: 'Compiling' },
+  paused: { icon: 'Clock', label: 'Paused' },
+  completed: { icon: 'CheckCircle', label: 'Completed' },
+  error: { icon: 'XCircle', label: 'Error' },
+};
 
 function StepChip({
   label,
@@ -65,7 +77,11 @@ export function StepNode({ id, data }: NodeProps) {
   const removeRoleFromStep = useDesktopStore((s) => s.removeRoleFromStep);
   const removeMentalNode = useDesktopStore((s) => s.removeMentalNode);
   const mentalEdges = useDesktopStore((s) => s.mentalEdges);
+  const bringMentalToFront = useDesktopStore((s) => s.bringMentalToFront);
   const executionStatus = useHarnessStore((s) => s.stepStatuses[id]);
+  const runStep = useHarnessStore((s) => s.runStep);
+  const runFromStep = useHarnessStore((s) => s.runFromStep);
+  const isBusy = executionStatus === 'running' || executionStatus === 'compiling';
 
   // Hover state for cursor-following popover
   const [hoverAnchor, setHoverAnchor] = useState<{ x: number; y: number } | null>(null);
@@ -73,6 +89,7 @@ export function StepNode({ id, data }: NodeProps) {
   // Context menu and info modal state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showInfo, setShowInfo] = useState(false);
+  const firstMenuItemRef = useRef<HTMLButtonElement | null>(null);
 
   const { isOver, setNodeRef } = useDroppable({
     id,
@@ -81,6 +98,30 @@ export function StepNode({ id, data }: NodeProps) {
       stepId: id,
     },
   });
+
+  // Plain ref to the same DOM node dnd-kit's `setNodeRef` registers — used
+  // only to restore focus here when the Step Config panel closes (a stable
+  // target, unlike the ephemeral context-menu button that opened it). Does
+  // not alter the droppable registration itself.
+  const articleRef = useRef<HTMLElement | null>(null);
+  const setArticleRef = useCallback((node: HTMLElement | null) => {
+    setNodeRef(node);
+    articleRef.current = node;
+  }, [setNodeRef]);
+
+  const handleCloseInfo = useCallback(() => {
+    setShowInfo(false);
+    articleRef.current?.focus();
+  }, []);
+
+  // Move focus into the context menu whenever it opens (mouse right-click or
+  // the keyboard opener below), mirroring native OS context-menu behavior and
+  // this file's own Step-Config-panel focus-return convention above.
+  useEffect(() => {
+    if (contextMenu) {
+      firstMenuItemRef.current?.focus();
+    }
+  }, [contextMenu]);
 
   const stopCanvasGesture = useCallback((event: React.PointerEvent | React.MouseEvent) => {
     event.stopPropagation();
@@ -99,6 +140,18 @@ export function StepNode({ id, data }: NodeProps) {
     e.stopPropagation();
     setHoverAnchor(null);
     setContextMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  // Keyboard equivalent of onContextMenu — the ContextMenu key or Shift+F10 —
+  // so "Run from here" / "Delete Step" are reachable without a mouse.
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLElement>) => {
+    const isContextMenuKey = e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey);
+    if (!isContextMenuKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setHoverAnchor(null);
+    setContextMenu({ x: rect.left + 16, y: rect.top + 48 });
   }, []);
 
   const mods = stepData.mods ?? [];
@@ -127,12 +180,12 @@ export function StepNode({ id, data }: NodeProps) {
   // Connections for StepInfoModal
   const incomingIds = mentalEdges.filter((e) => e.targetId === id).map((e) => e.sourceId);
   const outgoingIds = mentalEdges.filter((e) => e.sourceId === id).map((e) => e.targetId);
-  const atomCount = mods.length + roles.length;
 
   return (
   <>
     <article
-      ref={setNodeRef}
+      ref={setArticleRef}
+      tabIndex={-1}
       className={`step-node-shell${isOver ? ' is-over' : ''}${executionClass}`}
       data-testid={`step-node-${id}`}
       data-step-node-id={id}
@@ -143,6 +196,8 @@ export function StepNode({ id, data }: NodeProps) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onContextMenu={handleContextMenu}
+      onKeyDown={handleKeyDown}
+      onPointerDownCapture={() => bringMentalToFront(id)}
     >
       {/* Accent hairline at top edge */}
       <div className="step-node-accent-bar" aria-hidden="true" />
@@ -184,16 +239,52 @@ export function StepNode({ id, data }: NodeProps) {
               <LucideIcon name="GitBranch" size={9} />
             </span>
           )}
+          {executionStatus === 'running' ? (
+            <span
+              className="step-node-status step-node-status--running"
+              data-testid={`step-node-status-${id}`}
+              role="status"
+              aria-live="polite"
+              aria-label="Running"
+              title="Running"
+            >
+              <HelioxSpinner size={11} speed={1.4} />
+            </span>
+          ) : executionStatus && STEP_STATUS_GLYPH[executionStatus] ? (
+            <span
+              className={`step-node-status step-node-status--${executionStatus}`}
+              data-testid={`step-node-status-${id}`}
+              role="status"
+              aria-live="polite"
+              aria-label={STEP_STATUS_GLYPH[executionStatus].label}
+              title={STEP_STATUS_GLYPH[executionStatus].label}
+            >
+              <LucideIcon name={STEP_STATUS_GLYPH[executionStatus].icon} size={11} />
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className="step-node-run-btn nodrag"
+            data-testid={`step-node-run-${id}`}
+            data-step-no-drag="true"
+            title="Run this step"
+            aria-label={`Run step ${stepData.title}`}
+            disabled={isBusy}
+            aria-disabled={isBusy}
+            onPointerDown={stopCanvasGesture}
+            onClick={(event) => {
+              event.stopPropagation();
+              runStep(id);
+            }}
+          >
+            <LucideIcon name="Play" size={9} />
+          </button>
           <div
             className="step-node-count"
-            aria-label={`${atomCount} atoms, ${connCount} connections`}
-            title={`${atomCount} atoms · ${connCount} connections`}
+            aria-label={`${connCount} connection${connCount === 1 ? '' : 's'}`}
+            title={`${connCount} connection${connCount === 1 ? '' : 's'}`}
           >
-            {connCount > 0 ? (
-              <span className="step-node-count-conn">{connCount}</span>
-            ) : (
-              atomCount
-            )}
+            <span className="step-node-count-conn">{connCount}</span>
           </div>
         </div>
       </header>
@@ -265,6 +356,12 @@ export function StepNode({ id, data }: NodeProps) {
         onClick={() => setContextMenu(null)}
         onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
         onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return;
+          e.stopPropagation();
+          setContextMenu(null);
+          articleRef.current?.focus();
+        }}
       >
         <div
           data-testid="step-node-ctx-menu"
@@ -283,8 +380,9 @@ export function StepNode({ id, data }: NodeProps) {
         >
           <button
             data-testid="step-node-ctx-view"
+            ref={firstMenuItemRef}
             style={{
-              width: '100%', border: 'none', borderRadius: 6,
+              width: '100%', minHeight: 44, border: 'none', borderRadius: 6,
               background: 'transparent', color: '#e4e4e7',
               fontSize: 12, textAlign: 'left', padding: '6px 8px',
               cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7,
@@ -294,12 +392,29 @@ export function StepNode({ id, data }: NodeProps) {
             onClick={() => { setShowInfo(true); setContextMenu(null); }}
           >
             <LucideIcon name="Maximize2" size={12} />
-            Ver Step
+            View Step
+          </button>
+          <button
+            data-testid="step-node-ctx-run-from"
+            disabled={isBusy}
+            aria-disabled={isBusy}
+            style={{
+              width: '100%', minHeight: 44, border: 'none', borderRadius: 6,
+              background: 'transparent', color: isBusy ? 'rgba(228,228,231,0.4)' : '#e4e4e7',
+              fontSize: 12, textAlign: 'left', padding: '6px 8px',
+              cursor: isBusy ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 7,
+            }}
+            onMouseEnter={(e) => { if (!isBusy) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+            onClick={() => { runFromStep(id); setContextMenu(null); }}
+          >
+            <LucideIcon name="Workflow" size={12} />
+            Run from here
           </button>
           <button
             data-testid="step-node-ctx-delete"
             style={{
-              width: '100%', border: 'none', borderRadius: 6,
+              width: '100%', minHeight: 44, border: 'none', borderRadius: 6,
               background: 'transparent', color: '#f87171',
               fontSize: 12, textAlign: 'left', padding: '6px 8px',
               cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7,
@@ -309,7 +424,7 @@ export function StepNode({ id, data }: NodeProps) {
             onClick={() => { removeMentalNode(id); setContextMenu(null); }}
           >
             <LucideIcon name="Trash2" size={12} />
-            Eliminar paso
+            Delete Step
           </button>
         </div>
       </div>,
@@ -323,7 +438,7 @@ export function StepNode({ id, data }: NodeProps) {
         stepData={stepData}
         connections={{ incoming: incomingIds, outgoing: outgoingIds }}
         status={executionStatus}
-        onClose={() => setShowInfo(false)}
+        onClose={handleCloseInfo}
       />,
       document.body
     )}

@@ -13,7 +13,7 @@
  * - Orchestration component in the renderer process.
  */
 // src/renderer/App.tsx — Main Heliox IDE React component
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useRef } from 'react';
 import { TopBar } from './components/TopBar';
 import { ProjectExplorer } from './components/ProjectExplorer';
 import { ToastContainer } from './components/ui/ToastContainer';
@@ -25,6 +25,7 @@ import { SideBar } from './components/SideBar';
 import { ExpandSideBarButton } from './components/ExpandSideBarButton';
 import { useHelioxStore } from './store';
 import { useDesktopStore } from './store/desktop-store';
+import { useHarnessStore, lastLogMessage } from './store/harness-store';
 import { useAgentEvents } from '@/renderer/logic/hooks/useAgentEvents';
 import { applyCliTheme } from './logic/theme';
 
@@ -86,15 +87,21 @@ export function App() {
     });
   }, [projectPath, addSession, setAvailableModels]);
 
-  // Onboarding sequence on first project open
+  // Onboarding sequence on first project open. Trimmed from 5 toasts to 3:
+  // dropped "Define E2E flows in the Flows tab" and "Create custom roles in
+  // the Roles tab" — those tabs don't exist anymore (Roles/Mods/Flows moved
+  // into the Marketplace + attachable Dock; see market/*/AGENTS.md). Stale
+  // copy taught a wrong model of the UI. The remaining three still hold up:
+  // "chat panel" is the same term HelpSectionContent.tsx still uses today,
+  // and the ⌘K/⌘O/⌘N shortcuts are the real ones wired in
+  // handleGlobalKeyDown below. (docs/competitive-analysis/experiment/ux-run/
+  // 02-onboarding-disclosure.md §4)
   useEffect(() => {
     if (!projectPath || appSettings.onboardingDone) return;
     const tips = [
       { delay: 500, msg: 'Welcome to Heliox IDE — your AI agent workspace' },
       { delay: 2500, msg: 'Type in the chat panel to start an agent session' },
-      { delay: 4500, msg: 'Define E2E flows in the Flows tab for validation' },
-      { delay: 6500, msg: 'Create custom roles in the Roles tab' },
-      { delay: 8500, msg: '⌘K to focus chat · ⌘O to open project · ⌘N new session' },
+      { delay: 4500, msg: '⌘K to focus chat · ⌘O to open project · ⌘N new session' },
     ];
     const timers = tips.map(({ delay, msg }) =>
       setTimeout(() => addToast(msg, 'info'), delay)
@@ -102,6 +109,36 @@ export function App() {
     updateAppSettings({ onboardingDone: true });
     return () => timers.forEach(clearTimeout);
   }, [projectPath, appSettings.onboardingDone, addToast, updateAppSettings]);
+
+  // Surface the harness execution error state via the existing toast system.
+  // harness-store.ts's executeFlow sets `executionStatus: 'error'` on every
+  // flow-start failure (missing IPC bridge, a start failure the main process
+  // reports, a thrown exception), and compileCurrentCanvas/runStep/
+  // runFromStep do the same for their own failures — but until now nothing
+  // ever read it: no toast, no red state, nothing (docs/competitive-analysis/
+  // experiment/ux-run/06-states-polish.md §1, §4). This reuses the same
+  // addToast(msg, 'error') call already used elsewhere in this file (CLI
+  // check below) and in useAgentEvents.ts, instead of inventing a new
+  // notification system.
+  //
+  // Edge-triggered off prevExecutionStatusRef (was !== 'error', now ===
+  // 'error') rather than level-triggered on executionStatus alone, so:
+  //  - a run that fails on several steps (each StepStatusChanged keeps
+  //    executionStatus at the same 'error' string) raises exactly one toast;
+  //  - a second, independent failure after a successful retry (which passes
+  //    back through 'compiling'/'running' first) still raises its own toast;
+  //  - the clean compiling → running → completed happy path never toasts.
+  // Not gated on `projectPath` — harness-store is a project-agnostic
+  // singleton (see its own file header), so this stays a global safety net.
+  const executionStatus = useHarnessStore((s) => s.executionStatus);
+  const prevExecutionStatusRef = useRef(executionStatus);
+  useEffect(() => {
+    const prevStatus = prevExecutionStatusRef.current;
+    prevExecutionStatusRef.current = executionStatus;
+    if (executionStatus !== 'error' || prevStatus === 'error') return;
+    const detail = lastLogMessage(useHarnessStore.getState().executionLogs);
+    addToast(detail ? `Flow execution failed: ${detail}` : 'Flow execution failed.', 'error');
+  }, [executionStatus, addToast]);
 
   // Check CLI availability when project opens
   useEffect(() => {

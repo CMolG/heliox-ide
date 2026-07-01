@@ -227,6 +227,10 @@ export const useHelioxStore = create<HelioxState>()(
         openProjects: path && !state.openProjects.includes(path)
           ? [...state.openProjects, path]
           : path ? state.openProjects : state.openProjects,
+        // First-ever open of a never-before-seen project: start with the sidebar
+        // collapsed so the empty canvas isn't crowded. Returning projects (already
+        // in recentProjects) keep whatever showSidebar currently is — ⌘B still toggles.
+        ...(path && !state.recentProjects.includes(path) ? { showSidebar: false } : {}),
       })),
       addRecentProject: (path) => set((s) => ({
         recentProjects: [path, ...s.recentProjects.filter(p => p !== path)].slice(0, 10),

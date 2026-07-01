@@ -639,13 +639,19 @@ body {
 }
 
 /* Pan layer — holds all windows, moved by middle-click drag.
-   Zoom is NOT applied as scale() here — instead, each component multiplies its
-   canvas-space coordinates by canvasZoom. This ensures window content never enters
-   a CSS transform/zoom context, so text renders at native subpixel quality. */
+   At 100% zoom only an integer translate() is applied (no scale()), keeping
+   all window text on the pixel grid for native subpixel anti-aliasing.
+   scale() is added by JS only when canvasZoom !== 1.
+   will-change: transform is set only during active pan/zoom so the GPU
+   compositing layer is not promoted at rest — text stays crisp at 100%. */
 .desktop-pan-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  will-change: auto;
+}
+.desktop-canvas[data-panning="true"] .desktop-pan-layer,
+.desktop-pan-layer[data-zooming] {
   will-change: transform;
 }
 
@@ -717,7 +723,11 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: box-shadow 0.15s ease, filter 0.15s ease;
+  /* Interaction ring — outline (not border) so it never shifts the box model
+     or the absolutely-positioned .resize-handle children keyed off this edge. */
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  transition: box-shadow 0.15s ease, filter 0.15s ease, outline-color 0.15s ease;
   pointer-events: auto;
   will-change: transform;
 }
@@ -730,6 +740,13 @@ body {
     transition: box-shadow 0.15s ease;
   }
 }
+
+/* Hover / keyboard-focus — consistent electric-blue ring on every window,
+   independent of role/active/highlighted so those box-shadow cues stay intact. */
+.desktop-window:hover,
+.desktop-window:focus-within {
+  outline-color: #4285F4;
+}
 /* ─── Role Color Integration ─────────────────────────────────────── */
 .desktop-window[data-has-role="true"] {
   box-shadow:
@@ -738,6 +755,7 @@ body {
     0 0 20px color-mix(in srgb, var(--role-color) 10%, transparent);
 }
 .desktop-window[data-has-role="true"][data-active="true"] {
+  outline-color: #4285F4;
   box-shadow:
     0 14px 40px rgba(0,0,0,0.54),
     0 4px 16px rgba(0,0,0,0.42),
@@ -745,6 +763,7 @@ body {
   filter: saturate(1.06);
 }
 .desktop-window[data-has-role="true"][data-highlighted="true"] {
+  outline-color: #4285F4;
   box-shadow:
     0 12px 36px rgba(0,0,0,0.5),
     0 3px 12px rgba(0,0,0,0.4),
@@ -785,6 +804,7 @@ body {
 
 /* Default active/highlight for windows WITHOUT a role */
 .desktop-window:not([data-has-role="true"])[data-active="true"] {
+  outline-color: #4285F4;
   box-shadow:
     0 14px 40px rgba(0,0,0,0.54),
     0 4px 16px rgba(0,0,0,0.42),
@@ -792,18 +812,21 @@ body {
   filter: saturate(1.06);
 }
 .desktop-window:not([data-has-role="true"])[data-highlighted="true"] {
+  outline-color: #4285F4;
   box-shadow:
     0 12px 36px rgba(0,0,0,0.5),
     0 3px 12px rgba(0,0,0,0.4),
     0 0 18px rgba(66,133,244,0.4);
 }
 .desktop-window[data-has-role="true"][data-selected="true"] {
+  outline-color: #4285F4;
   box-shadow:
     0 11px 34px rgba(0,0,0,0.48),
     0 3px 12px rgba(0,0,0,0.36),
     0 0 16px color-mix(in srgb, var(--role-color) 30%, transparent);
 }
 .desktop-window:not([data-has-role="true"])[data-selected="true"] {
+  outline-color: #4285F4;
   box-shadow:
     0 11px 34px rgba(0,0,0,0.48),
     0 3px 12px rgba(0,0,0,0.36),
@@ -1135,9 +1158,27 @@ body {
 .grid-resize-se { bottom: -3px; right: -3px; width: 10px; height: 10px; cursor: se-resize; }
 .grid-resize-sw { bottom: -3px; left: -3px; width: 10px; height: 10px; cursor: sw-resize; }
 
-/* Window controls — macOS traffic-light style */
+/* Slim titlebar drag/maximize zone — first child inside .desktop-window.
+   Arms window drag and double-click maximize; keeps the rest of the window
+   body text-selectable. The corner controls (.window-surface-corner-controls)
+   float above it with absolute positioning. */
+.window-titlebar {
+  height: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-app-region: no-drag;
+}
+
 /* Window content area — min-height: 0 lets the flex item shrink below
-   its content's intrinsic minimum so overflow: hidden can clip. */
+   its content's intrinsic minimum so overflow: hidden can clip.
+   user-select: text ensures window body content (dev zone textarea,
+   prompt preview, chat messages, etc.) remains text-selectable. */
 .window-content {
   flex: 1;
   min-height: 0;
@@ -1145,6 +1186,14 @@ body {
   display: flex;
   flex-direction: column;
   background: #111111;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.window-content input,
+.window-content textarea,
+.window-content [contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* ─── Resize Handles ──────────────────────────────────────────── */
@@ -1801,7 +1850,7 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #7C3AED;
+  background: #4DA8FF;
   border: 2px solid #fff;
   opacity: 0.35;
   transition: opacity 0.15s ease;
@@ -1851,10 +1900,25 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.045),
     0 22px 60px rgba(0, 0, 0, 0.18);
   cursor: grab;
+  transition: border-color 0.15s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pipeline-frame-node {
+    transition: none;
+  }
 }
 
 .pipeline-frame-node:active {
   cursor: grabbing;
+}
+
+/* Hover / keyboard-focus / selected — same electric-blue interaction language as
+   the desktop window frames. Dashed → solid is a non-color (pattern) state cue. */
+.pipeline-frame-node:hover,
+.pipeline-frame-node:focus-within,
+.react-flow__node.selected .pipeline-frame-node {
+  border-color: #4285F4;
+  border-style: solid;
 }
 
 .pipeline-frame-title {
@@ -2163,8 +2227,20 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
+/* Hover / keyboard-focus / selected — same electric-blue interaction language
+   as .desktop-window and .pipeline-frame-node (index.css:744-749, 1917-1922).
+   An outline, not a border-color change: it layers cleanly on top of the
+   execution-status border-color states below (running/compiling/paused/
+   completed/error) instead of fighting them for the same CSS property. */
+.step-node-shell:hover,
+.step-node-shell:focus-within,
+.react-flow__node.selected .step-node-shell {
+  outline: 2px solid #4285F4;
+  outline-offset: -2px;
+}
+
 .step-node-shell.is-execution-running {
-  border-color: rgba(250, 204, 21, 0.78);
+  border-color: rgba(77, 168, 255, 0.78);
   overflow: visible;
   animation: step-node-running-pulse 1.15s ease-in-out infinite;
 }
@@ -2201,6 +2277,39 @@ body {
   to {
     --ring-angle: 360deg;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-node-shell.is-execution-running {
+    animation: none;
+  }
+  .step-node-shell.is-execution-running::after {
+    animation: none;
+  }
+}
+
+/* Compiling/paused previously fell back to idle (zero visual treatment).
+   Both take the amber freed up by repointing "running" to blue above, so
+   the same hue no longer means two different things depending on which UI
+   tier you're looking at (card vs. step-config-status modal badge). Solid
+   vs. dashed keeps the two distinct from each other without relying on
+   color alone — the same non-color pattern cue .pipeline-frame-node already
+   uses for its own dashed↔solid states. */
+.step-node-shell.is-execution-compiling {
+  border-color: rgba(250, 204, 21, 0.65);
+  box-shadow:
+    0 0 0 1px rgba(250, 204, 21, 0.22),
+    0 18px 42px rgba(250, 204, 21, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.step-node-shell.is-execution-paused {
+  border-style: dashed;
+  border-color: rgba(250, 204, 21, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(250, 204, 21, 0.14),
+    0 18px 42px rgba(250, 204, 21, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .step-node-shell.is-execution-completed {
@@ -2246,15 +2355,15 @@ body {
   0%,
   100% {
     box-shadow:
-      0 0 0 1px rgba(250, 204, 21, 0.2),
-      0 18px 42px rgba(250, 204, 21, 0.1),
+      0 0 0 1px rgba(77, 168, 255, 0.2),
+      0 18px 42px rgba(77, 168, 255, 0.1),
       inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
 
   50% {
     box-shadow:
-      0 0 0 3px rgba(250, 204, 21, 0.22),
-      0 22px 52px rgba(250, 204, 21, 0.18),
+      0 0 0 3px rgba(77, 168, 255, 0.22),
+      0 22px 52px rgba(77, 168, 255, 0.18),
       inset 0 1px 0 rgba(255, 255, 255, 0.11);
   }
 }
@@ -2384,6 +2493,7 @@ body {
 }
 
 .step-node-chip-remove {
+  position: relative; /* anchor for the hit-slop pseudo-element below */
   width: 15px;
   height: 15px;
   border: none;
@@ -2396,6 +2506,22 @@ body {
   color: rgba(244, 244, 245, 0.72);
   background: rgba(255, 255, 255, 0.08);
   cursor: pointer;
+}
+
+/* Hit-slop capped at 28×28 rather than the usual 44×44 (AAA 2.5.5): chips
+   wrap at a 30px row pitch (24px chip height + 6px list gap), so a full
+   44px zone would overlap the remove button of a chip in the row above or
+   below and risk removing the wrong role/mod. 28px stays clear of that
+   collision (2px buffer either side) while still roughly doubling the
+   15×15 target in each dimension. */
+.step-node-chip-remove::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  transform: translate(-50%, -50%);
 }
 
 .step-node-chip-remove:hover {
@@ -2459,6 +2585,7 @@ body {
 /* ─── Step Node: root / terminal badges ───────────────────────── */
 
 .step-node-badge {
+  position: relative; /* anchor for the 44×44 hit-slop pseudo-element below */
   width: 18px;
   height: 18px;
   border-radius: 5px;
@@ -2466,6 +2593,19 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+/* Same invisible hit-slop technique as .step-node-run-btn (AAA 2.5.5).
+   Single-row header cluster, no wrap, so this is safe even though the
+   root/terminal/fork badges are informational today. */
+.step-node-badge::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 
 .step-node-badge--root {
@@ -2498,6 +2638,34 @@ body {
   .step-node-badge--fork {
     transition: none;
   }
+}
+
+/* ─── Step Node: execution-status glyph (header cluster) ───────── */
+/* Non-color status cue shown before the inline Run button — "running" is
+   the branded HelioxSpinner (colored by its own gradient, not CSS `color`);
+   idle renders nothing at all. Colors below echo each state's card-ring
+   hue so the glyph reinforces, rather than contradicts, the border. */
+
+.step-node-status {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-node-status--compiling,
+.step-node-status--paused {
+  color: rgba(250, 204, 21, 0.85);
+}
+
+.step-node-status--completed {
+  color: #4ADE80;
+}
+
+.step-node-status--error {
+  color: #F87171;
 }
 
 /* ─── Step Node: connection-aware count pill ───────────────────── */
@@ -2638,6 +2806,523 @@ body {
   display: none;
 }
 
+/* ─── Step Config Panel (editable "Ver Step" surface) ──────────── */
+/* Dynamic per-step-type accent comes in via `--step-accent` (inline, set
+   from stepTypeMeta) — same pattern as .step-node-shell. */
+
+.step-config-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.step-config-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 92vw);
+  max-height: min(760px, 86vh);
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--step-accent, #A78BFA) 20%, transparent);
+  background: #1a1a1a;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.6),
+    0 0 0 1px color-mix(in srgb, var(--step-accent, #A78BFA) 10%, transparent);
+  color: #e4e4e7;
+  overflow: hidden;
+}
+
+.step-config-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 18px 16px 14px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--step-accent, #A78BFA) 12%, transparent);
+}
+
+.step-config-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--step-accent, #A78BFA) 14%, rgba(20, 20, 20, 0.7));
+  border: 1.5px solid color-mix(in srgb, var(--step-accent, #A78BFA) 40%, transparent);
+  color: var(--step-accent, #A78BFA);
+}
+
+.step-config-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-config-kicker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  /* Lightened toward white for AAA text contrast (≥7:1) against the panel —
+     the raw accent (used for icons/borders elsewhere) reads a bit low for
+     10px text across all four step-type accents. */
+  color: color-mix(in srgb, var(--step-accent, #A78BFA) 85%, white);
+}
+
+.step-config-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: #f4f4f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step-config-close {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #b0b0b8;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.step-config-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f4f5;
+}
+
+.step-config-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.step-config-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  /* #a8a8b0 solid — AAA text contrast (≥7:1) against both the panel
+     (#1a1a1a) and card (#111111) surfaces used throughout this panel; reused
+     below for every "muted/secondary" text role instead of a low-alpha tint,
+     since alpha blending's effective contrast depends on whatever surface
+     happens to sit behind it. */
+  color: #a8a8b0;
+  margin: 16px 0 8px;
+}
+
+.step-config-section-label:first-child {
+  margin-top: 10px;
+}
+
+.step-config-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(212, 212, 216, 0.82);
+  margin-bottom: 6px;
+}
+
+/* ── Instructions editor ── */
+
+.step-config-textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border-radius: 8px;
+  border: 1px solid rgba(63, 63, 70, 0.3);
+  background: #111111;
+  color: #e4e4e7;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 10px 12px;
+}
+
+.step-config-textarea::placeholder {
+  color: #a8a8b0;
+  opacity: 1; /* override Firefox's default placeholder dimming so the AAA color holds */
+}
+
+/* ── Atom (role/mod) rows ── */
+
+.step-config-atom-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.step-config-atom-row {
+  --atom-accent: #4285F4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--atom-accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--atom-accent) 20%, transparent);
+}
+
+.step-config-atom-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--atom-accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--atom-accent) 40%, transparent);
+  color: var(--atom-accent);
+}
+
+.step-config-atom-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-config-atom-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f4f4f5;
+}
+
+.step-config-atom-desc {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #a8a8b0;
+}
+
+.step-config-atom-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.step-config-atom-tag {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--atom-accent) 10%, transparent);
+  /* Lightened toward white for AAA text contrast — see .step-config-kicker. */
+  color: color-mix(in srgb, var(--atom-accent) 65%, white);
+  border: 1px solid color-mix(in srgb, var(--atom-accent) 20%, transparent);
+}
+
+.step-config-remove-btn {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  border: 1px solid rgba(240, 37, 37, 0.18);
+  background: rgba(240, 37, 37, 0.06);
+  color: rgba(248, 113, 113, 0.85);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.step-config-remove-btn:hover {
+  background: rgba(240, 37, 37, 0.14);
+  color: #f87171;
+}
+
+.step-config-empty {
+  margin: 0 0 10px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px dashed rgba(161, 161, 170, 0.22);
+  background: rgba(255, 255, 255, 0.02);
+  color: #a8a8b0;
+  font-size: 11px;
+  text-align: center;
+}
+
+/* ── Picker (native select + attach button) ── */
+
+.step-config-picker {
+  margin-bottom: 4px;
+}
+
+.step-config-picker-row {
+  display: flex;
+  gap: 8px;
+}
+
+.step-config-select {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid rgba(63, 63, 70, 0.3);
+  background: #111111;
+  color: #e4e4e7;
+  font-size: 12px;
+  font-family: var(--font-inter);
+  padding: 0 10px;
+}
+
+.step-config-select:disabled {
+  opacity: 0.5;
+}
+
+.step-config-attach-btn {
+  flex-shrink: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(77, 168, 255, 0.3);
+  background: rgba(77, 168, 255, 0.12);
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-manrope);
+  transition: background 0.15s ease;
+}
+
+.step-config-attach-btn:hover:not(:disabled) {
+  background: rgba(77, 168, 255, 0.2);
+}
+
+.step-config-attach-btn:disabled {
+  opacity: 0.45;
+}
+
+.step-config-hint {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #a8a8b0;
+}
+
+.step-config-error {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fca5a5;
+}
+
+/* ── Connections ── */
+
+.step-config-connections {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.step-config-connection-card {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #111111;
+  border: 1px solid rgba(63, 63, 70, 0.15);
+}
+
+.step-config-connection-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #a8a8b0;
+  margin-bottom: 4px;
+}
+
+.step-config-connection-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e4e4e7;
+}
+
+.step-config-connection-value--empty {
+  font-size: 11px;
+  font-weight: 400;
+  color: #a8a8b0;
+}
+
+/* ── Status badge ── */
+
+.step-config-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 9px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.step-config-status--idle {
+  /* Status text colors below are lightened toward white so the badge text
+     itself clears AAA (≥7:1) against its own translucent tinted background
+     — the raw hue (still used for the border) reads a bit low at this size. */
+  color: color-mix(in srgb, #808080 55%, white);
+  background: rgba(128, 128, 128, 0.1);
+  border: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.step-config-status--compiling,
+.step-config-status--paused {
+  color: color-mix(in srgb, #f59e0b 85%, white);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.step-config-status--running {
+  color: color-mix(in srgb, #4DA8FF 65%, white);
+  background: rgba(77, 168, 255, 0.15);
+  border: 1px solid rgba(77, 168, 255, 0.35);
+}
+
+.step-config-status--completed {
+  color: #A0F695;
+  background: rgba(160, 246, 149, 0.15);
+  border: 1px solid rgba(160, 246, 149, 0.2);
+}
+
+.step-config-status--error {
+  color: color-mix(in srgb, #F02525 45%, white);
+  background: rgba(240, 37, 37, 0.1);
+  border: 1px solid rgba(240, 37, 37, 0.2);
+}
+
+/* ── Run actions ── */
+
+.step-config-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.step-config-run-btn,
+.step-config-run-from-btn {
+  flex: 1;
+  min-width: 150px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: var(--font-manrope);
+  transition: background 0.15s ease;
+}
+
+.step-config-run-btn {
+  border: 1px solid color-mix(in srgb, var(--step-accent, #A78BFA) 45%, transparent);
+  background: color-mix(in srgb, var(--step-accent, #A78BFA) 18%, rgba(20, 20, 20, 0.6));
+  color: #f4f4f5;
+}
+
+.step-config-run-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--step-accent, #A78BFA) 28%, rgba(20, 20, 20, 0.6));
+}
+
+.step-config-run-from-btn {
+  border: 1px solid rgba(161, 161, 170, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(228, 228, 231, 0.85);
+}
+
+.step-config-run-from-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.step-config-run-btn:disabled,
+.step-config-run-from-btn:disabled {
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-config-close,
+  .step-config-remove-btn,
+  .step-config-attach-btn,
+  .step-config-run-btn,
+  .step-config-run-from-btn {
+    transition: none;
+  }
+}
+
+/* ─── Step Node: inline Run button (header cluster) ────────────── */
+
+.step-node-run-btn {
+  position: relative; /* anchor for the 44×44 hit-slop pseudo-element below */
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(160, 246, 149, 0.28);
+  background: rgba(160, 246, 149, 0.1);
+  color: rgba(160, 246, 149, 0.92);
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+/* Invisible 44×44 hit-slop (AAA 2.5.5) — visual size stays 18×18 (no layout
+   change), only the tappable/clickable area grows. Safe here: this is the
+   sole interactive element in this stretch of the header cluster, so there
+   is no sibling hit-slop for it to collide with. */
+.step-node-run-btn::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+.step-node-run-btn:hover:not(:disabled) {
+  background: rgba(160, 246, 149, 0.2);
+}
+
+.step-node-run-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-node-run-btn {
+    transition: none;
+  }
+}
+
+/* Focus-return target: StepNode's article becomes programmatically
+   focusable (tabIndex=-1) so closing the Step Config panel can restore
+   focus to a stable element instead of a long-gone context-menu button. */
+.step-node-shell:focus-visible {
+  outline: 2px solid rgba(77, 168, 255, 0.7);
+  outline-offset: 2px;
+}
+
 /* ─── Role Slot, Flow Slot & Modifiers ────────────────────────── */
 .attached-items {
   display: flex;
@@ -2736,10 +3421,16 @@ body {
 .marketplace-search::placeholder { color: #888; }
 .marketplace-search:focus { border-color: rgba(var(--cli-accent-rgb), 0.3); }
 
-/* Plugin card — Figma-style grid cell (light) */
+/* Plugin card — Figma-style grid cell (light).
+   Root element is a real <button> (wrapped by a plain <li> for list
+   semantics) — width/height/text-align make it fill and behave like the
+   <li>'s grid cell exactly as the anchor it replaced did by default. */
 .plugin-card {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  height: 100%;
+  text-align: left;
   padding: 15% 15%;
   color: #1a1a2e;
   text-decoration: none;
@@ -2762,7 +3453,12 @@ body {
   flex-shrink: 0;
 }
 
-.plugin-card h3 {
+/* Title/description/author/type are explicit classes, not h3/p or
+   :nth-of-type counting — the card's root is now a <button>, which (unlike
+   the <a> it replaced) only permits phrasing content, and tag/positional
+   selectors would silently mis-target once any sibling span count changes. */
+.plugin-card-title {
+  display: block;
   font-size: 14px;
   font-weight: 700;
   margin: 1.6rem 0 0.7rem 0;
@@ -2770,22 +3466,27 @@ body {
   font-family: var(--font-manrope);
 }
 
-.plugin-card p {
+.plugin-card-desc {
+  display: block;
   font-size: 12px;
   line-height: 1.45;
   margin: 0 0 0.8rem 0;
   color: #555;
 }
 
-.plugin-card span {
-  opacity: 0.8;
+.plugin-card-author,
+.plugin-card-type {
+  /* #555 @ opacity 1 = ~7.45:1 on white — meets WCAG AAA (7:1) for small text.
+     (The previous #666/#777 combined with opacity:0.8 dropped effective
+     contrast to ~3.7:1, below even AA — fixed here rather than carried into
+     the restructured card.) */
+  display: block;
   font-size: 12px;
-  color: #666;
+  color: #555;
 }
-.plugin-card span:nth-of-type(2) {
+.plugin-card-type {
   margin-top: 4px;
   font-size: 11px;
-  color: #777;
 }
 
 /* ─── Animations ──────────────────────────────────────────────── */

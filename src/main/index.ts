@@ -80,7 +80,7 @@ function createWindow(): BrowserWindow {
     y: savedState.y,
     minWidth: 1024,
     minHeight: 700,
-    title: 'Heliox IDE — HeO2',
+    title: 'Heliox IDE',
     titleBarStyle: 'hiddenInset',
     icon: iconPath,
     backgroundColor: '#0c0a09',

@@ -23,8 +23,8 @@ import { getHueFromHex, getMentalTextContrastColor, mentalHueToHex } from '../..
 import type { MentalShape } from '@/types/desktop';
 
 const MENTAL_COLOR_SWATCHES = [
-  '#EDE9FE', '#FBCFE8', '#FDE68A', '#86EFAC',
-  '#BFDBFE', '#F9A8D4', '#FDBA74', '#C4B5FD',
+  '#BFDBFE', '#EDE9FE', '#FBCFE8', '#FDE68A',
+  '#86EFAC', '#F9A8D4', '#FDBA74', '#C4B5FD',
 ];
 
 export interface MentalNodeData {
@@ -153,6 +153,7 @@ export function MentalNode({ id, data }: NodeProps) {
   const mentalTool = useDesktopStore((s) => s.mentalTool);
   const mentalEditingNodeId = useDesktopStore((s) => s.mentalEditingNodeId);
   const setMentalEditingNodeId = useDesktopStore((s) => s.setMentalEditingNodeId);
+  const bringMentalToFront = useDesktopStore((s) => s.bringMentalToFront);
 
   const [isColorModalOpen, setIsColorModalOpen] = useState(false);
   const [hue, setHue] = useState(() => getHueFromHex(color));
@@ -199,6 +200,7 @@ export function MentalNode({ id, data }: NodeProps) {
         data-testid={`mental-graph-node-${id}`}
         className={`mental-card mental-shape-${shape}`}
         style={{ width, height, position: 'relative' }}
+        onPointerDownCapture={() => bringMentalToFront(id)}
         onClick={() => {
           if (mentalTool === 'ramification') return;
           setMentalEditingNodeId(id);

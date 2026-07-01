@@ -27,8 +27,30 @@ const TYPE_META: Record<AttachableType, { color: string; icon: string; label: st
   step: { color: '#2BB673', icon: 'ListChecks', label: 'Step' },
 };
 
+// aria-label prefix per window type — renderGroup() is shared by Chats,
+// Backlog, Plugins, and Prompt Dev Zone, so the prefix must key off the
+// row's own win.type rather than a single hardcoded word (see File:/Grid:
+// precedent below for file-viewer/grid rows).
+const WINDOW_KIND_LABEL: Record<string, string> = {
+  chat: 'Chat',
+  backlog: 'Backlog',
+  plugin: 'Plugin',
+  'prompt-dev-zone': 'Prompt Dev Zone',
+};
+
 function kebabToTitle(str: string): string {
   return str.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+/** Keyboard activation (Enter/Space) for rows using role="button" instead of a real <button>
+ *  — the row hosts inner Minimize/Close buttons, so it can't itself be a <button> (invalid nesting). */
+function activateOnKey(handler: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      handler();
+    }
+  };
 }
 
 export function NodeTree() {
@@ -228,12 +250,15 @@ export function NodeTree() {
 
           return (
             <div key={win.id}>
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => navigateToWindow(win.id)}
+                onKeyDown={activateOnKey(() => navigateToWindow(win.id))}
                 onMouseEnter={() => setHoveredWindowId(win.id)}
                 onMouseLeave={() => setHoveredWindowId(null)}
                 onContextMenu={(e) => openContextMenu(e, { kind: 'window', id: win.id })}
-                aria-label={`Window: ${win.title}${isActive ? ', active' : ''}`}
+                aria-label={`${WINDOW_KIND_LABEL[win.type] ?? 'Component'}: ${win.title}${isActive ? ', active' : ''}`}
                 data-testid={`nav-window-${win.id}`}
                 className="nav-window-item"
                 style={{
@@ -316,7 +341,7 @@ export function NodeTree() {
                 >
                   <LucideIcon name="X" size={10} />
                 </button>
-              </button>
+              </div>
 
               {/* Attached children (roles, flows, mods) */}
               {attachedItems.map(item => {
@@ -414,7 +439,7 @@ export function NodeTree() {
         <div style={{
           padding: '24px 16px', textAlign: 'center', color: theme.textGhost, fontSize: 12,
         }}>
-          No windows open
+          No components open
         </div>
       ) : (
         <>
@@ -438,11 +463,14 @@ export function NodeTree() {
                 const attachedItems = getAttachedItems(win);
                 return (
                   <div key={win.id}>
-                    <button
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => navigateToWindow(win.id)}
+                      onKeyDown={activateOnKey(() => navigateToWindow(win.id))}
                       onMouseEnter={() => setHoveredWindowId(win.id)}
                       onMouseLeave={() => setHoveredWindowId(null)}
-                      aria-label={`Window: ${win.title}${isActive ? ', active' : ''}`}
+                      aria-label={`File: ${win.title}${isActive ? ', active' : ''}`}
                       data-testid={`nav-window-${win.id}`}
                       className="nav-window-item"
                       style={{
@@ -466,7 +494,7 @@ export function NodeTree() {
                       <button onClick={(e) => handleRemove(win.id, e)} title="Close" aria-label={`Close ${win.title}`} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
                         <LucideIcon name="X" size={10} />
                       </button>
-                    </button>
+                    </div>
                     {attachedItems.map(item => {
                       const meta = TYPE_META[item.type];
                       return (
@@ -484,9 +512,12 @@ export function NodeTree() {
                 const isActive = win.id === activeWindowId;
                 const isMinimized = win.state === 'minimized';
                 return (
-                  <button
+                  <div
                     key={win.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => navigateToWindow(win.id)}
+                    onKeyDown={activateOnKey(() => navigateToWindow(win.id))}
                     onMouseEnter={() => setHoveredWindowId(win.id)}
                     onMouseLeave={() => setHoveredWindowId(null)}
                     aria-label={`File: ${win.title}${isActive ? ', active' : ''}`}
@@ -510,7 +541,7 @@ export function NodeTree() {
                     <button onClick={(e) => handleRemove(win.id, e)} title="Close" aria-label={`Close ${win.title}`} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
                       <LucideIcon name="X" size={10} />
                     </button>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -538,8 +569,11 @@ export function NodeTree() {
                   .filter((w): w is typeof windows[number] => Boolean(w));
                 return (
                   <div key={grid.id}>
-                    <button
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => navigateToGrid(grid.id)}
+                      onKeyDown={activateOnKey(() => navigateToGrid(grid.id))}
                       onContextMenu={(e) => openContextMenu(e, { kind: 'grid', id: grid.id })}
                       aria-label={`Grid: ${grid.title ?? `${grid.columns}×${grid.rows}`}`}
                       data-testid={`nav-grid-${grid.id}`}
@@ -599,7 +633,7 @@ export function NodeTree() {
                       >
                         <LucideIcon name="X" size={10} />
                       </button>
-                    </button>
+                    </div>
                     {/* Child windows in grid cells */}
                     {childWindows.map(cw => (
                       <div
@@ -730,14 +764,14 @@ export function NodeTree() {
                 {mentalMode === 'off' && (
                   <button
                     onClick={() => setMentalMode('square')}
-                    title="Enable mental authoring"
+                    title="Enable Mental Authoring"
                     style={{
                       background: 'none', border: 'none', cursor: 'pointer',
                       color: theme.textMuted, fontSize: 9, padding: '0 2px',
                       fontFamily: theme.fontMono, letterSpacing: '0.04em',
                     }}
                   >
-                    Show ▸
+                    Enable Mental Authoring
                   </button>
                 )}
               </div>

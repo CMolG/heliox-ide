@@ -32,15 +32,9 @@ export function TutorialEngine() {
   const scenario = activeTutorial ? getTutorialScenario(activeTutorial) : null;
   const steps = scenario?.steps ?? [];
 
-  // Auto-start workspace tutorial if not completed (backward compat with old QuickTour)
-  useEffect(() => {
-    if (!settings.tourCompleted && !activeTutorial) {
-      const timer = setTimeout(() => {
-        setActiveTutorial('workspace');
-      }, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [settings.tourCompleted, activeTutorial, setActiveTutorial]);
+  // No auto-start: the workspace tutorial only launches on demand — from the
+  // Help modal's "Take the tour" action, or Settings › Tutorials (both call
+  // setActiveTutorial('workspace')) — never on an unconditional timer.
 
   // Show/hide based on active tutorial
   useEffect(() => {

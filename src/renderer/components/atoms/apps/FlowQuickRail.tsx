@@ -83,6 +83,8 @@ export function FlowQuickRail({ windowId, accent }: FlowQuickRailProps) {
         padding: '8px 6px',
         borderLeft: `1px solid ${theme.border}`,
         background: theme.surface,
+        overflowY: 'auto',
+        minHeight: 0,
       }}
     >
       <div

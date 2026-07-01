@@ -187,23 +187,42 @@ export function Dock() {
           }
           break;
         }
-        case 'arena': {
-          // Singleton — focus the existing Arena window or open a new one
-          const existing = useDesktopStore.getState().windows.find(w => w.type === 'arena');
-          if (existing) {
-            navigateToWindow(existing.id);
-          } else {
-            const winId = addWindow('arena', {
-              title: 'Heliox Arena',
-              iconName: 'Trophy',
-              size: { width: 900, height: 560 },
-            });
-            requestAnimationFrame(() => navigateToWindow(winId));
-          }
+        case 'new-step': {
+          // Create a single step node at the current viewport center.
+          const state = useDesktopStore.getState();
+          const pan = state.canvasPan;
+          const zoom = state.canvasZoom;
+          const vpW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+          const vpH = typeof window !== 'undefined' ? window.innerHeight : 800;
+          const cx = (vpW / 2 - pan.x) / zoom;
+          const cy = (vpH / 2 - pan.y) / zoom;
+          state.addStepNode({ position: { x: cx - 150, y: cy - 95 } });
           break;
         }
-        case 'grid': {
-          useDesktopStore.getState().addGrid();
+        case 'new-flow': {
+          // Create a flow scaffold: an initiator step + one next step, wired
+          // with a directed FlowEdge (source right handle → target left handle).
+          // The initiator's isRoot badge (Play icon in StepNode) marks it as
+          // the flow entry point. Chat windows remain a separate entity — wiring
+          // a chat session into the graph as the initiator is a follow-up task.
+          const state = useDesktopStore.getState();
+          const pan = state.canvasPan;
+          const zoom = state.canvasZoom;
+          const vpW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+          const vpH = typeof window !== 'undefined' ? window.innerHeight : 800;
+          const cx = (vpW / 2 - pan.x) / zoom;
+          const cy = (vpH / 2 - pan.y) / zoom;
+          const initiatorId = state.addStepNode({
+            position: { x: cx - 180, y: cy },
+            title: 'Flow Start',
+            stepType: 'llm_call',
+          });
+          const nextId = state.addStepNode({
+            position: { x: cx + 180, y: cy },
+            title: 'Next Step',
+            stepType: 'llm_call',
+          });
+          state.addMentalEdge(initiatorId, nextId, 'link', 'right', 'left');
           break;
         }
       }
@@ -276,15 +295,6 @@ export function Dock() {
               size: { width: 720, height: 480 },
               position: { x: dropX, y: dropY },
             });
-          } else if (item.type === 'action' && item.action === 'grid') {
-            const store = useDesktopStore.getState();
-            const zoom = store.canvasZoom;
-            const pan = store.canvasPan;
-            const containerEl = document.querySelector('.desktop-canvas');
-            const rect = containerEl?.getBoundingClientRect();
-            const cx = rect ? (ev.clientX - rect.left - pan.x) / zoom : dropX;
-            const cy = rect ? (ev.clientY - rect.top - pan.y) / zoom : dropY;
-            store.addGrid({ position: { x: cx, y: cy } });
           } else if (item.type === 'plugin' && item.pluginId) {
             const plugin = installedPlugins.find(p => p.id === item.pluginId);
             if (plugin) {

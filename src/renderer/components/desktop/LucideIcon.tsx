@@ -127,6 +127,12 @@ export const LucideIcon = memo(function LucideIcon({
   strokeWidth,
   style,
 }: LucideIconProps) {
+  // Defensive guard: a missing/undefined name must never crash the React tree
+  // (icon resolution calls name.startsWith). Render a neutral fallback instead.
+  if (!name) {
+    return <LuTerminal aria-hidden="true" size={size} className={className} style={{ opacity: 0.4, ...style }} />;
+  }
+
   // 1. Try static map first (zero-cost, no lazy)
   const StaticIcon = ICON_MAP[name];
   if (StaticIcon) {

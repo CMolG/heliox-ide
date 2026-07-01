@@ -415,7 +415,7 @@ export function SettingsModal() {
         <div className="settings-footer">
           <div>
             <span className="settings-footer-brand">
-              Heliox <span className="settings-footer-sub">(HeO₂)</span>
+              Heliox
             </span>
             <span className="settings-footer-version">v0.1.0 — AI Agent IDE</span>
           </div>

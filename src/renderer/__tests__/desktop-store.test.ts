@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { PipelineAssembly } from '@/types/meta-agent';
-import { useDesktopStore } from '../store/desktop-store';
+import { useDesktopStore, getStepMentalAttachments } from '../store/desktop-store';
 
 // Reset store to pristine state before each test
 beforeEach(() => {
@@ -146,7 +146,7 @@ describe('Window CRUD', () => {
 });
 
 describe('Persisted dock migrations', () => {
-  it('v3 migration restores backlog and mind draw dock actions when missing', () => {
+  it('v3 migration restores backlog and mind draw dock actions when missing; v15 strips grid', () => {
     const migrate = useDesktopStore.persist.getOptions().migrate;
     expect(migrate).toBeDefined();
 
@@ -163,14 +163,52 @@ describe('Persisted dock migrations', () => {
     const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 3);
     const actions = migrated.dockItems.map((item: { action: string }) => item.action);
 
+    // v3→v4 inserts backlog + mental-draw-toggle; v15 removes the grid action;
+    // v16 inserts new-step + new-flow between mental-draw-toggle and marketplace.
     expect(actions).toEqual([
       'new-chat',
       'file-explorer',
       'backlog',
-      'grid',
       'mental-draw-toggle',
+      'new-step',
+      'new-flow',
       'marketplace',
     ]);
+    // v15 migration also clears the grids array
+    expect(migrated.grids).toEqual([]);
+  });
+
+  it('v15 migration strips grid dock item and clears stale gridId from windows', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    expect(migrate).toBeDefined();
+
+    const persisted = {
+      dockItems: [
+        { id: 'dock-new-chat', type: 'action', label: 'New Chat', iconName: 'MessageSquare', action: 'new-chat' },
+        { id: 'dock-grid', type: 'action', label: 'Grid', iconName: 'LayoutGrid', action: 'grid' },
+        { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
+      ],
+      grids: [{ id: 'grid-1', position: { x: 0, y: 0 }, size: { width: 640, height: 480 }, columns: 2, rows: 2, cells: ['win-1', null, null, null] }],
+      windows: [
+        { id: 'win-1', type: 'chat', title: 'Chat', gridId: 'grid-1', gridCellIndex: 0, gridColSpan: 1, gridRowSpan: 1, position: { x: 0, y: 0 }, size: { width: 300, height: 300 } },
+        { id: 'win-2', type: 'chat', title: 'Chat 2', position: { x: 100, y: 100 }, size: { width: 300, height: 300 } },
+      ],
+    };
+
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 14);
+    const actions = migrated.dockItems.map((item: { action: string }) => item.action);
+
+    expect(actions).not.toContain('grid');
+    expect(migrated.grids).toEqual([]);
+    // win-1 should have gridId/gridCellIndex stripped
+    const win1 = migrated.windows.find((w: { id: string }) => w.id === 'win-1');
+    expect(win1.gridId).toBeUndefined();
+    expect(win1.gridCellIndex).toBeUndefined();
+    expect(win1.gridColSpan).toBeUndefined();
+    expect(win1.gridRowSpan).toBeUndefined();
+    // win-2 is unchanged
+    const win2 = migrated.windows.find((w: { id: string }) => w.id === 'win-2');
+    expect(win2.position).toEqual({ x: 100, y: 100 });
   });
 });
 
@@ -409,16 +447,25 @@ describe('Window state management', () => {
   it('nextZIndex starts at 10 and increments with each addWindow', () => {
     expect(useDesktopStore.getState().nextZIndex).toBe(10);
     addChat();
-    expect(useDesktopStore.getState().nextZIndex).toBe(11);
-    addChat();
+    // addWindow uses globalTopZ which gives z = max(nextZIndex, 0, ...) + 1.
+    // With nextZIndex=10 and no other windows, z = 11, then nextZIndex = z+1 = 12.
     expect(useDesktopStore.getState().nextZIndex).toBe(12);
+    addChat();
+    // z = max(12, 11) + 1 = 13, nextZIndex = 14.
+    expect(useDesktopStore.getState().nextZIndex).toBe(14);
   });
 
-  it('focusWindow increments nextZIndex', () => {
-    const id = addChat();
-    const zBefore = useDesktopStore.getState().nextZIndex;
-    useDesktopStore.getState().focusWindow(id);
-    expect(useDesktopStore.getState().nextZIndex).toBe(zBefore + 1);
+  it('focusWindow brings the window above its peers (and advances the counter)', () => {
+    const id1 = addChat();
+    const id2 = addChat();
+    // Focus the older (currently-behind) window — it must rise above id2 even if
+    // the counter had drifted below the persisted zIndexes.
+    useDesktopStore.getState().focusWindow(id1);
+    const wins = useDesktopStore.getState().windows;
+    const w1 = wins.find(w => w.id === id1)!;
+    const w2 = wins.find(w => w.id === id2)!;
+    expect(w1.zIndex).toBeGreaterThan(w2.zIndex);
+    expect(useDesktopStore.getState().nextZIndex).toBeGreaterThan(w1.zIndex);
   });
 
   it('activeWindowId is set to last added window', () => {
@@ -835,6 +882,113 @@ describe('Mental Graph nodes and directed edges', () => {
     expect(afterRemoveNode.data).not.toBe(dataWithRole);
     expect(afterRemoveNode.data.roles).not.toBe(rolesWithRole);
     expect(afterRemoveNode.data.roles).toEqual([]);
+  });
+
+  it('addRoleToStep replaces an existing role — one role per step (mutually exclusive)', () => {
+    const store = useDesktopStore.getState();
+    const stepId = store.addStepNode({
+      position: { x: 100, y: 120 },
+      title: 'Exclusive role step',
+    });
+
+    const roleA = {
+      name: 'frontend-engineer', icon: 'MdCode', iconLibrary: 'md',
+      description: 'Builds frontend systems', tags: ['frontend'], color: '#E87040',
+    };
+    const roleB = {
+      name: 'backend-engineer', icon: 'MdStorage', iconLibrary: 'md',
+      description: 'Builds backend systems', tags: ['backend'], color: '#4285F4',
+    };
+
+    expect(store.addRoleToStep(stepId, roleA)).toBe(true);
+    expect(
+      (useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any).data.roles,
+    ).toEqual([roleA]);
+
+    // Attaching a different role replaces roleA — never coexists with it.
+    expect(store.addRoleToStep(stepId, roleB)).toBe(true);
+    const afterReplace = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(afterReplace.data.roles).toEqual([roleB]);
+
+    // Re-attaching the exact same already-sole role is a no-op.
+    expect(store.addRoleToStep(stepId, roleB)).toBe(false);
+    expect(
+      (useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any).data.roles,
+    ).toEqual([roleB]);
+  });
+
+  it('addModToStep rejects a mod that is incompatible with one already on the step', () => {
+    const store = useDesktopStore.getState();
+    const stepId = store.addStepNode({
+      position: { x: 100, y: 120 },
+      title: 'Compatibility step',
+    });
+
+    const designSystemA = {
+      name: 'design-system-a', icon: 'MdPalette', iconLibrary: 'md',
+      description: 'Design system A', tags: ['design'], incompatibleWith: ['design-system-b'],
+    };
+    const designSystemB = {
+      name: 'design-system-b', icon: 'MdPalette', iconLibrary: 'md',
+      description: 'Design system B', tags: ['design'], incompatibleWith: ['design-system-a'],
+    };
+    const strictLinting = {
+      name: 'strict-linting', icon: 'MdRule', iconLibrary: 'md',
+      description: 'Fail fast on lint drift', tags: ['quality'],
+    };
+
+    expect(store.addModToStep(stepId, designSystemA)).toBe(true);
+
+    // Incompatible mod is rejected — no mutation happens.
+    const beforeRejection = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(store.addModToStep(stepId, designSystemB)).toBe(false);
+    const afterRejection = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(afterRejection).toBe(beforeRejection);
+    expect(afterRejection.data.mods).toEqual([designSystemA]);
+
+    // A compatible mod still attaches fine.
+    expect(store.addModToStep(stepId, strictLinting)).toBe(true);
+    const afterCompatible = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(afterCompatible.data.mods).toEqual([designSystemA, strictLinting]);
+  });
+
+  it('updateStepData patches step fields immutably and persists the instructions prompt', () => {
+    const store = useDesktopStore.getState();
+    const stepId = store.addStepNode({
+      position: { x: 100, y: 120 },
+      title: 'Instructions step',
+    });
+
+    const beforeNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    const beforeData = beforeNode.data;
+
+    store.updateStepData(stepId, { prompt: 'Summarize the repo README in three bullet points.' });
+
+    const afterNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any;
+    expect(afterNode).not.toBe(beforeNode);
+    expect(afterNode.data).not.toBe(beforeData);
+    expect(afterNode.data.prompt).toBe('Summarize the repo README in three bullet points.');
+    // Unrelated fields survive the patch untouched.
+    expect(afterNode.data.title).toBe('Instructions step');
+
+    // "Reopening" (re-reading store state fresh) still sees the persisted edit.
+    expect(
+      (useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId) as any).data.prompt,
+    ).toBe('Summarize the repo README in three bullet points.');
+  });
+
+  it('updateStepData is a no-op for a stepId that does not exist', () => {
+    const store = useDesktopStore.getState();
+    const stepId = store.addStepNode({ position: { x: 0, y: 0 }, title: 'Untouched step' });
+    const beforeNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId);
+
+    store.updateStepData('no-such-step', { prompt: 'unreachable' });
+
+    const afterNodes = useDesktopStore.getState().mentalNodes;
+    expect(afterNodes).toHaveLength(1);
+    // The real node's reference is untouched — the map left it alone rather
+    // than materializing a patch for an id that doesn't exist.
+    expect(afterNodes.find((n: any) => n.id === stepId)).toBe(beforeNode);
   });
 
   it('addMentalNode creates a graph node with defaults', () => {
@@ -1260,5 +1414,287 @@ describe('Mental → Chat attachments', () => {
     useDesktopStore.getState().attachMentalToWindow(winId, []);
     expect(getWindow(winId)!.mentalAttachments).toHaveLength(1);
     expect(getWindow(winId)!.mentalAttachments![0].nodeIds).toEqual([]);
+  });
+});
+
+// ─── HUD Widgets slice ────────────────────────────────────────────
+
+describe('HUD Widgets slice', () => {
+  it('starts with the default predefined set (text-to-flow visible, others hidden)', () => {
+    const { hudWidgets } = useDesktopStore.getState();
+    expect(hudWidgets).toHaveLength(3);
+    const sessions = hudWidgets.find(w => w.type === 'agent-sessions');
+    const pipeline = hudWidgets.find(w => w.type === 'text-to-flow');
+    const notifs   = hudWidgets.find(w => w.type === 'notifications');
+    expect(sessions?.visible).toBe(false);
+    expect(pipeline?.visible).toBe(true);
+    expect(notifs?.visible).toBe(false);
+  });
+
+  it('setHudWidgetVisible shows a hidden widget', () => {
+    useDesktopStore.getState().setHudWidgetVisible('agent-sessions', true);
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'agent-sessions');
+    expect(widget?.visible).toBe(true);
+  });
+
+  it('setHudWidgetVisible hides a visible widget', () => {
+    useDesktopStore.getState().setHudWidgetVisible('text-to-flow', false);
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'text-to-flow');
+    expect(widget?.visible).toBe(false);
+  });
+
+  it('setHudWidgetVisible is idempotent', () => {
+    useDesktopStore.getState().setHudWidgetVisible('notifications', false);
+    useDesktopStore.getState().setHudWidgetVisible('notifications', false);
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'notifications');
+    expect(widget?.visible).toBe(false);
+  });
+
+  it('moveHudWidget updates position for the given type only', () => {
+    const newPos = { x: 500, y: 300 };
+    useDesktopStore.getState().moveHudWidget('notifications', newPos);
+    const notif = useDesktopStore.getState().hudWidgets.find(w => w.type === 'notifications');
+    expect(notif?.position).toEqual(newPos);
+    // Others unchanged
+    const sessions = useDesktopStore.getState().hudWidgets.find(w => w.type === 'agent-sessions');
+    expect(sessions?.position).not.toEqual(newPos);
+  });
+
+  it('toggleHudWidget flips visibility from false to true', () => {
+    const before = useDesktopStore.getState().hudWidgets.find(w => w.type === 'agent-sessions');
+    expect(before?.visible).toBe(false);
+    useDesktopStore.getState().toggleHudWidget('agent-sessions');
+    const after = useDesktopStore.getState().hudWidgets.find(w => w.type === 'agent-sessions');
+    expect(after?.visible).toBe(true);
+  });
+
+  it('toggleHudWidget flips visibility from true to false', () => {
+    useDesktopStore.getState().toggleHudWidget('text-to-flow');
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'text-to-flow');
+    expect(widget?.visible).toBe(false);
+  });
+
+  it('toggling does not affect other widget types', () => {
+    useDesktopStore.getState().toggleHudWidget('notifications');
+    const pipeline = useDesktopStore.getState().hudWidgets.find(w => w.type === 'text-to-flow');
+    expect(pipeline?.visible).toBe(true); // unchanged (still its own default)
+  });
+
+  it('all three widget types are present exactly once', () => {
+    const types = useDesktopStore.getState().hudWidgets.map(w => w.type);
+    expect(types).toContain('agent-sessions');
+    expect(types).toContain('text-to-flow');
+    expect(types).toContain('notifications');
+    expect(new Set(types).size).toBe(3);
+  });
+});
+
+// ─── getStepMentalAttachments ─────────────────────────────────────
+
+describe('getStepMentalAttachments', () => {
+  it('returns empty array when step has no mental node edges', () => {
+    const stepId = useDesktopStore.getState().addStepNode();
+    expect(getStepMentalAttachments(stepId)).toEqual([]);
+  });
+
+  it('returns mental node ids connected to step via edge (both directions)', () => {
+    const stepId = useDesktopStore.getState().addStepNode();
+    const m1 = useDesktopStore.getState().addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: 'A', color: '#fff', shape: 'square' });
+    const m2 = useDesktopStore.getState().addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: 'B', color: '#fff', shape: 'square' });
+    useDesktopStore.getState().addMentalEdge(m1, stepId, 'link');   // mental → step
+    useDesktopStore.getState().addMentalEdge(stepId, m2, 'link');   // step → mental
+    const result = getStepMentalAttachments(stepId);
+    expect(result).toHaveLength(2);
+    expect(result).toContain(m1);
+    expect(result).toContain(m2);
+  });
+
+  it('does not return step-to-step edges as attachments', () => {
+    const stepA = useDesktopStore.getState().addStepNode();
+    const stepB = useDesktopStore.getState().addStepNode();
+    useDesktopStore.getState().addMentalEdge(stepA, stepB, 'link');
+    expect(getStepMentalAttachments(stepA)).toEqual([]);
+    expect(getStepMentalAttachments(stepB)).toEqual([]);
+  });
+
+  it('does not return unrelated mental node attachments', () => {
+    const stepA = useDesktopStore.getState().addStepNode();
+    const stepB = useDesktopStore.getState().addStepNode();
+    const m1 = useDesktopStore.getState().addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: 'C', color: '#fff', shape: 'square' });
+    useDesktopStore.getState().addMentalEdge(m1, stepB, 'link');  // attached to B, not A
+    expect(getStepMentalAttachments(stepA)).toEqual([]);
+  });
+});
+
+// ─── new-step and new-flow store operations ───────────────────────
+
+describe('new-step and new-flow store operations', () => {
+  it('addStepNode creates a step node with default llm_call type', () => {
+    const id = useDesktopStore.getState().addStepNode();
+    // Re-read state after mutation
+    const node = useDesktopStore.getState().mentalNodes.find(n => n.id === id);
+    expect(node).toBeDefined();
+    expect(node!.type).toBe('step');
+    expect((node as any).data.stepType).toBe('llm_call');
+  });
+
+  it('new-flow scaffold: two steps connected by a directed edge', () => {
+    const initiatorId = useDesktopStore.getState().addStepNode({ title: 'Flow Start', stepType: 'llm_call' });
+    const nextId = useDesktopStore.getState().addStepNode({ title: 'Next Step', stepType: 'llm_call' });
+    const edgeId = useDesktopStore.getState().addMentalEdge(initiatorId, nextId, 'link', 'right', 'left');
+    expect(edgeId).not.toBeNull();
+    // Re-read state after mutations
+    const edge = useDesktopStore.getState().mentalEdges.find(e => e.id === edgeId);
+    expect(edge).toBeDefined();
+    expect(edge!.sourceId).toBe(initiatorId);
+    expect(edge!.targetId).toBe(nextId);
+    expect(edge!.sourceHandle).toBe('right');
+    expect(edge!.targetHandle).toBe('left');
+  });
+
+  it('flow edge between two steps: both ends are step nodes', () => {
+    // Verifies the classification the rfEdges memo would use (step↔step = FlowEdge)
+    const a = useDesktopStore.getState().addStepNode();
+    const b = useDesktopStore.getState().addStepNode();
+    useDesktopStore.getState().addMentalEdge(a, b, 'link');
+    // Re-read state after mutations
+    const state = useDesktopStore.getState();
+    const stepIds = new Set(state.mentalNodes.filter(n => n.type === 'step').map(n => n.id));
+    const edge = state.mentalEdges[state.mentalEdges.length - 1];
+    expect(stepIds.has(edge.sourceId) && stepIds.has(edge.targetId)).toBe(true);
+  });
+});
+
+// ─── Unified z-stack (mentalZ + recency) ─────────────────────────
+
+describe('Unified z-stack: mentalZ and click-recency', () => {
+  it('starts with empty mentalZ', () => {
+    expect(useDesktopStore.getState().mentalZ).toEqual({});
+  });
+
+  it('addMentalNode assigns a mentalZ entry above any existing window zIndex', () => {
+    const winId = addChat();
+    const winZ = useDesktopStore.getState().windows.find(w => w.id === winId)!.zIndex!;
+    const nodeId = useDesktopStore.getState().addMentalNode({
+      position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square',
+    });
+    const nodeZ = useDesktopStore.getState().mentalZ[nodeId];
+    expect(nodeZ).toBeGreaterThan(winZ);
+  });
+
+  it('bringMentalToFront sets mentalZ[nodeId] above all window zIndexes', () => {
+    const nodeId = useDesktopStore.getState().addMentalNode({
+      position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square',
+    });
+    const winId = addChat();
+    const winZ = useDesktopStore.getState().windows.find(w => w.id === winId)!.zIndex!;
+    useDesktopStore.getState().bringMentalToFront(nodeId);
+    const nodeZ = useDesktopStore.getState().mentalZ[nodeId];
+    expect(nodeZ).toBeGreaterThan(winZ);
+  });
+
+  it('focusWindow gives the window a zIndex above the highest mentalZ', () => {
+    const nodeId = useDesktopStore.getState().addMentalNode({
+      position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square',
+    });
+    useDesktopStore.getState().bringMentalToFront(nodeId);
+    const highMentalZ = useDesktopStore.getState().mentalZ[nodeId];
+
+    const winId = addChat();
+    const winZ = useDesktopStore.getState().windows.find(w => w.id === winId)!.zIndex!;
+    expect(winZ).toBeGreaterThan(highMentalZ);
+  });
+
+  it('focusWindow (on existing window) rises above mentalZ', () => {
+    const winId = addChat();
+    const nodeId = useDesktopStore.getState().addMentalNode({
+      position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square',
+    });
+    // Bring mental to front first so its z is high
+    useDesktopStore.getState().bringMentalToFront(nodeId);
+    const mentalZ = useDesktopStore.getState().mentalZ[nodeId];
+    // Then focus the window — it must rise above mentalZ
+    useDesktopStore.getState().focusWindow(winId);
+    const winZ = useDesktopStore.getState().windows.find(w => w.id === winId)!.zIndex!;
+    expect(winZ).toBeGreaterThan(mentalZ);
+  });
+
+  it('bringMentalToFront includes connected component nodes', () => {
+    const store = useDesktopStore.getState();
+    const a = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    const b = store.addMentalNode({ position: { x: 300, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    store.addMentalEdge(a, b, 'link');
+    store.bringMentalToFront(a);
+    const state = useDesktopStore.getState();
+    // Both nodes in the component get the same high z
+    expect(state.mentalZ[a]).toBeDefined();
+    expect(state.mentalZ[b]).toBeDefined();
+    expect(state.mentalZ[a]).toBe(state.mentalZ[b]);
+  });
+
+  it('setSelectedMentalNodeIds does NOT change mentalZ (z is driven by pointer events only)', () => {
+    const nodeId = useDesktopStore.getState().addMentalNode({
+      position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square',
+    });
+    const zBefore = useDesktopStore.getState().mentalZ[nodeId];
+    useDesktopStore.getState().setSelectedMentalNodeIds([nodeId]);
+    const zAfter = useDesktopStore.getState().mentalZ[nodeId];
+    expect(zAfter).toBe(zBefore);
+  });
+});
+
+// ─── v16 migration — new-step + new-flow dock injection ──────────
+
+describe('v16 migration — new-step and new-flow dock injection', () => {
+  it('injects new-step and new-flow for persisted users missing them', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    expect(migrate).toBeDefined();
+
+    const persisted = {
+      dockItems: [
+        { id: 'dock-new-chat', type: 'action', label: 'New Chat', iconName: 'MessageSquare', action: 'new-chat' },
+        { id: 'dock-file-explorer', type: 'action', label: 'Files', iconName: 'FileText', action: 'file-explorer' },
+        { id: 'dock-backlog', type: 'action', label: 'Backlog', iconName: 'KanbanSquare', action: 'backlog' },
+        { id: 'dock-mental-draw-toggle', type: 'action', label: 'Mental', iconName: 'PenTool', action: 'mental-draw-toggle' },
+        { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
+      ],
+    };
+
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 15);
+    const actions = migrated.dockItems.map((item: { action: string }) => item.action);
+
+    expect(actions).toContain('new-step');
+    expect(actions).toContain('new-flow');
+    // Must be inserted between mental-draw-toggle and marketplace
+    const mentalIdx = actions.indexOf('mental-draw-toggle');
+    const newStepIdx = actions.indexOf('new-step');
+    const newFlowIdx = actions.indexOf('new-flow');
+    const marketIdx = actions.indexOf('marketplace');
+    expect(newStepIdx).toBeGreaterThan(mentalIdx);
+    expect(newFlowIdx).toBeGreaterThan(mentalIdx);
+    expect(newStepIdx).toBeLessThan(marketIdx);
+    expect(newFlowIdx).toBeLessThan(marketIdx);
+  });
+
+  it('is idempotent — does not duplicate existing new-step/new-flow', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    expect(migrate).toBeDefined();
+
+    const persisted = {
+      dockItems: [
+        { id: 'dock-new-chat', type: 'action', label: 'New Chat', iconName: 'MessageSquare', action: 'new-chat' },
+        { id: 'dock-new-step', type: 'action', label: 'New Step', iconName: 'SquarePlus', action: 'new-step' },
+        { id: 'dock-new-flow', type: 'action', label: 'New Flow', iconName: 'Workflow', action: 'new-flow' },
+        { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
+      ],
+    };
+
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 15);
+    const actions = migrated.dockItems.map((item: { action: string }) => item.action);
+
+    const newStepCount = actions.filter((a: string) => a === 'new-step').length;
+    const newFlowCount = actions.filter((a: string) => a === 'new-flow').length;
+    expect(newStepCount).toBe(1);
+    expect(newFlowCount).toBe(1);
   });
 });

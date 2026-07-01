@@ -27,11 +27,20 @@ test.beforeAll(async () => {
   page = await app.firstWindow();
   page.on('console', m => console.log(`[renderer:${m.type()}] ${m.text()}`));
   page.on('pageerror', err => console.log(`[renderer:pageerror] ${err.message}`));
+  await page.waitForURL(/^(?!about:blank)/, { timeout: 20_000 });
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(
     () => !!(window as any).__DESKTOP_STORE__ && !!(window as any).__HELIOX_STORE__,
     { timeout: 30_000 },
   );
+  await page.evaluate(() => {
+    try { localStorage.clear(); } catch { /* may be blocked */ }
+    const ds = (window as any).__DESKTOP_STORE__;
+    if (ds) {
+      ds.getState().updateSettings({ tourCompleted: true });
+      ds.getState().setActiveTutorial(null);
+    }
+  });
 });
 
 test.afterAll(async () => { await app?.close(); });
@@ -42,6 +51,10 @@ test.beforeEach(async () => {
     const store = (window as any).__DESKTOP_STORE__;
     if (!store) return;
     const s = store.getState();
+    // Dismiss tour/tutorial so the backdrop can't intercept clicks
+    s.updateSettings({ tourCompleted: true });
+    s.setActiveTutorial(null);
+    for (const e of [...(s.mentalEdges ?? [])]) s.removeMentalEdge(e.id);
     for (const n of [...s.mentalNodes]) s.removeMentalNode(n.id);
     for (const w of [...s.windows]) s.removeWindow(w.id);
     s.setSelectedMentalNodeIds([]);
