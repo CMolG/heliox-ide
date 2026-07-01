@@ -59,3 +59,51 @@ they are not listed above.
   principal)
 - Vulnerabilities in third-party AI CLIs (Copilot, Claude, Gemini, Codex)
   themselves — please report those upstream, to their respective maintainers
+
+## Bridge threat model
+
+The mobile Bridge (`src/main/bridge/`) pairs a phone to the desktop IDE over
+an HTTP + WebSocket server bound to the LAN. This section documents what the
+pairing design protects against today and what it deliberately does not.
+
+**What's protected:**
+
+- No durable secret travels in a URL. The QR encodes a single-use pairing
+  token in the URL fragment (`#pt=...`) rather than a query string —
+  fragments are stripped by the browser before a request leaves the client,
+  so they never reach server logs, LAN middleboxes, or `Referer` headers.
+  The companion app exchanges the token for a session token over a POST
+  body, and the session token itself travels as a WebSocket subprotocol
+  rather than `?token=` for the same reason.
+- Pairing is one-time. The QR's pairing token is invalidated on its first
+  exchange attempt, success or failure; the manual PIN is invalidated after
+  its first successful use. Both expire on a 2-minute TTL even if never
+  presented, a sharp reduction from the previous 30-minute reusable PIN.
+- Brute-force resistance. The exchange endpoint tracks failed attempts
+  per-IP and globally; 5 failures trigger a 60-second lockout, all failure
+  responses are identical in shape (no distinguishing "expired" from "wrong
+  PIN" from "locked out"), and every secret comparison runs through
+  `crypto.timingSafeEqual` over fixed-length hashes so a wrong guess can't
+  be timed or crash the comparison on a length mismatch.
+- Session hygiene. Session tokens are freshly issued on every successful
+  pairing, expiry is enforced server-side on every request (not only when
+  the periodic sweep runs), and starting or refreshing the bridge revokes
+  all previously issued sessions.
+
+**What's NOT protected yet:**
+
+- The bridge server is plaintext HTTP. An attacker who can passively sniff
+  LAN traffic during the pairing exchange, or during an active session, can
+  read the pairing token/PIN and the session token as they cross the wire,
+  then reuse a captured session token until it expires. This is the gap
+  tracked as action 1.6 in `docs/auditoria-integral-2026-07.md`; closing it
+  fully needs either TLS (a locally-trusted certificate) or a
+  password-authenticated key exchange (PAKE/SRP) so the shared secret never
+  appears on the wire even in transit, encrypted or not. Both remain
+  follow-up work.
+- No protection against an on-path attacker who can inject or modify
+  packets, not just observe them — that also requires TLS or PAKE.
+
+**Operating recommendation:** enable the Bridge only on networks you trust
+(home or office WiFi you control). Avoid public, shared, or otherwise
+untrusted LAN/hotel/coworking networks until TLS or PAKE pairing lands.

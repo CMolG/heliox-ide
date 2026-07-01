@@ -1,25 +1,26 @@
 /**
  * ConnectScreen — PIN entry and authentication
+ *
+ * QR-based pairing is handled by the parent (App.tsx) directly from the URL
+ * fragment and never touches this screen's input; this component only
+ * covers the manual-PIN fallback. `pairing` reflects that in-flight QR
+ * exchange so the manual form can show a status and avoid a racy double-submit.
  */
 import React, { useState, useRef, useEffect } from 'react';
 
 interface Props {
-  defaultPin: string;
+  pairing: boolean;
   error: string | null;
   onConnect: (pin: string) => void;
 }
 
-export function ConnectScreen({ defaultPin, error, onConnect }: Props) {
-  const [pin, setPin] = useState(defaultPin);
+export function ConnectScreen({ pairing, error, onConnect }: Props) {
+  const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
-    // Auto-connect if PIN was provided via QR URL
-    if (defaultPin.length === 6) {
-      handleSubmit(defaultPin);
-    }
   }, []);
 
   const handleSubmit = async (value?: string) => {
@@ -44,19 +45,20 @@ export function ConnectScreen({ defaultPin, error, onConnect }: Props) {
           placeholder="······"
           autoComplete="off"
           value={pin}
+          disabled={pairing}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
           onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
         />
         <button
           className="btn-primary"
           onClick={() => handleSubmit()}
-          disabled={pin.length !== 6 || loading}
+          disabled={pin.length !== 6 || loading || pairing}
         >
-          {loading ? 'Connecting...' : 'Connect'}
+          {pairing ? 'Pairing via QR...' : loading ? 'Connecting...' : 'Connect'}
         </button>
         {error && <div className="connect-error">{error}</div>}
         <div className="connect-status">
-          {defaultPin ? 'PIN detected from QR code' : 'Scan QR code or enter PIN manually'}
+          {pairing ? 'Completing QR pairing...' : 'Scan QR code or enter PIN manually'}
         </div>
       </div>
     </div>

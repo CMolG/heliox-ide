@@ -27,10 +27,18 @@ export function getLocalIPAddress(): string {
   return '127.0.0.1';
 }
 
-/** Build the full URL that the mobile device will navigate to */
-export function buildBridgeURL(host: string, port: number, pin: string): string {
+/**
+ * Build the full URL that the mobile device will navigate to.
+ *
+ * The pairing token travels in the URL fragment (#), never the query string:
+ * fragments are stripped by the browser before the request leaves the client,
+ * so they never reach server access logs, LAN middleboxes, or `Referer`
+ * headers on subsequent same-origin fetches. The served SPA (src/bridge-app)
+ * reads it client-side via `location.hash` and exchanges it over a POST body.
+ */
+export function buildBridgeURL(host: string, port: number, pairingToken: string): string {
   const ip = host === '0.0.0.0' ? getLocalIPAddress() : host;
-  return `http://${ip}:${port}?pin=${pin}`;
+  return `http://${ip}:${port}/#pt=${pairingToken}`;
 }
 
 /** Generate a QR code as a data URL (PNG base64) */
@@ -50,10 +58,10 @@ export async function generateQRDataURL(text: string): Promise<string> {
 export async function generateBridgeQR(
   port: number,
   host: string,
-  pin: string
+  pairingToken: string
 ): Promise<{ url: string; qrDataUrl: string; localIp: string }> {
   const localIp = host === '0.0.0.0' ? getLocalIPAddress() : host;
-  const url = `http://${localIp}:${port}?pin=${pin}`;
+  const url = `http://${localIp}:${port}/#pt=${pairingToken}`;
   const qrDataUrl = await generateQRDataURL(url);
   return { url, qrDataUrl, localIp };
 }

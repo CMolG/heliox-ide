@@ -377,6 +377,12 @@ const helioxAPI: HelioxAPI = {
     ipcRenderer.invoke('mcp:approveCommand', command, args ?? []),
   mcpRevokeCommand: (command: string, args?: string[]) =>
     ipcRenderer.invoke('mcp:revokeCommand', command, args ?? []),
+
+  // ── Anonymous opt-in telemetry (audit 1.8b) ──────────────────────
+  telemetryGetOptIn: () =>
+    ipcRenderer.invoke('telemetry:getOptIn'),
+  telemetrySetOptIn: (optIn: boolean) =>
+    ipcRenderer.invoke('telemetry:setOptIn', optIn),
 };
 
 // Menu events from main process

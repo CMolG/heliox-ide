@@ -9,7 +9,7 @@
  *  - One isolated BrowserContext per flow run
  *  - One snapshot captured after each step (including no-op screenshot steps)
  */
-import { chromium, Browser, Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
 import { Flow, FlowStep, SnapshotArtifact, errMsg } from '@/types';
 import { collectMetrics } from './metrics-collector';
 import { createHash, randomUUID } from 'crypto';
@@ -25,6 +25,16 @@ export class SnapshotRunner {
   private browser: Browser | null = null;
 
   async init(): Promise<void> {
+    // Dynamic import — deliberate, not a stylistic choice. Playwright's browser
+    // registry reads PLAYWRIGHT_BROWSERS_PATH once, the moment 'playwright' is
+    // first loaded into this process, and caches the result at module scope.
+    // Loading it lazily here — only when a snapshot run actually starts —
+    // guarantees ensureSnapshotBrowsers() (called just before this, in
+    // agent-manager.ts#initialize) has already set that env var for packaged
+    // builds. A static top-level import would load 'playwright' (and freeze
+    // its registry lookup) at app boot instead, before the env var is ever
+    // set. See src/main/snapshot-browser-installer.ts for the full contract.
+    const { chromium } = await import('playwright');
     this.browser = await chromium.launch({ headless: true });
   }
 

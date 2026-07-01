@@ -31,6 +31,7 @@ import { assemblePipeline } from './meta-agent/pipeline-generator';
 import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
 import { registerMcpCommandPolicyIpcHandlers } from './harness-engine/mcp-command-policy';
 import { registerScorecardIpc, registerArenaIpc } from './performance-frontier/ipc';
+import { registerTelemetryIpcHandlers } from './telemetry-ping';
 
 const execFileAsync = promisify(execFile);
 
@@ -170,8 +171,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ── Agent lifecycle and streaming bridge ─────────────────────────────────────
   ipcMain.handle('heliox:init-baselines', async (_event, flows: Flow[]) => {
-    await agentManager.initialize(flows);
-    return { success: true };
+    // Audit 1.7 — surfaces the one-time "downloading Chromium" progress (if
+    // any) emitted from AgentManager#initialize while baselines are computed.
+    const onProgress = (data: { message: string }) => {
+      sendToRenderer('heliox:agent-event', { type: 'snapshot-browser-progress', ...data });
+    };
+    agentManager.on('snapshot-browser-progress', onProgress);
+    try {
+      await agentManager.initialize(flows);
+      return { success: true };
+    } finally {
+      agentManager.removeListener('snapshot-browser-progress', onProgress);
+    }
   });
 
   ipcMain.handle('heliox:run-agent', async (_event, params: RunAgentParams) => {
@@ -1057,7 +1068,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('bridge:start', async () => {
     try {
-      const { startBridgeServer, isBridgeRunning, generateBridgeQR } = await import('./bridge');
+      const { startBridgeServer, isBridgeRunning, generateBridgeQR, getPairingToken } = await import('./bridge');
       if (isBridgeRunning()) {
         return { success: true, message: 'Bridge already running' };
       }
@@ -1069,7 +1080,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       };
 
       const result = startBridgeServer(getState);
-      const qr = await generateBridgeQR(result.port, '0.0.0.0', result.pin);
+      // The QR encodes the one-time pairing token (fragment-carried), never the PIN.
+      const pairingToken = getPairingToken();
+      const qr = pairingToken
+        ? await generateBridgeQR(result.port, '0.0.0.0', pairingToken)
+        : { url: '', qrDataUrl: '', localIp: '' };
       return { success: true, port: result.port, pin: result.pin, ...qr };
     } catch (err) {
       return { success: false, error: errMsg(err) };
@@ -1105,10 +1120,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('bridge:get-qr', async () => {
     try {
-      const { getBridgeConfig, generateBridgeQR } = await import('./bridge');
+      const { getBridgeConfig, getPairingToken, generateBridgeQR } = await import('./bridge');
       const config = getBridgeConfig();
-      if (!config) return { success: false, error: 'Bridge not running' };
-      const qr = await generateBridgeQR(config.port, config.host, config.pin);
+      const pairingToken = getPairingToken();
+      if (!config || !pairingToken) {
+        return { success: false, error: 'Bridge not running or pairing token expired — refresh PIN for a new QR' };
+      }
+      const qr = await generateBridgeQR(config.port, config.host, pairingToken);
       return { success: true, ...qr };
     } catch (err) {
       return { success: false, error: errMsg(err) };
@@ -1122,6 +1140,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // ── MCP command allowlist + consent (audit 1.4) ───────────────────────────
   // mcp:listApprovedCommands / mcp:approveCommand / mcp:revokeCommand.
   registerMcpCommandPolicyIpcHandlers();
+
+  // ── Anonymous opt-in telemetry (audit 1.8b) ───────────────────────────────
+  // telemetry:getOptIn / telemetry:setOptIn.
+  registerTelemetryIpcHandlers();
 
   // ── Performance Frontier Scorecard + Arena IPC (ARCH-079) ─────────────────
   // Registers pf:run-scorecard / pf:scorecard-progress and

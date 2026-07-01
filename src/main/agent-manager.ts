@@ -24,6 +24,7 @@ import { createAdapter, buildAgentPrompt } from '../ai-adapter';
 import type { AiAdapter } from '../ai-adapter';
 import { SnapshotRunner } from '../snapshot-engine/runner';
 import { computeDiff } from '../snapshot-engine/diff-engine';
+import { ensureSnapshotBrowsers } from './snapshot-browser-installer';
 import { FilePatcher } from './file-patcher';
 import { DevSessionLogger } from './dev-session-logger';
 import {
@@ -66,6 +67,11 @@ export class AgentManager extends EventEmitter {
   }
 
   async initialize(flows: Flow[]): Promise<void> {
+    // Audit 1.7 — lazy, on-demand Chromium download for packaged builds; a
+    // no-op in dev. Must happen before the first SnapshotRunner.init() call
+    // of the process — see snapshot-browser-installer.ts for why.
+    await ensureSnapshotBrowsers((message) => this.emit('snapshot-browser-progress', { message }));
+
     // Baselines are per-flow and per-step. We index by:
     // flow.id -> (step.id -> artifact) so comparison is stable across runs.
     await this.runner.init();

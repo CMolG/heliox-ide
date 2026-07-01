@@ -20,7 +20,6 @@ import { app } from 'electron';
 import {
   initBridgeAuth,
   getBridgeConfig,
-  getBridgeQRData,
   authenticateBridge,
   validateToken,
   shutdownAuth,
@@ -62,6 +61,12 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+/** Canonical per-request IP for rate limiting — the real TCP peer, never a spoofable header */
+function getClientIp(req: IncomingMessage): string {
+  const addr = req.socket.remoteAddress ?? 'unknown';
+  return addr.replace(/^::ffff:/, '');
+}
+
 // ─── Route handler ───────────────────────────────────────────────
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -82,23 +87,16 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
-  // QR data (public — used before auth)
-  if (url.pathname === '/bridge/qr' && method === 'GET') {
-    const qr = getBridgeQRData();
-    if (!qr) {
-      sendJson(res, 503, { error: 'Bridge not initialized' });
-      return;
-    }
-    sendJson(res, 200, qr);
-    return;
-  }
-
-  // Auth endpoint
+  // Auth endpoint — pairing token (QR) or PIN (manual), both via POST body only.
+  // Not the '/bridge/qr' GET some earlier revisions had: that endpoint returned
+  // the live pin/token to ANY unauthenticated caller on the LAN and had no
+  // client (the QR image is generated over IPC, not fetched over HTTP) — pure
+  // liability, removed rather than ported to the pairing-token scheme.
   if (url.pathname === '/bridge/auth' && method === 'POST') {
     const body = await readBody(req);
     try {
       const authReq: BridgeAuthRequest = JSON.parse(body);
-      const result = authenticateBridge(authReq);
+      const result = authenticateBridge(authReq, getClientIp(req));
       sendJson(res, result.success ? 200 : 401, result);
     } catch {
       sendJson(res, 400, { error: 'Invalid request body' });
@@ -534,8 +532,11 @@ function getCompanionHTML(): string {
     }
 
     function connectWebSocket() {
-      const wsUrl = API.replace('http', 'ws') + '/?token=' + token;
-      ws = new WebSocket(wsUrl);
+      // Token travels as a WebSocket subprotocol, not a query string — the
+      // browser WebSocket API can't set custom headers, but it can offer
+      // subprotocols (Sec-WebSocket-Protocol), which never land in a URL.
+      const wsUrl = API.replace('http', 'ws') + '/';
+      ws = new WebSocket(wsUrl, [token]);
       ws.onopen = () => { document.getElementById('ws-status').textContent = 'WebSocket: connected'; };
       ws.onmessage = (e) => {
         try {

@@ -53,6 +53,32 @@ export interface SettingsSchema {
    * will allow it. See mcp-command-policy.ts for the enforcement logic.
    */
   approvedMcpCommands: Array<{ command: string; args: string[]; approvedAt: string }>;
+  /**
+   * Whether the packaged app should check update.electronjs.org for new
+   * releases (audit 1.2). Checked before every `updateElectronApp()` call in
+   * src/main/index.ts — inert today regardless of this flag, since that
+   * service requires the repo to be public with at least one published
+   * release (neither is true yet; see docs/RELEASE_CHECKLIST.md).
+   */
+  autoUpdateEnabled: boolean;
+  /**
+   * Anonymous install/launch telemetry opt-in (audit 1.8). Defaults to
+   * false — the ping in telemetry-ping.ts never fires unless the user has
+   * explicitly turned this on *and* an endpoint is configured.
+   */
+  telemetryOptIn: boolean;
+  /**
+   * Stable random id used only to de-duplicate pings server-side. Generated
+   * once, lazily, the first time a ping would actually be sent — never
+   * derived from any hardware/account identifier. See telemetry-ping.ts.
+   */
+  telemetryAnonymousId: string | null;
+  /**
+   * Optional settings-based override for the telemetry ping endpoint, used
+   * when the HELIOX_TELEMETRY_ENDPOINT env var isn't set. Null means "no
+   * endpoint configured" — the ping stays a no-op either way.
+   */
+  telemetryEndpoint: string | null;
 }
 
 const DEFAULTS: SettingsSchema = {
@@ -72,6 +98,10 @@ const DEFAULTS: SettingsSchema = {
   recentProjects: [],
   lastOpenedProject: null,
   approvedMcpCommands: [],
+  autoUpdateEnabled: true,
+  telemetryOptIn: false,
+  telemetryAnonymousId: null,
+  telemetryEndpoint: null,
 };
 
 // ─── Singleton ─────────────────────────────────────────────────────────────────

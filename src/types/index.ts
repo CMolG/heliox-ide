@@ -540,6 +540,12 @@ export interface HelioxAPI {
     data?: Array<{ command: string; args: string[]; approvedAt: string }>;
     error?: string;
   }>;
+
+  // ── Anonymous opt-in telemetry (audit 1.8b) ────────────────────────────────
+  /** Read the current anonymous-telemetry opt-in flag (default false). */
+  telemetryGetOptIn(): Promise<{ success: boolean; data?: boolean; error?: string }>;
+  /** Set the anonymous-telemetry opt-in flag. */
+  telemetrySetOptIn(optIn: boolean): Promise<{ success: boolean; data?: boolean; error?: string }>;
 }
 
 /** Payload emitted by the main-process dev-server watcher when a new port comes up. */
