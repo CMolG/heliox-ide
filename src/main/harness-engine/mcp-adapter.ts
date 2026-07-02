@@ -14,7 +14,7 @@ import {
   stat as nodeStat,
   writeFile as nodeWriteFile,
 } from 'fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'path';
+import { posix, resolve } from 'path';
 import { tool, type ToolSet } from 'ai';
 import { z, ZodError } from 'zod';
 import type { CallToolResult, Tool as McpTool } from '@modelcontextprotocol/sdk/types.js';
@@ -104,12 +104,30 @@ function toolResultToText(output: CallToolResult): string {
   )).join('\n');
 }
 
-function resolveWithinRoot(rootDir: string, inputPath = '.'): string {
-  const root = resolve(rootDir);
-  const target = resolve(root, inputPath);
-  const relativeTarget = relative(root, target);
+// All path arithmetic is done in posix form: harness roots may be virtual
+// posix paths backed by an injected in-memory filesystem (e.g. '/workspace'),
+// which platform-specific resolve() would mangle on Windows ('D:\workspace').
+// Node's fs accepts forward slashes on every platform, so real roots keep
+// working when normalized the same way.
+const toPosixPath = (value: string): string => value.replace(/\\/g, '/');
 
-  if (relativeTarget.startsWith('..') || isAbsolute(relativeTarget)) {
+const isAbsoluteAnyPlatform = (value: string): boolean => (
+  posix.isAbsolute(value) || /^[A-Za-z]:\//.test(value)
+);
+
+function normalizeRootDir(rootDir?: string): string {
+  const raw = toPosixPath(rootDir ?? process.cwd());
+  const absolute = isAbsoluteAnyPlatform(raw) ? raw : toPosixPath(resolve(raw));
+  return posix.normalize(absolute);
+}
+
+function resolveWithinRoot(rootDir: string, inputPath = '.'): string {
+  const root = posix.normalize(toPosixPath(rootDir));
+  const input = toPosixPath(inputPath);
+  const target = posix.normalize(isAbsoluteAnyPlatform(input) ? input : posix.join(root, input));
+  const relativeTarget = posix.relative(root, target);
+
+  if (relativeTarget.startsWith('..') || isAbsoluteAnyPlatform(relativeTarget)) {
     throw new Error(`Path "${inputPath}" is outside the harness root.`);
   }
 
@@ -117,7 +135,7 @@ function resolveWithinRoot(rootDir: string, inputPath = '.'): string {
 }
 
 function relativeToRoot(rootDir: string, targetPath: string): string {
-  return relative(resolve(rootDir), targetPath) || '.';
+  return posix.relative(posix.normalize(toPosixPath(rootDir)), toPosixPath(targetPath)) || '.';
 }
 
 interface LastSuccessfulWrite {
@@ -158,7 +176,7 @@ function extractSuccessfulWrite(rootDir: string, name: string, args: unknown): L
   const parsed = writeFileSchema.parse(args);
   const filePath = resolveWithinRoot(rootDir, parsed.path);
   return {
-    dirPath: dirname(filePath),
+    dirPath: posix.dirname(filePath),
     filePath,
   };
 }
@@ -187,7 +205,7 @@ function createToolDefinitions(
         const dirPath = resolveWithinRoot(rootDir, parsed.path ?? '.');
         const entries = await fileSystem.readdir(dirPath);
         const results = await Promise.all(entries.map(async (name) => {
-          const entryPath = resolveWithinRoot(rootDir, relativeToRoot(rootDir, resolve(dirPath, name)));
+          const entryPath = resolveWithinRoot(rootDir, relativeToRoot(rootDir, posix.join(dirPath, name)));
           const entryStat = await fileSystem.stat(entryPath);
           return {
             name,
@@ -247,7 +265,7 @@ function createToolDefinitions(
       call: async (args) => {
         const parsed = writeFileSchema.parse(args);
         const filePath = resolveWithinRoot(rootDir, parsed.path);
-        await fileSystem.mkdir(dirname(filePath), { recursive: true });
+        await fileSystem.mkdir(posix.dirname(filePath), { recursive: true });
         await fileSystem.writeFile(filePath, parsed.content, 'utf-8');
         return {
           path: relativeToRoot(rootDir, filePath),
@@ -259,7 +277,7 @@ function createToolDefinitions(
 }
 
 export function createLocalMcpClient(options: LocalMcpOptions = {}): LocalMcpClient {
-  const rootDir = resolve(options.rootDir ?? process.cwd());
+  const rootDir = normalizeRootDir(options.rootDir);
   const fileSystem = options.fileSystem ?? nodeFileSystem;
   const definitions = createToolDefinitions(rootDir, fileSystem);
   const telemetrySink = options.telemetrySink;

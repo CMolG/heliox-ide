@@ -306,11 +306,39 @@ export async function verifyApi(
     };
   } finally {
     clearTimeout(overallTimer);
-    // Always kill the server process.
-    try { child?.kill('SIGKILL'); } catch { /* ignore */ }
-    // Always clean up the temp dir.
+    // Always kill the server process, and wait for it to actually exit before
+    // removing the temp dir: on Windows, kill() returns before the process
+    // releases its cwd/file handles, and rm then fails with EBUSY.
+    try {
+      if (child) {
+        child.kill('SIGKILL');
+        await waitForChildExit(child, 2_000);
+      }
+    } catch { /* ignore */ }
+    // Always clean up the temp dir — best-effort, so a lingering handle
+    // (Windows antivirus, slow handle release) can never make verifyApi throw.
     if (tempDir) {
-      await rm(tempDir, { recursive: true, force: true });
+      try {
+        await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch { /* leak a temp dir rather than break the never-throws contract */ }
     }
   }
+}
+
+/**
+ * Resolve once the child has fully exited (its 'close' event, which fires
+ * after the stdio streams end), or after `timeoutMs` as a safety valve.
+ */
+async function waitForChildExit(
+  child: ReturnType<typeof spawn>,
+  timeoutMs: number,
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
