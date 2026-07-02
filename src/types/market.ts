@@ -7,7 +7,60 @@
  */
 // src/types/market.ts — Types for the market inventory and backlog system
 
+import type { StepContract } from './harness';
+
 // ─── Market Inventory (mirrors market/inventory.json) ────────────
+
+/**
+ * Where a market atom is meaningful. `universal` marks role-agnostic process
+ * atoms (e.g. `self-review`). The UI uses domains to hint when a mod is
+ * attached outside the active role's domain; the Meta-Agent uses them for
+ * auto-selection. Informational — never a hard enforcement boundary.
+ */
+export type MarketDomain =
+  | 'frontend'
+  | 'backend'
+  | 'web'
+  | 'data'
+  | 'infra'
+  | 'universal';
+
+/**
+ * Declarative runtime powers for a market mod — the bridge between pure `.md`
+ * prompt injections and TypeScript code-mods. Everything here is inert data
+ * interpreted by the engine against built-in capabilities; a market entry can
+ * never declare arbitrary command execution (that would reopen the
+ * market→RCE hole closed in the 2026-07 audit).
+ */
+export interface MarketModRuntime {
+  /**
+   * Tool names stripped from the step's tool surface while this mod is active
+   * (e.g. `dry-run` blocks `write_file` so "no code generation" is enforced
+   * by the runtime instead of trusted to the prompt).
+   */
+  blockTools?: string[];
+  /**
+   * Built-in toolsets granted while this mod is active. `web-browser`
+   * attaches the browser_goto / browser_act / browser_extract_seo trio so
+   * verification mods (seo-meta, web-vitals…) can check their own claims
+   * against the live page.
+   */
+  attachTools?: string[];
+  /**
+   * Completion-contract fragment merged into the step's `StepContract` and
+   * verified by the guardrail engine with corrective retries (e.g.
+   * `test-driven` requires that a test artifact actually exists).
+   */
+  contract?: StepContract;
+}
+
+/** Role accent palette rendered by the attachment pills and app headers. */
+export interface MarketRolePalette {
+  background: string;
+  text: string;
+  accents: string;
+  hover: string;
+}
 
 export interface MarketFlow {
   name: string;
@@ -28,6 +81,11 @@ export interface MarketRole {
   description: string;
   tags: string[];
   color?: string;
+  palette?: MarketRolePalette;
+  /** Optional model hint, mirroring `MarketFlow.betterOn`. */
+  betterOn?: string;
+  /** Domains this persona covers (informational; see MarketDomain). */
+  domains?: MarketDomain[];
 }
 
 export interface MarketMod {
@@ -44,6 +102,10 @@ export interface MarketMod {
    * blend their concepts.
    */
   exclusiveGroup?: string;
+  /** Domains where this mod is meaningful; `['universal']` = role-agnostic. */
+  domains?: MarketDomain[];
+  /** Declarative runtime powers (tool gating, toolset grants, contracts). */
+  runtime?: MarketModRuntime;
 }
 
 export interface MarketStep {

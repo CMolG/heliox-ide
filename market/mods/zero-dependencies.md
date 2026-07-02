@@ -14,4 +14,4 @@ When this modifier is active, all solutions must use native language features an
 
 - Before implementing any solution, the agent must verify it can be achieved without new dependencies.
 - If a task is genuinely impossible without a third-party library (e.g., "integrate with Stripe"), the agent must halt and report the constraint conflict.
-- The agent must actively look for opportunities to remove existing unnecessary dependencies during its work.
+- The agent may note removal opportunities for existing unnecessary dependencies in its report, but performs no unrequested removals.

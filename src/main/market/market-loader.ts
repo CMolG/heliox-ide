@@ -103,6 +103,33 @@ function readModInjection(dir: string, name: string): string {
   return readResource(dir, 'mods', name);
 }
 
+/** Built-in toolset grants a mod's `runtime.attachTools` may request. */
+const KNOWN_ATTACH_TOOLSETS = new Set(['web-browser']);
+
+/**
+ * Passthrough a market mod's declared `runtime` into the AgenticMod config,
+ * filtering out any `attachTools` entry outside the engine's known toolset
+ * grants (today: only `web-browser`). An unknown toolset name is a market
+ * authoring mistake the executor cannot act on — dropped with a warning
+ * instead of silently reaching the executor as dead data. The rest of the
+ * runtime (blockTools, contract) passes through intact.
+ */
+function sanitizeMarketModRuntime(runtime: MarketMod['runtime']): MarketMod['runtime'] | undefined {
+  if (!runtime) return undefined;
+  if (!Array.isArray(runtime.attachTools)) return runtime;
+
+  const known: string[] = [];
+  for (const toolset of runtime.attachTools) {
+    if (KNOWN_ATTACH_TOOLSETS.has(toolset)) {
+      known.push(toolset);
+    } else {
+      console.warn(`[market-loader] mod runtime.attachTools names unknown toolset "${toolset}" — ignoring.`);
+    }
+  }
+
+  return { ...runtime, attachTools: known };
+}
+
 function loadMarketMods(): Map<string, AgenticMod> {
   if (modCache) return modCache;
 
@@ -124,12 +151,33 @@ function loadMarketMods(): Map<string, AgenticMod> {
       groupMembers.set(entry.exclusiveGroup, members);
     }
 
+    // Phase 1: per-entry effective incompatibility = explicit manual list ∪
+    // exclusive-group siblings.
+    const incompatibilities = new Map<string, Set<string>>();
     for (const entry of entries) {
       const siblings = entry.exclusiveGroup
         ? (groupMembers.get(entry.exclusiveGroup) ?? []).filter((name) => name !== entry.name)
         : [];
-      // Effective incompatibilities = explicit list ∪ exclusive-group siblings.
-      const incompatibleWith = [...new Set([...(entry.incompatibleWith ?? []), ...siblings])].sort();
+      incompatibilities.set(entry.name, new Set([...(entry.incompatibleWith ?? []), ...siblings]));
+    }
+
+    // Phase 2: global symmetrization pass. Manually-authored `incompatibleWith`
+    // lists can be asymmetric (A lists B, B forgets to list A back); a
+    // one-directional gap would let the context-builder's pairwise guard
+    // silently miss half of a declared conflict. Mirror every edge both ways.
+    // A dangling reference to a name absent from the inventory is left alone
+    // here (defensive; market-integrity guardrails flag it as a data error).
+    for (const entry of entries) {
+      const targets = incompatibilities.get(entry.name);
+      if (!targets) continue;
+      for (const target of targets) {
+        incompatibilities.get(target)?.add(entry.name);
+      }
+    }
+
+    for (const entry of entries) {
+      const incompatibleWith = [...(incompatibilities.get(entry.name) ?? [])].sort();
+      const runtime = sanitizeMarketModRuntime(entry.runtime);
 
       mods.set(entry.name, {
         id: entry.name,
@@ -144,6 +192,8 @@ function loadMarketMods(): Map<string, AgenticMod> {
           ...(entry.tags ? { tags: entry.tags } : {}),
           ...(incompatibleWith.length > 0 ? { incompatibleWith } : {}),
           ...(entry.exclusiveGroup ? { exclusiveGroup: entry.exclusiveGroup } : {}),
+          ...(entry.domains ? { domains: entry.domains } : {}),
+          ...(runtime ? { runtime } : {}),
         },
       });
     }

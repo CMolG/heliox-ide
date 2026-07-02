@@ -243,4 +243,92 @@ describe('executeAgenticFlow', () => {
       'write:/workspace/src/server.js',
     ]);
   });
+
+  it('strips a tool named in a mod\'s runtime.blockTools from the surface passed to runStep', async () => {
+    const events: HarnessEventPayload[] = [];
+    harnessEventBus.on(HARNESS_EVENT_NAME, (event) => events.push(event));
+
+    const root = makeStep('root', [], [], [{
+      id: 'dry-run',
+      name: 'DryRun',
+      type: 'pre_process',
+      config: { runtime: { blockTools: ['write_file'] } },
+    }]);
+    const flow: AgenticFlow = {
+      id: 'flow-block-tools',
+      name: 'Block Tools Flow',
+      rootStepId: 'root',
+      stepsRecord: { root },
+    };
+    const fileSystem: McpFileSystem = {
+      readFile: async () => 'content',
+      writeFile: async () => undefined,
+      mkdir: async () => undefined,
+      readdir: async () => [],
+      stat: async () => ({ isDirectory: () => false, isFile: () => true, size: 0 }),
+    };
+
+    const runStep = vi.fn(async ({ tools }: { tools: Record<string, unknown> }) => {
+      expect(tools.write_file).toBeUndefined();
+      expect(tools.read_file).toBeDefined();
+      expect(tools.list_directory).toBeDefined();
+      return { text: 'done', usage: null, toolCalls: [], toolResults: [] };
+    });
+
+    await executeAgenticFlow(flow, { rootDir: '/workspace', fileSystem, runStep });
+
+    expect(runStep).toHaveBeenCalledTimes(1);
+    const stepEvents = events.filter(
+      (event): event is Extract<HarnessEventPayload, { type: 'StepStatusChanged' }> =>
+        event.type === 'StepStatusChanged',
+    );
+    expect(stepEvents.some((event) => event.logs?.includes('tool "write_file" blocked by mod "DryRun"'))).toBe(true);
+  });
+
+  it('attaches the browser toolset when a mod declares runtime.attachTools: ["web-browser"]', async () => {
+    const root = makeStep('root', [], [], [{
+      id: 'seo-meta',
+      name: 'SeoMeta',
+      type: 'pre_process',
+      config: { runtime: { attachTools: ['web-browser'] } },
+    }]);
+    const flow: AgenticFlow = {
+      id: 'flow-attach-tools',
+      name: 'Attach Tools Flow',
+      rootStepId: 'root',
+      stepsRecord: { root },
+    };
+
+    const runStep = vi.fn(async ({ tools }: { tools: Record<string, unknown> }) => {
+      expect(tools.browser_goto).toBeDefined();
+      return { text: 'done', usage: null, toolCalls: [], toolResults: [] };
+    });
+
+    await executeAgenticFlow(flow, { runStep });
+
+    expect(runStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores an unknown runtime.attachTools toolset without crashing', async () => {
+    const root = makeStep('root', [], [], [{
+      id: 'mystery-mod',
+      name: 'MysteryMod',
+      type: 'pre_process',
+      config: { runtime: { attachTools: ['not-a-real-toolset'] } },
+    }]);
+    const flow: AgenticFlow = {
+      id: 'flow-unknown-attach',
+      name: 'Unknown Attach Flow',
+      rootStepId: 'root',
+      stepsRecord: { root },
+    };
+
+    const runStep = vi.fn(async ({ tools }: { tools: Record<string, unknown> }) => {
+      expect(tools.browser_goto).toBeUndefined();
+      return { text: 'done', usage: null, toolCalls: [], toolResults: [] };
+    });
+
+    await expect(executeAgenticFlow(flow, { runStep })).resolves.toBeUndefined();
+    expect(runStep).toHaveBeenCalledTimes(1);
+  });
 });

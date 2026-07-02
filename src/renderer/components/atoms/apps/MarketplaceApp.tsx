@@ -181,11 +181,24 @@ function ProductSheet({ plugin, inventory, onBack, onDeploy, backButtonRef, addB
           <MetaRow label="Recommended complexity" value={match.item.recommendedComplexity} />
         </dl>
       )}
-      {match?.kind === 'modifiers' && (match.item.exclusiveGroup || (match.item.incompatibleWith?.length ?? 0) > 0) && (
+      {match?.kind === 'roles' && (match.item.betterOn || (match.item.domains?.length ?? 0) > 0) && (
+        <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3 m-0">
+          {match.item.betterOn && <MetaRow label="Better on" value={match.item.betterOn} />}
+          {!!match.item.domains?.length && (
+            <MetaRow label="Domains" value={match.item.domains.join(', ')} />
+          )}
+        </dl>
+      )}
+      {match?.kind === 'modifiers' && (
+        match.item.exclusiveGroup || (match.item.incompatibleWith?.length ?? 0) > 0 || (match.item.domains?.length ?? 0) > 0
+      ) && (
         <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3 m-0">
           {match.item.exclusiveGroup && <MetaRow label="Exclusive group" value={match.item.exclusiveGroup} />}
           {!!match.item.incompatibleWith?.length && (
             <MetaRow label="Incompatible with" value={match.item.incompatibleWith.join(', ')} />
+          )}
+          {!!match.item.domains?.length && (
+            <MetaRow label="Domains" value={match.item.domains.join(', ')} />
           )}
         </dl>
       )}

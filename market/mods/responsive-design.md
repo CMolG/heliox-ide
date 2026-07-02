@@ -25,4 +25,3 @@ Forces mobile-first, fluid layouts with container queries and relative units; fo
 - The agent must audit every layout-affecting CSS rule it produces for hardcoded pixel widths and replace any found with fluid equivalents before finalizing output.
 - If an existing component uses fixed widths, the agent must migrate those values to fluid units in the same change — do not leave regressions in place while the new code is fluid.
 - When a design token or variable resolves to a fixed pixel width at the theme level, the agent must flag the token as a blocker and propose a fluid replacement rather than silently inheriting the breakage.
-- All generated layout code must include a brief inline comment at the container level noting the fluid strategy used (e.g., `/* grid: auto-fill minmax(16rem, 1fr) — reflows to single column */`) to aid future maintainers.

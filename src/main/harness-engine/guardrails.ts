@@ -213,6 +213,67 @@ export function verifyStepContract(
   return findings;
 }
 
+/** True when a contract fragment declares nothing that would ever produce a finding. */
+function isEmptyContract(contract: StepContract): boolean {
+  return (
+    !contract.mustWriteFiles
+    && !contract.forbidStubMarkers
+    && !contract.requireDeclaredDependencies
+    && (contract.requiredArtifacts ?? []).length === 0
+    && (contract.forbiddenArtifacts ?? []).length === 0
+    && contract.maxAttempts === undefined
+  );
+}
+
+/**
+ * Merge a step's own `StepContract` with runtime-declared fragments
+ * contributed by its attached mods (`MarketModRuntime.contract`, aggregated by
+ * `collectModRuntime` in executor.ts) into a single effective contract.
+ *
+ *   - Booleans (`mustWriteFiles`, `forbidStubMarkers`, `requireDeclaredDependencies`)
+ *     OR across base + fragments — any one requiring it makes the merged
+ *     contract require it.
+ *   - Arrays (`requiredArtifacts`, `forbiddenArtifacts`) concatenate, base
+ *     first, so the step's own corrective feedback still surfaces first.
+ *   - `maxAttempts` takes the largest of the defined values (never let one
+ *     mod's smaller budget starve another mod's requirement); `undefined`
+ *     when none of them define it.
+ *
+ * Returns `undefined` when there is truly nothing to enforce (`base` is
+ * `undefined` and every fragment is empty) so the executor's existing
+ * `Boolean(contract)` gate keeps behaving exactly as it did for steps with no
+ * contract at all.
+ */
+export function mergeStepContracts(
+  base: StepContract | undefined,
+  fragments: StepContract[],
+): StepContract | undefined {
+  if (base === undefined && fragments.every(isEmptyContract)) {
+    return undefined;
+  }
+
+  const all = base ? [base, ...fragments] : fragments;
+
+  const mustWriteFiles = all.some((c) => Boolean(c.mustWriteFiles));
+  const forbidStubMarkers = all.some((c) => Boolean(c.forbidStubMarkers));
+  const requireDeclaredDependencies = all.some((c) => Boolean(c.requireDeclaredDependencies));
+  const requiredArtifacts = all.flatMap((c) => c.requiredArtifacts ?? []);
+  const forbiddenArtifacts = all.flatMap((c) => c.forbiddenArtifacts ?? []);
+  const declaredMaxAttempts = all
+    .map((c) => c.maxAttempts)
+    .filter((value): value is number => typeof value === 'number');
+  const maxAttempts = declaredMaxAttempts.length > 0 ? Math.max(...declaredMaxAttempts) : undefined;
+
+  return {
+    ...(mustWriteFiles ? { mustWriteFiles } : {}),
+    ...(forbidStubMarkers ? { forbidStubMarkers } : {}),
+    ...(requireDeclaredDependencies ? { requireDeclaredDependencies } : {}),
+    ...(requiredArtifacts.length > 0 ? { requiredArtifacts } : {}),
+    ...(forbiddenArtifacts.length > 0 ? { forbiddenArtifacts } : {}),
+    ...(maxAttempts !== undefined ? { maxAttempts } : {}),
+  };
+}
+
 /** Build the corrective feedback appended to the step prompt on the next attempt. */
 export function buildCorrectivePrompt(findings: GuardrailFinding[]): string {
   return [

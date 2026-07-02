@@ -18,7 +18,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { LucideIcon } from './LucideIcon';
-import { kebabToTitle } from './attachable-helpers';
+import { domainMismatchHint, kebabToTitle } from './attachable-helpers';
 import { stepTypeMeta } from './mental/step-type-meta';
 import { useDesktopStore } from '../../store/desktop-store';
 import { useHarnessStore } from '../../store/harness-store';
@@ -231,10 +231,14 @@ export function StepInfoModal({ stepId, stepData, connections, status, onClose }
 
   const roles = stepData.roles ?? [];
   const mods = stepData.mods ?? [];
+  // Roles are mutually exclusive (one per step), so the sole assigned role —
+  // if any — is the one the domain-mismatch hint below compares mods against.
+  const attachedRole = roles[0] ?? null;
   const promptValue = stepData.prompt ?? stepData.description ?? '';
 
   const [roleError, setRoleError] = useState<string | null>(null);
   const [modError, setModError] = useState<string | null>(null);
+  const [modDomainHint, setModDomainHint] = useState<string | null>(null);
 
   const isBusy = status === 'running' || status === 'compiling';
 
@@ -307,8 +311,17 @@ export function StepInfoModal({ stepId, stepData, connections, status, onClose }
     const mod = marketInventory?.mods.find((m) => m.name === modName);
     if (!mod) return;
     const ok = addModToStep(stepId, mod);
-    setModError(ok ? null : `"${kebabToTitle(modName)}" was rejected — it may already be on this step or incompatible with one that is.`);
-  }, [marketInventory, addModToStep, stepId]);
+    if (!ok) {
+      setModError(`"${kebabToTitle(modName)}" was rejected — it may already be on this step or incompatible with one that is.`);
+      setModDomainHint(null);
+      return;
+    }
+    // Hard rejection (above) and this hint are mutually exclusive: the attach
+    // already succeeded here, so this is purely informational — never a
+    // reason to have blocked it (see MarketDomain doc comment, types/market.ts).
+    setModError(null);
+    setModDomainHint(domainMismatchHint(mod, attachedRole));
+  }, [marketInventory, addModToStep, stepId, attachedRole]);
 
   const promptHeadingId = `step-config-prompt-heading-${stepId}`;
   const promptHintId = `step-config-prompt-hint-${stepId}`;
@@ -413,6 +426,17 @@ export function StepInfoModal({ stepId, stepData, connections, status, onClose }
             selectTestId="step-info-mod-select"
             attachTestId="step-info-mod-attach"
           />
+          {modDomainHint && (
+            <p
+              className="step-config-domain-hint"
+              role="status"
+              aria-live="polite"
+              data-testid="step-info-mod-domain-hint"
+            >
+              <LucideIcon name="TriangleAlert" size={12} className="step-config-domain-hint-icon" />
+              <span>{modDomainHint}</span>
+            </p>
+          )}
 
           {/* ── Execution ── */}
           <h3 className="step-config-section-label">Execution</h3>

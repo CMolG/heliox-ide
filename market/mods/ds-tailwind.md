@@ -25,4 +25,3 @@ Pins all styling to Tailwind CSS utility classes and design tokens; no ad-hoc CS
 - The agent must remove any non-Tailwind CSS it encounters in files it edits and replace it with equivalent utility classes, flagging anything it cannot translate.
 - Before introducing an arbitrary value, the agent must first search `tailwind.config` (or `@theme`) for an existing token that satisfies the need. Only if none exists may it use an arbitrary value, and it must add a `// TODO: add token` comment.
 - The agent must not install or import any additional CSS-in-JS library, CSS framework, or component library that ships its own styling system while this mod is active.
-- Any new component the agent creates must include a brief comment at the top of the file noting the Tailwind version and config file path it targets, so future maintainers can resolve token references unambiguously.

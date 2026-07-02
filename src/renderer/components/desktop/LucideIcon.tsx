@@ -29,7 +29,7 @@ import {
   LuBan, LuClipboardList, LuListChecks, LuShield, LuCloud, LuDatabase,
   LuGlobe, LuGauge, LuMinimize2, LuShapes, LuPenTool, LuGitFork, LuTrendingUp,
   LuBug, LuAccessibility, LuSettings, LuOrbit, LuGitCompareArrows, LuColumns2,
-  LuWorkflow, LuFlag,
+  LuWorkflow, LuFlag, LuTriangleAlert,
 } from 'react-icons/lu';
 
 // ─── Static imports for inventory Material Design icons ──────────────────────
@@ -67,7 +67,7 @@ const ICON_MAP: Record<string, IconType> = {
   GitFork: LuGitFork, TrendingUp: LuTrendingUp, Bug: LuBug,
   Accessibility: LuAccessibility, Settings: LuSettings, Orbit: LuOrbit,
   GitCompareArrows: LuGitCompareArrows, Columns2: LuColumns2,
-  Workflow: LuWorkflow, Flag: LuFlag,
+  Workflow: LuWorkflow, Flag: LuFlag, TriangleAlert: LuTriangleAlert,
 
   // Material Design (Md) — inventory/market icons (used directly from inventory.json)
   MdSpeed, MdCompress, MdFormatShapes, MdDesignServices, MdBuild, MdWeb,

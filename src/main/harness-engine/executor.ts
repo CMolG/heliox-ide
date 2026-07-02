@@ -4,7 +4,7 @@
  * The scheduler preserves DAG dependency semantics while each step delegates to
  * the LLM runner and MCP-backed tool surface.
  */
-import type { AgenticFlow, AgenticMod, AgenticStep } from '../../types/harness';
+import type { AgenticFlow, AgenticMod, AgenticStep, StepContract } from '../../types/harness';
 import { harnessEventBus } from './event-bus';
 import { buildStepContext } from './context-builder';
 import { createLocalMcpToolSet, type LocalMcpOptions } from './mcp-adapter';
@@ -19,6 +19,7 @@ import {
   snapshotWorkspace,
   verifyStepContract,
   buildCorrectivePrompt,
+  mergeStepContracts,
   DEFAULT_GUARDRAIL_MAX_ATTEMPTS,
 } from './guardrails';
 
@@ -153,6 +154,71 @@ function hasWebBrowserMod(step: AgenticStep): boolean {
   ));
 }
 
+// ---------------------------------------------------------------------------
+// Declarative mod runtime (MarketModRuntime) — the bridge between pure `.md`
+// prompt injections and code-mods. A mod's `config.runtime` can strip tools
+// from the step's surface, grant a built-in toolset, or contribute a contract
+// fragment; everything here is inert data interpreted against known engine
+// capabilities, never arbitrary execution.
+// ---------------------------------------------------------------------------
+
+/** Built-in toolset grants a mod's `runtime.attachTools` may request. */
+const KNOWN_ATTACH_TOOLSETS = new Set(['web-browser']);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
+interface ModRuntimeCollection {
+  blockTools: Set<string>;
+  attachToolsets: Set<string>;
+  contracts: StepContract[];
+  /** tool name → name of the (first) mod that requested the block, for status logs. */
+  blockedBy: Map<string, string>;
+  /** toolset name → name of the (first) mod that requested the attach, for status logs. */
+  attachedBy: Map<string, string>;
+}
+
+/**
+ * Aggregates `MarketModRuntime` fragments declared across every mod attached
+ * to `step` (`mod.config?.runtime`). Defensive against malformed/hand-authored
+ * data: non-array `blockTools`/`attachTools` and non-object `contract` values
+ * are ignored rather than thrown on; only string array entries are kept.
+ */
+function collectModRuntime(step: AgenticStep): ModRuntimeCollection {
+  const blockTools = new Set<string>();
+  const attachToolsets = new Set<string>();
+  const contracts: StepContract[] = [];
+  const blockedBy = new Map<string, string>();
+  const attachedBy = new Map<string, string>();
+
+  for (const mod of step.mods) {
+    const runtime = mod.config?.runtime;
+    if (!isPlainObject(runtime)) continue;
+
+    for (const toolName of toStringArray(runtime.blockTools)) {
+      blockTools.add(toolName);
+      if (!blockedBy.has(toolName)) blockedBy.set(toolName, mod.name);
+    }
+
+    for (const toolset of toStringArray(runtime.attachTools)) {
+      attachToolsets.add(toolset);
+      if (!attachedBy.has(toolset)) attachedBy.set(toolset, mod.name);
+    }
+
+    if (isPlainObject(runtime.contract)) {
+      contracts.push(runtime.contract as unknown as StepContract);
+    }
+  }
+
+  return { blockTools, attachToolsets, contracts, blockedBy, attachedBy };
+}
+
 async function executeStep(
   flow: AgenticFlow,
   step: AgenticStep,
@@ -193,7 +259,21 @@ async function executeStep(
     onModStatus: (mod, status, logs) => emitModStatus(flow.id, step.id, mod, status, logs),
   });
 
-  // Build the base toolset: local FS + optional browser tools (unchanged).
+  // Declarative mod runtime: aggregate blockTools/attachTools/contract
+  // fragments from every mod attached to this step (MarketModRuntime).
+  const modRuntime = collectModRuntime(step);
+  for (const toolset of modRuntime.attachToolsets) {
+    if (!KNOWN_ATTACH_TOOLSETS.has(toolset)) {
+      console.warn(
+        `[executor] step "${step.id}": mod "${modRuntime.attachedBy.get(toolset) ?? 'unknown'}" `
+        + `requested unknown runtime.attachTools toolset "${toolset}" — ignoring.`,
+      );
+    }
+  }
+
+  // Build the base toolset: local FS + optional browser tools. Browser tools
+  // are granted either the legacy way (a `web-browser` mod attached) or
+  // declaratively via a mod's `runtime.attachTools: ['web-browser']`.
   const baseTools = {
     ...createLocalMcpToolSet({
       rootDir: options.rootDir,
@@ -201,7 +281,7 @@ async function executeStep(
       telemetrySink: options.telemetrySink,
       antiVerificationInterceptor: hasAntiVerificationInterceptor(step),
     }),
-    ...(hasWebBrowserMod(step) ? createBrowserToolSet() : {}),
+    ...(hasWebBrowserMod(step) || modRuntime.attachToolsets.has('web-browser') ? createBrowserToolSet() : {}),
   };
 
   // ADDITIVE: detect and connect any MCP tool-provider mod; merge its tools.
@@ -216,12 +296,24 @@ async function executeStep(
     emitStepStatus(flow.id, step.id, 'running', `[mcp] ${blocked.message}`);
   }
 
+  // Enforce each mod's `runtime.blockTools` by removing the named tool from
+  // the surface the model actually sees — the engine enforces it instead of
+  // trusting the prompt (e.g. `dry-run` blocking `write_file`).
+  for (const toolName of modRuntime.blockTools) {
+    if (toolName in tools) {
+      delete tools[toolName];
+      const modName = modRuntime.blockedBy.get(toolName) ?? 'unknown mod';
+      emitStepStatus(flow.id, step.id, 'running', `[mods] tool "${toolName}" blocked by mod "${modName}".`);
+    }
+  }
+
   const runStep = options.runStep ?? runLLMStep;
 
   // ── Model-agnostic guardrail: verify a step's completion contract and re-run
   // it with concrete corrective feedback until it passes or the budget is spent.
-  // Steps without a `contract` keep the original single-pass behaviour exactly.
-  const contract = step.contract;
+  // Steps without a `contract` (own or mod-contributed) keep the original
+  // single-pass behaviour exactly.
+  const contract = mergeStepContracts(step.contract, modRuntime.contracts);
   const guardrailActive = Boolean(contract) && Boolean(options.fileSystem);
   const maxAttempts = guardrailActive
     ? Math.max(1, contract!.maxAttempts ?? options.guardrailMaxAttempts ?? DEFAULT_GUARDRAIL_MAX_ATTEMPTS)

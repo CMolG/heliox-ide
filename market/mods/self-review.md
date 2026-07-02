@@ -9,6 +9,7 @@ When this modifier is active, the agent performs a deliberate self-review pass b
 3. **Check for breakage.** Look for syntax errors, broken contracts, dangling references, and anything the change might have regressed.
 4. **Fix, then finish.** If the review finds a gap, fix it in the same turn. Do not hand off known-broken work.
 5. **State what was verified.** Briefly note what was checked so the result is auditable.
+6. **Report deviations.** List any objective requirement you deviated from and why — never silently substitute a different interpretation.
 
 ## Behavioral Overrides
 

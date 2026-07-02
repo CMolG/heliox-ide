@@ -3128,6 +3128,32 @@ body {
   color: #fca5a5;
 }
 
+/* Non-blocking domain-mismatch hint (a mod attached outside the step's role
+   domain) — deliberately amber/muted, never red: the attach already
+   succeeded, this is informational only (see the `MarketDomain` doc comment
+   in types/market.ts). Icon + text both carry the meaning, so color is never
+   the sole signal distinguishing this from the hard-rejection error above. */
+.step-config-domain-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  /* Lightened toward white for AAA text contrast — see .step-config-status--compiling. */
+  color: color-mix(in srgb, #f59e0b 82%, white);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.step-config-domain-hint-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #f59e0b;
+}
+
 /* ── Connections ── */
 
 .step-config-connections {

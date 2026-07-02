@@ -14,7 +14,7 @@
  */
 // src/renderer/components/desktop/attachable-helpers.ts — Shared helpers for attachable components
 import type { DesktopAttachable } from '@/types/desktop';
-import type { MarketInventory } from '@/types/market';
+import type { MarketInventory, MarketMod, MarketRole } from '@/types/market';
 
 export function kebabToTitle(str: string): string {
   return str.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -27,4 +27,26 @@ export function resolveMarketItem(attachable: DesktopAttachable, inventory: Mark
   if (attachable.type === 'flow') return inventory.flows.find(f => f.name === attachable.name) ?? null;
   if (attachable.type === 'step') return inventory.steps?.find(s => s.name === attachable.name) ?? null;
   return null;
+}
+
+/**
+ * Non-blocking "domain hint" for a mod being attached to a step. Both the
+ * mod and the step's already-assigned role are informational — see the
+ * `MarketDomain` doc comment in `types/market.ts` — so this is never a hard
+ * rejection, only a same-turn heads-up that the combination may be
+ * irrelevant. Returns the ready-to-render message, or `null` when there is
+ * nothing to warn about:
+ * - the step has no role attached yet,
+ * - either side omits `domains`, or
+ * - either side declares itself `universal` (role-agnostic), or
+ * - the mod's and role's domains intersect.
+ */
+export function domainMismatchHint(mod: MarketMod, role: MarketRole | null): string | null {
+  if (!role) return null;
+  const modDomains = mod.domains;
+  const roleDomains = role.domains;
+  if (!modDomains?.length || modDomains.includes('universal')) return null;
+  if (!roleDomains?.length || roleDomains.includes('universal')) return null;
+  if (modDomains.some((domain) => roleDomains.includes(domain))) return null;
+  return `"${mod.name}" targets ${modDomains.join(', ')}; the attached role "${role.name}" covers ${roleDomains.join(', ')}. Attached anyway — it may be irrelevant here.`;
 }

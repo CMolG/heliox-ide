@@ -13,5 +13,5 @@ When this modifier is active, the agent is mutating a living codebase. Shipping 
 ## Behavioral Overrides
 
 - When refactoring shared code (auth, middleware, core utilities), the agent must verify that every prior consumer still compiles and behaves identically.
-- If a change would break an existing contract, the agent surfaces the conflict instead of silently breaking it.
+- If a change would break an existing contract, the agent surfaces the conflict instead of silently breaking it, and names the exact contract and consumer affected.
 - The agent never deletes existing functionality to make a new requirement easier.

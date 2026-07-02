@@ -66,6 +66,8 @@ const INVENTORY: MarketInventory = {
       iconLibrary: 'react-icons/md',
       description: 'Builds accessible, performant UI with React and strict TypeScript.',
       tags: ['react', 'accessibility'],
+      betterOn: 'small, well-scoped UI changes',
+      domains: ['frontend', 'web'],
     },
   ],
   mods: [
@@ -77,6 +79,7 @@ const INVENTORY: MarketInventory = {
       tags: ['quality'],
       incompatibleWith: ['loose-linting'],
       exclusiveGroup: 'linting',
+      domains: ['frontend', 'backend'],
     },
   ],
   steps: [],
@@ -144,13 +147,52 @@ describe('MarketplaceApp — card click opens the product sheet', () => {
     expect(screen.getAllByText('high').length).toBe(2);
   });
 
-  it('shows mod metadata (incompatibleWith / exclusiveGroup)', () => {
+  it('shows mod metadata (incompatibleWith / exclusiveGroup / domains)', () => {
     seedStore();
     render(<MarketplaceApp />);
     fireEvent.click(screen.getByTestId(`plugin-card-${MOD_PLUGIN.id}`));
 
     expect(screen.getByText('linting')).toBeInTheDocument();
     expect(screen.getByText('loose-linting')).toBeInTheDocument();
+    expect(screen.getByText('Domains')).toBeInTheDocument();
+    expect(screen.getByText('frontend, backend')).toBeInTheDocument();
+  });
+
+  it('shows role metadata (betterOn / domains) when present in the fixture', () => {
+    seedStore();
+    render(<MarketplaceApp />);
+    fireEvent.click(screen.getByTestId(`plugin-card-${ROLE_PLUGIN.id}`));
+
+    expect(screen.getByText('Better on')).toBeInTheDocument();
+    expect(screen.getByText('small, well-scoped UI changes')).toBeInTheDocument();
+    expect(screen.getByText('Domains')).toBeInTheDocument();
+    expect(screen.getByText('frontend, web')).toBeInTheDocument();
+  });
+
+  it('omits Better on / Domains rows when the role fixture lacks that (optional) metadata', () => {
+    useDesktopStore.setState({
+      showMarketplace: true,
+      availablePlugins: [...useDesktopStore.getState().availablePlugins, ROLE_PLUGIN],
+      marketInventory: {
+        ...INVENTORY,
+        roles: [
+          {
+            name: 'frontend-engineer',
+            icon: 'MdWeb',
+            iconLibrary: 'react-icons/md',
+            description: 'Builds accessible, performant UI with React and strict TypeScript.',
+            tags: ['react', 'accessibility'],
+            // no betterOn, no domains — degrades cleanly, no dl rendered.
+          },
+        ],
+      },
+    });
+    render(<MarketplaceApp />);
+    fireEvent.click(screen.getByTestId(`plugin-card-${ROLE_PLUGIN.id}`));
+
+    expect(screen.getByTestId('plugin-sheet')).toBeInTheDocument();
+    expect(screen.queryByText('Better on')).not.toBeInTheDocument();
+    expect(screen.queryByText('Domains')).not.toBeInTheDocument();
   });
 
   it('gracefully falls back to the plugin\'s own fields when there is no inventory match', () => {

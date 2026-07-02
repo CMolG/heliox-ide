@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { verifyStepContract, snapshotWorkspace, buildCorrectivePrompt } from './guardrails';
+import { verifyStepContract, snapshotWorkspace, buildCorrectivePrompt, mergeStepContracts } from './guardrails';
 import type { StepContract } from '../../types/harness';
 
 describe('verifyStepContract — model-agnostic definition of done', () => {
@@ -84,6 +84,70 @@ describe('snapshotWorkspace', () => {
 
   it('returns empty for an absent file system', async () => {
     await expect(snapshotWorkspace(undefined)).resolves.toEqual({});
+  });
+});
+
+describe('mergeStepContracts — merging runtime mod contract fragments with a step contract', () => {
+  it('returns undefined when base is undefined and there are no fragments', () => {
+    expect(mergeStepContracts(undefined, [])).toBeUndefined();
+  });
+
+  it('returns undefined when base is undefined and every fragment is empty', () => {
+    expect(mergeStepContracts(undefined, [{}, { requiredArtifacts: [] }, { forbiddenArtifacts: [] }])).toBeUndefined();
+  });
+
+  it('returns the fragment content unmodified when base is undefined and one fragment is meaningful', () => {
+    expect(mergeStepContracts(undefined, [{ mustWriteFiles: true }])).toEqual({ mustWriteFiles: true });
+  });
+
+  it('ORs boolean requirements across base and fragments', () => {
+    const merged = mergeStepContracts(
+      { mustWriteFiles: false },
+      [{ forbidStubMarkers: true }, { requireDeclaredDependencies: true }, {}],
+    );
+    expect(merged?.mustWriteFiles).toBeFalsy();
+    expect(merged?.forbidStubMarkers).toBe(true);
+    expect(merged?.requireDeclaredDependencies).toBe(true);
+  });
+
+  it('is true if ANY single contributor requires it, even when most say false/absent', () => {
+    const merged = mergeStepContracts({}, [{}, { mustWriteFiles: false }, { mustWriteFiles: true }]);
+    expect(merged?.mustWriteFiles).toBe(true);
+  });
+
+  it('concatenates array requirements with base entries first', () => {
+    const baseArtifact = { description: 'base artifact', pathPattern: 'a\\.ts$' };
+    const fragmentArtifact = { description: 'fragment artifact', pathPattern: 'b\\.ts$' };
+    const merged = mergeStepContracts(
+      { requiredArtifacts: [baseArtifact] },
+      [{ requiredArtifacts: [fragmentArtifact] }, {}],
+    );
+    expect(merged?.requiredArtifacts).toEqual([baseArtifact, fragmentArtifact]);
+  });
+
+  it('concatenates forbiddenArtifacts across every fragment, base first', () => {
+    const baseForbidden = { description: 'base forbidden', pathPattern: 'src/legacy/' };
+    const fragForbidden = { description: 'fragment forbidden', pathPattern: 'src/locales/' };
+    const merged = mergeStepContracts(
+      { forbiddenArtifacts: [baseForbidden] },
+      [{ forbiddenArtifacts: [fragForbidden] }],
+    );
+    expect(merged?.forbiddenArtifacts).toEqual([baseForbidden, fragForbidden]);
+  });
+
+  it('takes the maximum of the defined maxAttempts values', () => {
+    expect(mergeStepContracts({ maxAttempts: 2 }, [{ maxAttempts: 5 }, { maxAttempts: 3 }])?.maxAttempts).toBe(5);
+  });
+
+  it('leaves maxAttempts undefined when none of the contributors define it', () => {
+    expect(mergeStepContracts({ mustWriteFiles: true }, [{ forbidStubMarkers: true }])?.maxAttempts).toBeUndefined();
+  });
+
+  it('handles an empty fragments array against a defined base by returning the base content', () => {
+    expect(mergeStepContracts({ mustWriteFiles: true, maxAttempts: 4 }, [])).toEqual({
+      mustWriteFiles: true,
+      maxAttempts: 4,
+    });
   });
 });
 

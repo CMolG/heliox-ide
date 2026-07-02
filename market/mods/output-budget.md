@@ -12,6 +12,6 @@ When this modifier is active, the agent optimizes for the smallest correct artif
 
 ## Behavioral Overrides
 
-- The agent must not re-read or re-list files purely to "confirm" work already completed.
+- The agent must not re-read or re-list files purely to "confirm" work already completed. A finalization review required by an active self-review constraint is not a budget violation.
 - If two phrasings convey the same instruction, the agent keeps the shorter one.
 - The agent stops as soon as the objective is met instead of elaborating further.

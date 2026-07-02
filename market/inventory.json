@@ -326,6 +326,10 @@
         "css",
         "browser"
       ],
+      "domains": [
+        "frontend",
+        "web"
+      ],
       "color": "D90368",
       "palette": {
         "background": "D90368",
@@ -346,6 +350,9 @@
         "server",
         "node",
         "python"
+      ],
+      "domains": [
+        "backend"
       ],
       "color": "3A405A",
       "palette": {
@@ -368,6 +375,9 @@
         "cloud",
         "aws"
       ],
+      "domains": [
+        "infra"
+      ],
       "color": "E0FF4F",
       "palette": {
         "background": "E0FF4F",
@@ -388,6 +398,10 @@
         "crypto",
         "appsec"
       ],
+      "domains": [
+        "universal"
+      ],
+      "betterOn": "claude-opus-4.6",
       "color": "D05353",
       "palette": {
         "background": "D05353",
@@ -408,6 +422,10 @@
         "solid",
         "microservices"
       ],
+      "domains": [
+        "universal"
+      ],
+      "betterOn": "claude-opus-4.6",
       "color": "E39774",
       "palette": {
         "background": "E39774",
@@ -429,6 +447,10 @@
         "statistics",
         "pipelines"
       ],
+      "domains": [
+        "data"
+      ],
+      "betterOn": "claude-opus-4.6",
       "color": "2274A5",
       "palette": {
         "background": "2274A5",
@@ -450,6 +472,9 @@
         "tdd",
         "edge-cases"
       ],
+      "domains": [
+        "universal"
+      ],
       "color": "87E752",
       "palette": {
         "background": "87E752",
@@ -470,6 +495,10 @@
         "metrics",
         "agile"
       ],
+      "domains": [
+        "universal"
+      ],
+      "betterOn": "opencode/claude-sonnet-4-6",
       "color": "E58F65",
       "palette": {
         "background": "E58F65",
@@ -490,12 +519,145 @@
         "swagger",
         "communication"
       ],
+      "domains": [
+        "universal"
+      ],
+      "betterOn": "opencode/claude-sonnet-4-6",
       "color": "E1F4CB",
       "palette": {
         "background": "E1F4CB",
         "text": "111111",
         "accents": "2274A5",
         "hover": "CBE0B4"
+      }
+    },
+    {
+      "name": "full-stack-engineer",
+      "icon": "MdAllInclusive",
+      "iconLibrary": "react-icons/md",
+      "description": "Pragmatic end-to-end engineer who ships complete vertical slices: UI, API, and data model as one coherent feature.",
+      "tags": [
+        "full-stack",
+        "frontend",
+        "backend",
+        "api",
+        "integration",
+        "pragmatic"
+      ],
+      "domains": [
+        "frontend",
+        "backend",
+        "web"
+      ],
+      "color": "8338EC",
+      "palette": {
+        "background": "8338EC",
+        "text": "FFFFFF",
+        "accents": "E0FF4F",
+        "hover": "6C2BC4"
+      }
+    },
+    {
+      "name": "design-engineer",
+      "icon": "MdDesignServices",
+      "iconLibrary": "react-icons/md",
+      "description": "Hybrid expert in UX/UI, frontend architecture, and Developer Experience (DX). Crafts minimalist, highly functional interfaces.",
+      "tags": [
+        "design",
+        "ui",
+        "ux",
+        "dx",
+        "motion",
+        "design-system",
+        "polish"
+      ],
+      "domains": [
+        "frontend"
+      ],
+      "color": "06D6A0",
+      "palette": {
+        "background": "06D6A0",
+        "text": "111111",
+        "accents": "D90368",
+        "hover": "05B586"
+      }
+    },
+    {
+      "name": "ai-engineer",
+      "icon": "MdSmartToy",
+      "iconLibrary": "react-icons/md",
+      "description": "Builds LLM-powered applications: prompts, agent loops, RAG, structured outputs, and eval-gated changes.",
+      "tags": [
+        "ai",
+        "llm",
+        "agents",
+        "rag",
+        "prompts",
+        "evals",
+        "mcp"
+      ],
+      "domains": [
+        "backend",
+        "data"
+      ],
+      "betterOn": "claude-opus-4.6",
+      "color": "00BBF9",
+      "palette": {
+        "background": "00BBF9",
+        "text": "111111",
+        "accents": "3A405A",
+        "hover": "009FD4"
+      }
+    },
+    {
+      "name": "mobile-engineer",
+      "icon": "MdPhoneIphone",
+      "iconLibrary": "react-icons/md",
+      "description": "Ships native-feeling mobile apps with React Native/Expo or Flutter: offline-first, 60fps, store-ready.",
+      "tags": [
+        "mobile",
+        "react-native",
+        "expo",
+        "flutter",
+        "ios",
+        "android",
+        "offline"
+      ],
+      "domains": [
+        "frontend"
+      ],
+      "color": "FFB627",
+      "palette": {
+        "background": "FFB627",
+        "text": "111111",
+        "accents": "3A405A",
+        "hover": "DA9A1F"
+      }
+    },
+    {
+      "name": "incident-responder",
+      "icon": "MdMonitorHeart",
+      "iconLibrary": "react-icons/md",
+      "description": "Triages live failures with log forensics, change correlation, and rollbacks; mitigate first, root-cause second, postmortem always.",
+      "tags": [
+        "sre",
+        "incident",
+        "debugging",
+        "reliability",
+        "postmortem",
+        "oncall"
+      ],
+      "domains": [
+        "infra",
+        "backend"
+      ],
+      "betterOn": "claude-opus-4.6",
+      "color": "FF6B35",
+      "palette": {
+        "background": "FF6B35",
+        "text": "111111",
+        "accents": "FFFFFF",
+        "hover": "D95526"
       }
     }
   ],
@@ -513,6 +675,9 @@
       ],
       "incompatibleWith": [
         "dry-run"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -528,18 +693,35 @@
       ],
       "incompatibleWith": [
         "dry-run"
-      ]
+      ],
+      "domains": [
+        "universal"
+      ],
+      "runtime": {
+        "contract": {
+          "mustWriteFiles": true,
+          "requiredArtifacts": [
+            {
+              "description": "At least one test file must exist for the change (TDD red before green)",
+              "pathPattern": "(\\.(test|spec)\\.[cm]?[jt]sx?$|(^|/)test_[^/]+\\.py$|_test\\.(py|go)$)"
+            }
+          ]
+        }
+      }
     },
     {
       "name": "zero-dependencies",
       "icon": "MdBlock",
       "iconLibrary": "react-icons/md",
-      "description": "Strictly forbids third-party libraries; all solutions must use native code and standard libraries.",
+      "description": "Forbids adding new third-party dependencies; solutions use native language features and standard libraries.",
       "tags": [
         "vanilla",
         "native",
         "no-deps",
         "lightweight"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -552,6 +734,9 @@
         "sanitization",
         "safe",
         "hardened"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -567,6 +752,10 @@
       ],
       "incompatibleWith": [
         "extreme-performance"
+      ],
+      "exclusiveGroup": "output-verbosity",
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -583,7 +772,15 @@
       "incompatibleWith": [
         "strict-linting",
         "test-driven"
-      ]
+      ],
+      "domains": [
+        "universal"
+      ],
+      "runtime": {
+        "blockTools": [
+          "write_file"
+        ]
+      }
     },
     {
       "name": "legacy-compat",
@@ -598,6 +795,9 @@
       ],
       "incompatibleWith": [
         "extreme-performance"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -614,6 +814,9 @@
       "incompatibleWith": [
         "verbose-comments",
         "legacy-compat"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -626,7 +829,15 @@
         "accessibility",
         "wcag",
         "inclusive"
-      ]
+      ],
+      "domains": [
+        "frontend"
+      ],
+      "runtime": {
+        "attachTools": [
+          "web-browser"
+        ]
+      }
     },
     {
       "name": "output-budget",
@@ -639,8 +850,9 @@
         "minimal",
         "surgical"
       ],
-      "incompatibleWith": [
-        "verbose-comments"
+      "exclusiveGroup": "output-verbosity",
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -653,6 +865,9 @@
         "brownfield",
         "contracts",
         "safe"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -665,6 +880,9 @@
         "spec",
         "domain",
         "checklist"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -677,6 +895,9 @@
         "root-cause",
         "diagnosis",
         "analysis"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -689,6 +910,9 @@
         "quality",
         "self-check",
         "verification"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -701,6 +925,9 @@
         "robustness",
         "algorithms",
         "correctness"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -713,6 +940,9 @@
         "l10n",
         "intl",
         "localization"
+      ],
+      "domains": [
+        "frontend"
       ]
     },
     {
@@ -725,7 +955,15 @@
         "schema",
         "json-ld",
         "structured-data"
-      ]
+      ],
+      "domains": [
+        "web"
+      ],
+      "runtime": {
+        "attachTools": [
+          "web-browser"
+        ]
+      }
     },
     {
       "name": "seo-meta",
@@ -737,7 +975,15 @@
         "meta",
         "open-graph",
         "discoverability"
-      ]
+      ],
+      "domains": [
+        "web"
+      ],
+      "runtime": {
+        "attachTools": [
+          "web-browser"
+        ]
+      }
     },
     {
       "name": "web-vitals",
@@ -749,7 +995,16 @@
         "core-web-vitals",
         "lcp",
         "cls"
-      ]
+      ],
+      "domains": [
+        "frontend",
+        "web"
+      ],
+      "runtime": {
+        "attachTools": [
+          "web-browser"
+        ]
+      }
     },
     {
       "name": "auth-guarded",
@@ -761,6 +1016,10 @@
         "authentication",
         "authorization",
         "rbac"
+      ],
+      "domains": [
+        "backend",
+        "web"
       ]
     },
     {
@@ -773,6 +1032,9 @@
         "mobile-first",
         "layout",
         "container-queries"
+      ],
+      "domains": [
+        "frontend"
       ]
     },
     {
@@ -785,6 +1047,9 @@
         "dark-mode",
         "tokens",
         "prefers-color-scheme"
+      ],
+      "domains": [
+        "frontend"
       ]
     },
     {
@@ -797,6 +1062,10 @@
         "validation",
         "accessibility",
         "zod"
+      ],
+      "domains": [
+        "frontend",
+        "backend"
       ]
     },
     {
@@ -810,7 +1079,10 @@
         "utility-css",
         "tokens"
       ],
-      "exclusiveGroup": "design-system"
+      "exclusiveGroup": "design-system",
+      "domains": [
+        "frontend"
+      ]
     },
     {
       "name": "ds-shadcn",
@@ -823,7 +1095,135 @@
         "radix",
         "tailwind"
       ],
-      "exclusiveGroup": "design-system"
+      "exclusiveGroup": "design-system",
+      "domains": [
+        "frontend"
+      ]
+    },
+    {
+      "name": "error-ux",
+      "icon": "MdErrorOutline",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires explicit loading, empty, and error states with retry paths on every remote-data surface; no swallowed rejections.",
+      "tags": [
+        "error-handling",
+        "loading-states",
+        "resilience",
+        "ux"
+      ],
+      "domains": [
+        "frontend"
+      ]
+    },
+    {
+      "name": "observability-ready",
+      "icon": "MdInsights",
+      "iconLibrary": "react-icons/md",
+      "description": "Enforces structured correlation-id logging, golden-signal metrics, and spans on every new endpoint; forbids console.log and unobservable code.",
+      "tags": [
+        "observability",
+        "logging",
+        "metrics",
+        "tracing",
+        "otel"
+      ],
+      "domains": [
+        "backend",
+        "infra"
+      ]
+    },
+    {
+      "name": "api-contract-first",
+      "icon": "MdApi",
+      "iconLibrary": "react-icons/md",
+      "description": "The API contract (OpenAPI/schema) is written and validated before implementation; types, clients, and validation derive from it.",
+      "tags": [
+        "api",
+        "openapi",
+        "contract",
+        "schema-first"
+      ],
+      "domains": [
+        "backend"
+      ]
+    },
+    {
+      "name": "docs-sync",
+      "icon": "MdHistoryEdu",
+      "iconLibrary": "react-icons/md",
+      "description": "Every change updates the README, API references, and changelog entries it invalidates — stale docs are defects.",
+      "tags": [
+        "documentation",
+        "changelog",
+        "readme",
+        "sync"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "privacy-guard",
+      "icon": "MdPrivacyTip",
+      "iconLibrary": "react-icons/md",
+      "description": "GDPR-grade data handling: classify fields, minimize collection, keep PII out of logs, and preserve deletion/export paths.",
+      "tags": [
+        "privacy",
+        "gdpr",
+        "pii",
+        "compliance",
+        "data-minimization"
+      ],
+      "domains": [
+        "backend",
+        "data"
+      ]
+    },
+    {
+      "name": "conventional-commits",
+      "icon": "MdCommit",
+      "iconLibrary": "react-icons/md",
+      "description": "Atomic commits in Conventional Commits format with why-focused bodies and clean, reviewable history.",
+      "tags": [
+        "git",
+        "commits",
+        "changelog",
+        "hygiene"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "explain-to-me",
+      "icon": "MdSchool",
+      "iconLibrary": "react-icons/md",
+      "description": "Plain-language pedagogy in the conversation: defines jargon, uses project-anchored analogies, and recaps every change for non-expert builders.",
+      "tags": [
+        "pedagogy",
+        "plain-language",
+        "learning",
+        "vibe-coding"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "db-migrations-safe",
+      "icon": "MdTableChart",
+      "iconLibrary": "react-icons/md",
+      "description": "Reversible, expand-contract schema migrations with idempotent batched backfills and zero destructive changes at deploy time.",
+      "tags": [
+        "database",
+        "migrations",
+        "schema",
+        "expand-contract",
+        "zero-downtime"
+      ],
+      "domains": [
+        "backend"
+      ]
     }
   ],
   "steps": [

@@ -8,6 +8,7 @@ import { clearMarketModCache, getMarketDir, getMarketMod, getMarketMods, getMark
 import { listDiscoverableMods, listDiscoverableRoles } from '../meta-agent/pipeline-generator';
 import { createPerformanceCase } from '../performance-frontier/procedural/case-factory';
 import type { PFSuite } from '../performance-frontier/types';
+import type { MarketDomain, MarketInventory } from '../../types/market';
 
 const MARKET_DIR = getMarketDir();
 const DOC_FILES = new Set(['AGENTS.md', 'CLAUDE.md']);
@@ -23,11 +24,7 @@ const ALL_SUITES: PFSuite[] = [
   'from-scratch',
 ];
 
-interface InventoryEntry {
-  name: string;
-}
-
-function readInventory(): Record<string, InventoryEntry[]> {
+function readInventory(): MarketInventory {
   return JSON.parse(readFileSync(join(MARKET_DIR, 'inventory.json'), 'utf-8'));
 }
 
@@ -218,6 +215,114 @@ describe('exclusive-group mods (design systems as mutually-exclusive mods)', () 
       if (previous === undefined) delete process.env.HELIOX_MARKET_DIR;
       else process.env.HELIOX_MARKET_DIR = previous;
       clearMarketModCache();
+    }
+  });
+
+  it('symmetrizes a manually-authored asymmetric incompatibleWith list (A lists B, B never lists back)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'heliox-market-'));
+    mkdirSync(join(tmp, 'mods'), { recursive: true });
+    writeFileSync(join(tmp, 'mods', 'mod-a.md'), '# mod a', 'utf-8');
+    writeFileSync(join(tmp, 'mods', 'mod-b.md'), '# mod b', 'utf-8');
+    writeFileSync(
+      join(tmp, 'inventory.json'),
+      JSON.stringify({
+        mods: [
+          { name: 'mod-a', description: 'Mod A', tags: [], incompatibleWith: ['mod-b'] },
+          { name: 'mod-b', description: 'Mod B', tags: [] },
+        ],
+      }),
+      'utf-8',
+    );
+
+    const previous = process.env.HELIOX_MARKET_DIR;
+    process.env.HELIOX_MARKET_DIR = tmp;
+    clearMarketModCache();
+    try {
+      const a = getMarketMod('mod-a');
+      const b = getMarketMod('mod-b');
+
+      expect(a.config?.incompatibleWith).toEqual(['mod-b']);
+      // "mod-b" never declared the pairing itself — the loader must symmetrize it.
+      expect(b.config?.incompatibleWith).toEqual(['mod-a']);
+    } finally {
+      if (previous === undefined) delete process.env.HELIOX_MARKET_DIR;
+      else process.env.HELIOX_MARKET_DIR = previous;
+      clearMarketModCache();
+    }
+  });
+});
+
+// ─── Market inventory data guardrails (real /market data, not a tmp fixture) ──
+//
+// NOTE: these guardrails check content the parallel market-data work is still
+// authoring (role `domains` in particular). They are EXPECTED to be red until
+// that inventory work lands — that is not a bug in the guardrail. Do not
+// skip, dilute, or weaken these assertions to make them pass early.
+
+const VALID_DOMAINS: ReadonlySet<MarketDomain> = new Set([
+  'frontend', 'backend', 'web', 'data', 'infra', 'universal',
+]);
+const VALID_ATTACH_TOOLS = new Set(['web-browser']);
+const VALID_BLOCK_TOOLS = new Set(['list_directory', 'read_file', 'write_file']);
+
+describe('market inventory data guardrails (mods + roles)', () => {
+  it('keeps every manually-declared incompatibleWith edge symmetric and pointing at a real mod', () => {
+    const mods = readInventory().mods ?? [];
+    const byName = new Map(mods.map((mod) => [mod.name, mod]));
+
+    for (const mod of mods) {
+      for (const target of mod.incompatibleWith ?? []) {
+        const targetMod = byName.get(target);
+        expect(
+          targetMod,
+          `"${mod.name}" declares incompatibleWith "${target}", which does not exist in market/mods`,
+        ).toBeDefined();
+
+        const listedBack = (targetMod?.incompatibleWith ?? []).includes(mod.name);
+        const sharesGroup = Boolean(mod.exclusiveGroup) && mod.exclusiveGroup === targetMod?.exclusiveGroup;
+        expect(
+          listedBack || sharesGroup,
+          `"${mod.name}" -> "${target}" is one-directional — add "${mod.name}" to ${target}'s incompatibleWith (or share an exclusiveGroup)`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('declares a non-empty, valid `domains` list for every mod and role', () => {
+    const inventory = readInventory();
+    const entries: Array<{ kind: string; name: string; domains?: MarketDomain[] }> = [
+      ...(inventory.mods ?? []).map((mod) => ({ kind: 'mod', name: mod.name, domains: mod.domains })),
+      ...(inventory.roles ?? []).map((role) => ({ kind: 'role', name: role.name, domains: role.domains })),
+    ];
+
+    for (const entry of entries) {
+      expect(entry.domains, `${entry.kind} "${entry.name}" is missing "domains"`).toBeDefined();
+      expect(
+        entry.domains?.length ?? 0,
+        `${entry.kind} "${entry.name}" declares an empty "domains" list`,
+      ).toBeGreaterThan(0);
+      for (const domain of entry.domains ?? []) {
+        expect(VALID_DOMAINS.has(domain), `${entry.kind} "${entry.name}" declares unknown domain "${domain}"`).toBe(true);
+      }
+    }
+  });
+
+  it('declares only known runtime.attachTools / runtime.blockTools values for every mod', () => {
+    const mods = readInventory().mods ?? [];
+
+    for (const mod of mods) {
+      for (const toolset of mod.runtime?.attachTools ?? []) {
+        expect(
+          VALID_ATTACH_TOOLS.has(toolset),
+          `mod "${mod.name}" runtime.attachTools names unknown toolset "${toolset}"`,
+        ).toBe(true);
+      }
+      for (const toolName of mod.runtime?.blockTools ?? []) {
+        expect(
+          VALID_BLOCK_TOOLS.has(toolName),
+          `mod "${mod.name}" runtime.blockTools names unknown tool "${toolName}"`,
+        ).toBe(true);
+      }
     }
   });
 });

@@ -28,6 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDesktopStore } from '../../store/desktop-store';
 import { StepInfoModal } from './StepInfoModal';
 import type { StepNodeData } from '@/types/desktop';
+import type { MarketMod, MarketRole } from '@/types/market';
 
 // ── Mock harness-store (execution is out of scope for this file) ───────────
 
@@ -47,6 +48,12 @@ const ROLE_B = { name: 'backend-engineer', icon: 'MdStorage', iconLibrary: 'md',
 const MOD_LINT = { name: 'strict-linting', icon: 'MdRule', iconLibrary: 'md', description: 'Fail fast on lint drift', tags: ['quality'] };
 const MOD_DS_A = { name: 'design-system-a', icon: 'MdPalette', iconLibrary: 'md', description: 'Design system A', tags: ['design'], incompatibleWith: ['design-system-b'] };
 const MOD_DS_B = { name: 'design-system-b', icon: 'MdPalette', iconLibrary: 'md', description: 'Design system B', tags: ['design'], incompatibleWith: ['design-system-a'] };
+
+// Domain-hint fixtures (explicitly typed so the `domains` literals narrow to
+// `MarketDomain` instead of widening to `string[]`).
+const ROLE_DEVOPS: MarketRole = { name: 'devops-engineer', icon: 'MdCloud', iconLibrary: 'md', description: 'Runs infra', tags: ['infra'], color: '#4285F4', domains: ['infra'] };
+const MOD_DARK_MODE: MarketMod = { name: 'dark-mode', icon: 'MdPalette', iconLibrary: 'md', description: 'Dark theme tokens', tags: ['design'], domains: ['frontend'] };
+const MOD_UNIVERSAL: MarketMod = { name: 'self-review', icon: 'MdFactCheck', iconLibrary: 'md', description: 'Review before done', tags: ['process'], domains: ['universal'] };
 
 function seedStep(overrides?: Partial<{ prompt: string; description: string }>) {
   const stepId = useDesktopStore.getState().addStepNode({
@@ -271,6 +278,92 @@ describe('StepInfoModal — mod management', () => {
     // Anchor on the quoted mod name so this can't accidentally match the
     // static picker hint ("Mods stack — incompatible combinations…").
     expect(screen.getByText(/"Strict Linting" was rejected/i)).toBeInTheDocument();
+  });
+});
+
+// ── Mod domain hint (non-blocking) ───────────────────────────────────────────
+//
+// The hard rejection above (incompatible/duplicate) is a separate, pre-existing
+// guard. This hint is purely informational: it never blocks the attach, it
+// only surfaces when the mod's and the step's role's `domains` are both
+// declared and disjoint (see `domainMismatchHint` in attachable-helpers.ts).
+
+describe('StepInfoModal — mod domain hint (non-blocking)', () => {
+  it('attaches the mod AND shows a muted, non-blocking hint when its domains are disjoint from the attached role\'s', () => {
+    const { stepId } = seedStep();
+    useDesktopStore.getState().addRoleToStep(stepId, ROLE_DEVOPS);
+    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [ROLE_DEVOPS], mods: [MOD_DARK_MODE] });
+    renderModal(stepId, freshStepData(stepId));
+
+    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_DARK_MODE.name } });
+    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
+
+    // Non-blocking: the mod IS attached despite the domain mismatch.
+    expect(freshStepData(stepId).mods.map((m) => m.name)).toEqual([MOD_DARK_MODE.name]);
+
+    const hint = screen.getByTestId('step-info-mod-domain-hint');
+    expect(hint).toHaveAttribute('role', 'status');
+    expect(hint).toHaveTextContent('"dark-mode" targets frontend; the attached role "devops-engineer" covers infra. Attached anyway — it may be irrelevant here.');
+  });
+
+  it('shows no hint when the step has no role attached', () => {
+    const { stepId } = seedStep();
+    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [], mods: [MOD_DARK_MODE] });
+    renderModal(stepId, freshStepData(stepId));
+
+    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_DARK_MODE.name } });
+    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
+
+    expect(freshStepData(stepId).mods.map((m) => m.name)).toEqual([MOD_DARK_MODE.name]);
+    expect(screen.queryByTestId('step-info-mod-domain-hint')).not.toBeInTheDocument();
+  });
+
+  it('shows no hint when the mod is universal (role-agnostic)', () => {
+    const { stepId } = seedStep();
+    useDesktopStore.getState().addRoleToStep(stepId, ROLE_DEVOPS);
+    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [ROLE_DEVOPS], mods: [MOD_UNIVERSAL] });
+    renderModal(stepId, freshStepData(stepId));
+
+    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_UNIVERSAL.name } });
+    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
+
+    expect(freshStepData(stepId).mods.map((m) => m.name)).toEqual([MOD_UNIVERSAL.name]);
+    expect(screen.queryByTestId('step-info-mod-domain-hint')).not.toBeInTheDocument();
+  });
+
+  it('shows no hint when the mod\'s and role\'s domains overlap', () => {
+    const OVERLAPPING_MOD: MarketMod = { name: 'overlap-mod', icon: 'MdBuild', iconLibrary: 'md', description: 'Touches infra too', tags: [], domains: ['infra', 'backend'] };
+    const { stepId } = seedStep();
+    useDesktopStore.getState().addRoleToStep(stepId, ROLE_DEVOPS);
+    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [ROLE_DEVOPS], mods: [OVERLAPPING_MOD] });
+    renderModal(stepId, freshStepData(stepId));
+
+    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: OVERLAPPING_MOD.name } });
+    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
+
+    expect(freshStepData(stepId).mods.map((m) => m.name)).toEqual([OVERLAPPING_MOD.name]);
+    expect(screen.queryByTestId('step-info-mod-domain-hint')).not.toBeInTheDocument();
+  });
+
+  it('shows the hard-rejection error instead of the domain hint when the store declines the add', () => {
+    const { stepId } = seedStep();
+    useDesktopStore.getState().addRoleToStep(stepId, ROLE_DEVOPS);
+    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [ROLE_DEVOPS], mods: [MOD_DARK_MODE] });
+    renderModal(stepId, freshStepData(stepId));
+
+    // Select the (still domain-mismatched) mod, then simulate something else
+    // attaching that same mod first — mirrors the existing "surfaces a
+    // rejection message" test above.
+    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_DARK_MODE.name } });
+    act(() => {
+      useDesktopStore.getState().addModToStep(stepId, MOD_DARK_MODE);
+    });
+    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
+
+    // The panel's own Attach now hits the store's duplicate guard (`ok === false`):
+    // the hard error shows, and the (otherwise applicable) domain hint does not.
+    expect(screen.getByText(/"Dark Mode" was rejected/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('step-info-mod-domain-hint')).not.toBeInTheDocument();
   });
 });
 
