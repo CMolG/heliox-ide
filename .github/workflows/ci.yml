@@ -67,6 +67,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb
 
+      - name: Allow Electron's SUID sandbox
+        # Ubuntu 24.04 runners restrict unprivileged user namespaces via
+        # AppArmor, which kills Electron at launch ("Process failed to
+        # launch!") before any test runs. This is the fix recommended by the
+        # Electron docs for CI; the alternative — passing --no-sandbox to the
+        # app under test — would make E2E exercise a config production never uses.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Install Playwright browser + OS dependencies
         run: npx playwright install chromium --with-deps
 
