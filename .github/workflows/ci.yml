@@ -31,6 +31,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify Electron binary
+        # Electron's postinstall download flakes intermittently on the macOS
+        # arm64 runners, leaving node_modules/electron without dist/path.txt —
+        # every suite that imports 'electron' then dies at collection with
+        # "Electron failed to install correctly". require() only resolves the
+        # binary path (never launches), so this is a cheap no-op when healthy;
+        # when broken it re-runs the postinstall, and fails loudly here if the
+        # re-download fails too.
+        shell: bash
+        run: node -e "require('electron')" || node node_modules/electron/install.js
+
       - name: Lint
         run: npm run lint
 
