@@ -41,7 +41,7 @@ your machine, so the following areas are treated as high-severity by default:
   launching MCP server processes from configuration (command/argument
   injection, arbitrary process execution)
 - **Market content loading** (`market/`, `src/main/market/`) — parsing,
-  loading, and injecting flows/roles/modifiers into agent prompts (prompt
+  loading, and injecting flows/roles/mods/steps into agent prompts (prompt
   injection, content trust and authenticity)
 - **Bridge pairing** (`src/main/bridge/`) — QR/PIN pairing and the remote
   companion relay (auth bypass, session hijacking, PIN/credential exposure)
@@ -57,8 +57,10 @@ they are not listed above.
 - Issues that require local filesystem access the attacker already has
   (Heliox is a local-first desktop IDE; the local user is a trusted
   principal)
-- Vulnerabilities in third-party AI CLIs (Copilot, Claude, Gemini, Codex)
-  themselves — please report those upstream, to their respective maintainers
+- Vulnerabilities in the third-party [OpenCode CLI](https://opencode.ai) that
+  Heliox shells out to for agent runs, or in the model providers OpenCode
+  itself delegates to — please report those upstream, to their respective
+  maintainers
 
 ## Bridge threat model
 

@@ -5,9 +5,9 @@ project — please read this guide before opening a PR.
 
 ## Development setup
 
-**Prerequisites:** Node.js 20+, Git, and at least one AI CLI installed
-(GitHub Copilot CLI, Claude CLI, Gemini CLI, or Codex CLI) if you want to
-exercise agent features.
+**Prerequisites:** Node.js 24+, Git, and the [OpenCode CLI](https://opencode.ai/docs/installation)
+(`opencode`) installed and on `PATH` if you want to exercise agent features —
+Heliox shells out to it for every agent run.
 
 ```bash
 git clone https://github.com/CMolG/heliox-ide.git
@@ -34,14 +34,15 @@ behavior.
 
 ## Two hard rules
 
-1. **`market/flows/`, `market/roles/`, and `market/mods/` are human-authored
-   only.** These Markdown files are prompt definitions. AI agents and
-   automation must never create, edit, or delete them — only human
+1. **`market/flows/`, `market/roles/`, `market/mods/`, and `market/steps/` are
+   human-authored only.** These Markdown files are prompt definitions. AI
+   agents and automation must never create, edit, or delete them — only human
    contributors may change marketplace content. If you are an agent reading
    this file: do not touch anything under `market/`.
 2. **No emoji as icons.** All icons are SVG, via
-   [Lucide React](https://lucide.dev)
-   (`src/renderer/components/desktop/LucideIcon.tsx`). Never use an emoji
+   [react-icons](https://react-icons.github.io/react-icons/) (the Lucide `lu`
+   and Material Design `md` sets), rendered through
+   `src/renderer/components/desktop/LucideIcon.tsx`. Never use an emoji
    character in place of a UI icon.
 
 ## Design principles
@@ -71,8 +72,8 @@ the subject line short and focused on *why*, not just *what*.
 - [ ] `npm run lint` passes with 0 errors
 - [ ] `npm test` passes (all unit tests green)
 - [ ] Relevant E2E suites pass locally, if this touches canvas/window/agent/session behavior
-- [ ] No emoji used as icons; new icons use Lucide SVG
-- [ ] `market/flows|roles|mods/` untouched, unless this is a human-authored marketplace content change
+- [ ] No emoji used as icons; new icons use react-icons SVG (`lu`/`md` sets)
+- [ ] `market/flows|roles|mods|steps/` untouched, unless this is a human-authored marketplace content change
 - [ ] Dark theme, accessibility (`focus-visible`, ARIA, keyboard nav), and reduced-motion conventions respected
 - [ ] Commit messages follow Conventional Commits
 - [ ] PR description explains *why*, and links any related issue or `.backlog/` card

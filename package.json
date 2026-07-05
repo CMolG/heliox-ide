@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "description": "Visual-first IDE with AI agents and E2E snapshot validation. Logo: HeO2",
   "main": ".vite/build/index.js",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "rm -rf .vite dist && electron-forge start",
     "package": "electron-forge package",

@@ -15,7 +15,23 @@ See `docs/RELEASE_CHECKLIST.md` for how a version graduates from this
   verifier that runs real `vitest` suites, a design verifier (axe-core against
   real DOM), an API verifier that boots a real Express app, a statistical
   bench (Student-t confidence intervals), an LLM judge with calibration, and
-  byte-identical TS↔JVM cross-runtime conformance.
+  byte-identical TS↔JVM↔Python cross-runtime conformance (DAG order, per-step
+  output, tool-calling, and loop-execution parity all proven across the three
+  runtimes — see `sdk/conformance/README.md`).
+- Loop-back edges: a step can connect back to an earlier step to form a
+  bounded loop (1-50 iterations, default 3), set by the user (a dashed amber
+  edge with an editable ×N badge) or by the auto flow-generator
+  (`loopBackTo`). The compiler keeps the forward graph an acyclic DAG; the
+  executor schedules bounded per-iteration instances.
+- Smart model routing: an opt-in, per-flow Model policy — **Fixed** (default),
+  **Smart (Local)** (routes only among Arena-**Benchmarked** models, by
+  best-score/cheapest/fastest/best-value), or **Smart (External)** (delegates
+  to OpenRouter's `openrouter/auto` and records the model actually served).
+  Every routing decision is recorded with a human-readable reason.
+- Export Flow: the canvas compiles to a portable `*.flow.json`
+  (`HelioxFlowExport` v1) via a Frame header Export button — the same format
+  `heliox serve` and the SDKs consume; `contract`, `model`, and `loops`
+  round-trip.
 - `heliox serve`: flows as an HTTP service (Bearer auth, loopback bind by
   default), cron/webhook triggers with an overlap guard, local RAG (vector
   store + ingestion + a `retriever` step), and time-travel checkpoints/replay.
@@ -24,7 +40,12 @@ See `docs/RELEASE_CHECKLIST.md` for how a version graduates from this
 - Marketplace: web-element atoms and steps surfaced directly in the
   marketplace UI.
 - Arena: visual benchmarking dashboard with per-model average latency.
-- Java SDK: dedicated tool executor, multi-sink DAG, per-node telemetry.
+- Java SDK (`sdk/java`, bumped to **0.2.0**): dedicated tool executor,
+  multi-sink DAG, per-node telemetry — joined by a new **Python SDK**
+  (`sdk/python`, `heliox-sdk` **0.2.0**) as the third cross-runtime
+  conformance implementation, enforced by a new CI workflow
+  (`.github/workflows/sdk-conformance.yml`: mvn + pytest + the flow-export
+  vitest slice).
 - Embedded `<webview>` preview and an agentic Browser Mod (native CDP +
   accessibility-tree access).
 - CI: a 3-OS (Ubuntu/macOS/Windows) lint + unit test matrix, plus a reduced
