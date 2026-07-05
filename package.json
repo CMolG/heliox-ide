@@ -1,8 +1,9 @@
 {
   "name": "heliox-ide",
   "productName": "Heliox IDE",
-  "version": "0.1.0",
-  "description": "Visual-first IDE with AI agents and E2E snapshot validation. Logo: HeO2",
+  "version": "0.2.0",
+  "description": "Open-source dashboard for designing agentic flows — compose visually, verify by execution, and export portable flows that run across TypeScript, Java, and Python.",
+  "author": "Heliox",
   "main": ".vite/build/index.js",
   "engines": {
     "node": ">=24"

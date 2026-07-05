@@ -92,8 +92,8 @@ console.log(
 const zipOnly = process.env.HELIOX_MAKE_ZIP_ONLY === '1';
 
 const installerMakers = [
-  new MakerSquirrel({ name: 'HelioxIDE', ...windowsSigning }),
-  new MakerDMG({ format: 'ULFO' }),
+  new MakerSquirrel({ name: 'HelioxIDE', authors: 'Heliox', setupIcon: './assets/icon.ico', ...windowsSigning }),
+  new MakerDMG({ format: 'ULFO', icon: './assets/icon.icns' }),
   new MakerDeb({
     options: {
       maintainer: 'Heliox',
@@ -147,7 +147,10 @@ const config: ForgeConfig = {
         owner: 'CMolG',
         name: 'heliox-ide',
       },
-      prerelease: true,
+      // Full (non-prerelease) releases only — update.electronjs.org and GitHub's
+      // /releases/latest both EXCLUDE prereleases, so auto-update and the web's
+      // stable-download resolution can only ever see a non-prerelease release.
+      prerelease: false,
       // Audit 1.10 — CI always produces a draft. A human runs the QA matrix
       // in docs/RELEASE_CHECKLIST.md and clicks "Publish" once the
       // checksums job (release.yml) has attached SHA256SUMS; nothing goes
