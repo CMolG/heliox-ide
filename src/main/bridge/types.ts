@@ -20,7 +20,10 @@ export interface BridgeConfig {
 }
 
 export interface BridgeAuthRequest {
-  pin: string;
+  /** Manual fallback credential — typed by hand on the phone. */
+  pin?: string;
+  /** One-time credential carried by the QR (URL fragment, never a query param). */
+  pairingToken?: string;
   deviceName?: string;
 }
 
@@ -78,14 +81,9 @@ export interface BridgeSession {
   deviceName: string;
   connectedAt: number;
   lastPing: number;
+  /** Absolute expiry, re-armed on every validated request (sliding TTL). */
+  expiresAt: number;
   authenticated: boolean;
-}
-
-export interface BridgeQRData {
-  host: string;
-  port: number;
-  pin: string;
-  sessionId: string;
 }
 
 /** Lightweight session representation for the bridge companion */

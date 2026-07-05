@@ -1,6 +1,23 @@
 {
   "flows": [
     {
+      "name": "brainstorm-cards",
+      "betterOn": "opencode/claude-sonnet-4-6",
+      "recommendedComplexity": "medium",
+      "cost": "finite",
+      "icon": "MdLightbulb",
+      "iconLibrary": "react-icons/md",
+      "description": "Interactive brainstorm-with-vitamins: turns a rough idea into one or more Agentic Cards inside .backlog/.",
+      "tags": [
+        "brainstorm",
+        "discovery",
+        "requirements",
+        "cards",
+        "finite",
+        "single-shot"
+      ]
+    },
+    {
       "name": "auto-optimizer",
       "betterOn": "claude-opus-4.6",
       "recommendedComplexity": "high",
@@ -242,6 +259,56 @@
         "Run the full test suite to verify integration",
         "Mark the backlog item as complete and terminate"
       ]
+    },
+    {
+      "name": "auto-refiner",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdAutoFixHigh",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously analyzes and re-architects an existing codebase toward premium, production-grade quality through relentless functional (never cosmetic) upgrades.",
+      "tags": [
+        "refactor",
+        "evolution",
+        "features",
+        "quality",
+        "architecture",
+        "loop",
+        "infinite"
+      ],
+      "steps": [
+        "Analyze the project structure and inventory existing features",
+        "Autonomously generate a prioritized functional improvement backlog",
+        "Engineer real behavioral upgrades (not cosmetic) for the top item",
+        "Validate the improvement and log results to results.tsv",
+        "Commit changes and loop to the next backlog item"
+      ]
+    },
+    {
+      "name": "auto-saas-cost-reducer",
+      "betterOn": "claude-opus-4.6",
+      "recommendedComplexity": "high",
+      "cost": "infinite",
+      "icon": "MdSavings",
+      "iconLibrary": "react-icons/md",
+      "description": "Continuously audits infrastructure-as-code, paid API usage, and deployment configs to reduce cloud/SaaS spend without degrading the user experience.",
+      "tags": [
+        "finops",
+        "cost",
+        "infrastructure",
+        "optimization",
+        "cloud",
+        "loop",
+        "infinite"
+      ],
+      "steps": [
+        "Analyze IaC, deployment configs, and paid API usage",
+        "Inventory expensive operations and generate a prioritized FinOps backlog",
+        "Implement the highest-impact cost reduction without degrading UX",
+        "Validate savings and log to finops_results.tsv",
+        "Commit changes and loop to the next cost-saving target"
+      ]
     }
   ],
   "roles": [
@@ -258,6 +325,10 @@
         "vue",
         "css",
         "browser"
+      ],
+      "domains": [
+        "frontend",
+        "web"
       ],
       "color": "D90368",
       "palette": {
@@ -280,6 +351,9 @@
         "node",
         "python"
       ],
+      "domains": [
+        "backend"
+      ],
       "color": "3A405A",
       "palette": {
         "background": "3A405A",
@@ -301,6 +375,9 @@
         "cloud",
         "aws"
       ],
+      "domains": [
+        "infra"
+      ],
       "color": "E0FF4F",
       "palette": {
         "background": "E0FF4F",
@@ -321,6 +398,10 @@
         "crypto",
         "appsec"
       ],
+      "domains": [
+        "universal"
+      ],
+      "betterOn": "claude-opus-4.6",
       "color": "D05353",
       "palette": {
         "background": "D05353",
@@ -341,6 +422,10 @@
         "solid",
         "microservices"
       ],
+      "domains": [
+        "universal"
+      ],
+      "betterOn": "claude-opus-4.6",
       "color": "E39774",
       "palette": {
         "background": "E39774",
@@ -362,6 +447,10 @@
         "statistics",
         "pipelines"
       ],
+      "domains": [
+        "data"
+      ],
+      "betterOn": "claude-opus-4.6",
       "color": "2274A5",
       "palette": {
         "background": "2274A5",
@@ -383,6 +472,9 @@
         "tdd",
         "edge-cases"
       ],
+      "domains": [
+        "universal"
+      ],
       "color": "87E752",
       "palette": {
         "background": "87E752",
@@ -403,6 +495,10 @@
         "metrics",
         "agile"
       ],
+      "domains": [
+        "universal"
+      ],
+      "betterOn": "opencode/claude-sonnet-4-6",
       "color": "E58F65",
       "palette": {
         "background": "E58F65",
@@ -423,12 +519,145 @@
         "swagger",
         "communication"
       ],
+      "domains": [
+        "universal"
+      ],
+      "betterOn": "opencode/claude-sonnet-4-6",
       "color": "E1F4CB",
       "palette": {
         "background": "E1F4CB",
         "text": "111111",
         "accents": "2274A5",
         "hover": "CBE0B4"
+      }
+    },
+    {
+      "name": "full-stack-engineer",
+      "icon": "MdAllInclusive",
+      "iconLibrary": "react-icons/md",
+      "description": "Pragmatic end-to-end engineer who ships complete vertical slices: UI, API, and data model as one coherent feature.",
+      "tags": [
+        "full-stack",
+        "frontend",
+        "backend",
+        "api",
+        "integration",
+        "pragmatic"
+      ],
+      "domains": [
+        "frontend",
+        "backend",
+        "web"
+      ],
+      "color": "8338EC",
+      "palette": {
+        "background": "8338EC",
+        "text": "FFFFFF",
+        "accents": "E0FF4F",
+        "hover": "6C2BC4"
+      }
+    },
+    {
+      "name": "design-engineer",
+      "icon": "MdDesignServices",
+      "iconLibrary": "react-icons/md",
+      "description": "Hybrid expert in UX/UI, frontend architecture, and Developer Experience (DX). Crafts minimalist, highly functional interfaces.",
+      "tags": [
+        "design",
+        "ui",
+        "ux",
+        "dx",
+        "motion",
+        "design-system",
+        "polish"
+      ],
+      "domains": [
+        "frontend"
+      ],
+      "color": "06D6A0",
+      "palette": {
+        "background": "06D6A0",
+        "text": "111111",
+        "accents": "D90368",
+        "hover": "05B586"
+      }
+    },
+    {
+      "name": "ai-engineer",
+      "icon": "MdSmartToy",
+      "iconLibrary": "react-icons/md",
+      "description": "Builds LLM-powered applications: prompts, agent loops, RAG, structured outputs, and eval-gated changes.",
+      "tags": [
+        "ai",
+        "llm",
+        "agents",
+        "rag",
+        "prompts",
+        "evals",
+        "mcp"
+      ],
+      "domains": [
+        "backend",
+        "data"
+      ],
+      "betterOn": "claude-opus-4.6",
+      "color": "00BBF9",
+      "palette": {
+        "background": "00BBF9",
+        "text": "111111",
+        "accents": "3A405A",
+        "hover": "009FD4"
+      }
+    },
+    {
+      "name": "mobile-engineer",
+      "icon": "MdPhoneIphone",
+      "iconLibrary": "react-icons/md",
+      "description": "Ships native-feeling mobile apps with React Native/Expo or Flutter: offline-first, 60fps, store-ready.",
+      "tags": [
+        "mobile",
+        "react-native",
+        "expo",
+        "flutter",
+        "ios",
+        "android",
+        "offline"
+      ],
+      "domains": [
+        "frontend"
+      ],
+      "color": "FFB627",
+      "palette": {
+        "background": "FFB627",
+        "text": "111111",
+        "accents": "3A405A",
+        "hover": "DA9A1F"
+      }
+    },
+    {
+      "name": "incident-responder",
+      "icon": "MdMonitorHeart",
+      "iconLibrary": "react-icons/md",
+      "description": "Triages live failures with log forensics, change correlation, and rollbacks; mitigate first, root-cause second, postmortem always.",
+      "tags": [
+        "sre",
+        "incident",
+        "debugging",
+        "reliability",
+        "postmortem",
+        "oncall"
+      ],
+      "domains": [
+        "infra",
+        "backend"
+      ],
+      "betterOn": "claude-opus-4.6",
+      "color": "FF6B35",
+      "palette": {
+        "background": "FF6B35",
+        "text": "111111",
+        "accents": "FFFFFF",
+        "hover": "D95526"
       }
     }
   ],
@@ -446,6 +675,9 @@
       ],
       "incompatibleWith": [
         "dry-run"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -461,18 +693,35 @@
       ],
       "incompatibleWith": [
         "dry-run"
-      ]
+      ],
+      "domains": [
+        "universal"
+      ],
+      "runtime": {
+        "contract": {
+          "mustWriteFiles": true,
+          "requiredArtifacts": [
+            {
+              "description": "At least one test file must exist for the change (TDD red before green)",
+              "pathPattern": "(\\.(test|spec)\\.[cm]?[jt]sx?$|(^|/)test_[^/]+\\.py$|_test\\.(py|go)$)"
+            }
+          ]
+        }
+      }
     },
     {
       "name": "zero-dependencies",
       "icon": "MdBlock",
       "iconLibrary": "react-icons/md",
-      "description": "Strictly forbids third-party libraries; all solutions must use native code and standard libraries.",
+      "description": "Forbids adding new third-party dependencies; solutions use native language features and standard libraries.",
       "tags": [
         "vanilla",
         "native",
         "no-deps",
         "lightweight"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -485,6 +734,9 @@
         "sanitization",
         "safe",
         "hardened"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -500,6 +752,10 @@
       ],
       "incompatibleWith": [
         "extreme-performance"
+      ],
+      "exclusiveGroup": "output-verbosity",
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -516,7 +772,15 @@
       "incompatibleWith": [
         "strict-linting",
         "test-driven"
-      ]
+      ],
+      "domains": [
+        "universal"
+      ],
+      "runtime": {
+        "blockTools": [
+          "write_file"
+        ]
+      }
     },
     {
       "name": "legacy-compat",
@@ -531,6 +795,9 @@
       ],
       "incompatibleWith": [
         "extreme-performance"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -547,6 +814,9 @@
       "incompatibleWith": [
         "verbose-comments",
         "legacy-compat"
+      ],
+      "domains": [
+        "universal"
       ]
     },
     {
@@ -559,6 +829,486 @@
         "accessibility",
         "wcag",
         "inclusive"
+      ],
+      "domains": [
+        "frontend"
+      ],
+      "runtime": {
+        "attachTools": [
+          "web-browser"
+        ]
+      }
+    },
+    {
+      "name": "output-budget",
+      "icon": "MdCompress",
+      "iconLibrary": "react-icons/md",
+      "description": "Optimizes for the smallest correct artifact and fewest tokens; enforces surgical edits over full rewrites.",
+      "tags": [
+        "concise",
+        "tokens",
+        "minimal",
+        "surgical"
+      ],
+      "exclusiveGroup": "output-verbosity",
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "regression-sentinel",
+      "icon": "MdGppGood",
+      "iconLibrary": "react-icons/md",
+      "description": "Brownfield guard: read before write, preserve public contracts, limit blast radius, and prove prior features survive.",
+      "tags": [
+        "regression",
+        "brownfield",
+        "contracts",
+        "safe"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "spec-adherence",
+      "icon": "MdRule",
+      "iconLibrary": "react-icons/md",
+      "description": "Treats the specification as law: extracts every rule into a checklist, implements each, and self-verifies adherence.",
+      "tags": [
+        "requirements",
+        "spec",
+        "domain",
+        "checklist"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "systematic-debug",
+      "icon": "MdTroubleshoot",
+      "iconLibrary": "react-icons/md",
+      "description": "Hypothesis-driven debugging: reproduce, isolate, hypothesize, and verify with an exact file:line — no blind loops.",
+      "tags": [
+        "debugging",
+        "root-cause",
+        "diagnosis",
+        "analysis"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "self-review",
+      "icon": "MdRateReview",
+      "iconLibrary": "react-icons/md",
+      "description": "Runs a finalization self-review against the objective and prior team artifacts before declaring a task complete.",
+      "tags": [
+        "review",
+        "quality",
+        "self-check",
+        "verification"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "edge-case-coverage",
+      "icon": "MdAccountTree",
+      "iconLibrary": "react-icons/md",
+      "description": "Forces robust handling of edge cases (nulls, boundaries, overflow, invalid types) with real general logic instead of happy-path or hardcoded answers.",
+      "tags": [
+        "edge-cases",
+        "robustness",
+        "algorithms",
+        "correctness"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "i18n-ready",
+      "icon": "MdTranslate",
+      "iconLibrary": "react-icons/md",
+      "description": "Externalizes every user-facing string, enforces ICU message format and locale-aware date, number, and currency formatting.",
+      "tags": [
+        "i18n",
+        "l10n",
+        "intl",
+        "localization"
+      ],
+      "domains": [
+        "frontend"
+      ]
+    },
+    {
+      "name": "structured-data",
+      "icon": "MdDataObject",
+      "iconLibrary": "react-icons/md",
+      "description": "Emits valid Schema.org JSON-LD structured data for every page type (Article, Product, FAQ, Breadcrumb, Organization).",
+      "tags": [
+        "seo",
+        "schema",
+        "json-ld",
+        "structured-data"
+      ],
+      "domains": [
+        "web"
+      ],
+      "runtime": {
+        "attachTools": [
+          "web-browser"
+        ]
+      }
+    },
+    {
+      "name": "seo-meta",
+      "icon": "MdTravelExplore",
+      "iconLibrary": "react-icons/md",
+      "description": "Enforces a complete semantic document head: titles, meta description, canonical URLs, Open Graph and Twitter cards, sitemap and robots awareness.",
+      "tags": [
+        "seo",
+        "meta",
+        "open-graph",
+        "discoverability"
+      ],
+      "domains": [
+        "web"
+      ],
+      "runtime": {
+        "attachTools": [
+          "web-browser"
+        ]
+      }
+    },
+    {
+      "name": "web-vitals",
+      "icon": "MdSpeed",
+      "iconLibrary": "react-icons/md",
+      "description": "Holds rendering to Core Web Vitals budgets (LCP, INP, CLS) via lazy-loading, code-splitting, and layout-stable markup.",
+      "tags": [
+        "performance",
+        "core-web-vitals",
+        "lcp",
+        "cls"
+      ],
+      "domains": [
+        "frontend",
+        "web"
+      ],
+      "runtime": {
+        "attachTools": [
+          "web-browser"
+        ]
+      }
+    },
+    {
+      "name": "auth-guarded",
+      "icon": "MdLock",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires authentication and authorization (RBAC) on every route, endpoint, and server action; default-deny access with explicit grants.",
+      "tags": [
+        "auth",
+        "authentication",
+        "authorization",
+        "rbac"
+      ],
+      "domains": [
+        "backend",
+        "web"
+      ]
+    },
+    {
+      "name": "responsive-design",
+      "icon": "MdDevices",
+      "iconLibrary": "react-icons/md",
+      "description": "Forces mobile-first, fluid layouts with container queries and relative units; forbids fixed pixel widths that break on resize.",
+      "tags": [
+        "responsive",
+        "mobile-first",
+        "layout",
+        "container-queries"
+      ],
+      "domains": [
+        "frontend"
+      ]
+    },
+    {
+      "name": "dark-mode",
+      "icon": "MdDarkMode",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires tokenized light/dark/system theming via CSS custom properties and prefers-color-scheme; forbids hardcoded colors.",
+      "tags": [
+        "theming",
+        "dark-mode",
+        "tokens",
+        "prefers-color-scheme"
+      ],
+      "domains": [
+        "frontend"
+      ]
+    },
+    {
+      "name": "form-validation",
+      "icon": "MdPlaylistAddCheck",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires accessible client and server validation with typed schemas, inline error messaging tied to inputs, and no trust in client input.",
+      "tags": [
+        "forms",
+        "validation",
+        "accessibility",
+        "zod"
+      ],
+      "domains": [
+        "frontend",
+        "backend"
+      ]
+    },
+    {
+      "name": "ds-tailwind",
+      "icon": "MdStyle",
+      "iconLibrary": "react-icons/md",
+      "description": "Pins all styling to Tailwind CSS utility classes and design tokens; no ad-hoc CSS or competing styling systems.",
+      "tags": [
+        "design-system",
+        "tailwind",
+        "utility-css",
+        "tokens"
+      ],
+      "exclusiveGroup": "design-system",
+      "domains": [
+        "frontend"
+      ]
+    },
+    {
+      "name": "ds-shadcn",
+      "icon": "MdViewQuilt",
+      "iconLibrary": "react-icons/md",
+      "description": "Pins all UI to the shadcn/ui design language and Radix primitives composed with Tailwind.",
+      "tags": [
+        "design-system",
+        "shadcn",
+        "radix",
+        "tailwind"
+      ],
+      "exclusiveGroup": "design-system",
+      "domains": [
+        "frontend"
+      ]
+    },
+    {
+      "name": "error-ux",
+      "icon": "MdErrorOutline",
+      "iconLibrary": "react-icons/md",
+      "description": "Requires explicit loading, empty, and error states with retry paths on every remote-data surface; no swallowed rejections.",
+      "tags": [
+        "error-handling",
+        "loading-states",
+        "resilience",
+        "ux"
+      ],
+      "domains": [
+        "frontend"
+      ]
+    },
+    {
+      "name": "observability-ready",
+      "icon": "MdInsights",
+      "iconLibrary": "react-icons/md",
+      "description": "Enforces structured correlation-id logging, golden-signal metrics, and spans on every new endpoint; forbids console.log and unobservable code.",
+      "tags": [
+        "observability",
+        "logging",
+        "metrics",
+        "tracing",
+        "otel"
+      ],
+      "domains": [
+        "backend",
+        "infra"
+      ]
+    },
+    {
+      "name": "api-contract-first",
+      "icon": "MdApi",
+      "iconLibrary": "react-icons/md",
+      "description": "The API contract (OpenAPI/schema) is written and validated before implementation; types, clients, and validation derive from it.",
+      "tags": [
+        "api",
+        "openapi",
+        "contract",
+        "schema-first"
+      ],
+      "domains": [
+        "backend"
+      ]
+    },
+    {
+      "name": "docs-sync",
+      "icon": "MdHistoryEdu",
+      "iconLibrary": "react-icons/md",
+      "description": "Every change updates the README, API references, and changelog entries it invalidates — stale docs are defects.",
+      "tags": [
+        "documentation",
+        "changelog",
+        "readme",
+        "sync"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "privacy-guard",
+      "icon": "MdPrivacyTip",
+      "iconLibrary": "react-icons/md",
+      "description": "GDPR-grade data handling: classify fields, minimize collection, keep PII out of logs, and preserve deletion/export paths.",
+      "tags": [
+        "privacy",
+        "gdpr",
+        "pii",
+        "compliance",
+        "data-minimization"
+      ],
+      "domains": [
+        "backend",
+        "data"
+      ]
+    },
+    {
+      "name": "conventional-commits",
+      "icon": "MdCommit",
+      "iconLibrary": "react-icons/md",
+      "description": "Atomic commits in Conventional Commits format with why-focused bodies and clean, reviewable history.",
+      "tags": [
+        "git",
+        "commits",
+        "changelog",
+        "hygiene"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "explain-to-me",
+      "icon": "MdSchool",
+      "iconLibrary": "react-icons/md",
+      "description": "Plain-language pedagogy in the conversation: defines jargon, uses project-anchored analogies, and recaps every change for non-expert builders.",
+      "tags": [
+        "pedagogy",
+        "plain-language",
+        "learning",
+        "vibe-coding"
+      ],
+      "domains": [
+        "universal"
+      ]
+    },
+    {
+      "name": "db-migrations-safe",
+      "icon": "MdTableChart",
+      "iconLibrary": "react-icons/md",
+      "description": "Reversible, expand-contract schema migrations with idempotent batched backfills and zero destructive changes at deploy time.",
+      "tags": [
+        "database",
+        "migrations",
+        "schema",
+        "expand-contract",
+        "zero-downtime"
+      ],
+      "domains": [
+        "backend"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "scaffold-structure",
+      "icon": "MdFolderSpecial",
+      "iconLibrary": "react-icons/md",
+      "description": "Lays down the folder and file skeleton for a feature or module, matching project conventions, before any logic is written.",
+      "tags": [
+        "scaffold",
+        "structure",
+        "skeleton",
+        "atomic"
+      ]
+    },
+    {
+      "name": "write-failing-tests",
+      "icon": "MdScience",
+      "iconLibrary": "react-icons/md",
+      "description": "Specifies desired behavior as executable tests that fail before any implementation exists (TDD red).",
+      "tags": [
+        "tdd",
+        "tests",
+        "red",
+        "atomic"
+      ]
+    },
+    {
+      "name": "implement-to-green",
+      "icon": "MdCheckCircle",
+      "iconLibrary": "react-icons/md",
+      "description": "Writes the smallest correct implementation needed to make failing tests pass (TDD green).",
+      "tags": [
+        "tdd",
+        "implementation",
+        "green",
+        "atomic"
+      ]
+    },
+    {
+      "name": "review-diff",
+      "icon": "MdRateReview",
+      "iconLibrary": "react-icons/md",
+      "description": "Reviews a change against a quality rubric and reports concrete findings without rewriting the code.",
+      "tags": [
+        "review",
+        "quality",
+        "diff",
+        "atomic"
+      ]
+    },
+    {
+      "name": "refactor-safely",
+      "icon": "MdCompress",
+      "iconLibrary": "react-icons/md",
+      "description": "Improves the internal structure of existing code without changing its observable behavior.",
+      "tags": [
+        "refactor",
+        "safe",
+        "behavior-preserving",
+        "atomic"
+      ]
+    },
+    {
+      "name": "landing-page",
+      "icon": "MdWebAsset",
+      "iconLibrary": "react-icons/md",
+      "description": "Builds a single conversion-focused landing page (hero, value props, social proof, CTA) as one artifact, matching the project's design system.",
+      "tags": [
+        "landing",
+        "marketing",
+        "ui",
+        "atomic"
+      ]
+    },
+    {
+      "name": "auth-pages",
+      "icon": "MdLogin",
+      "iconLibrary": "react-icons/md",
+      "description": "Builds the authentication UI surface (login, signup, and password-reset screens) wired to the project's auth provider.",
+      "tags": [
+        "auth",
+        "ui",
+        "forms",
+        "atomic"
       ]
     }
   ]

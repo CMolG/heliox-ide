@@ -44,7 +44,7 @@ export abstract class CliAdapter extends EventEmitter implements AiAdapter {
   /**
    * Normalize a raw JSON object from the CLI's JSONL stream into an AiOutputEvent.
    * Return null to skip the event entirely.
-   * Default implementation passes through as-is (works for Copilot-compatible formats).
+   * Default implementation passes the event through unchanged.
    */
   protected normalizeEvent(raw: Record<string, unknown>): AiOutputEvent | null {
     return raw as unknown as AiOutputEvent;

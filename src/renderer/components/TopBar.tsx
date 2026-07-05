@@ -15,7 +15,8 @@
 // src/renderer/components/TopBar.tsx — Top navigation bar
 import React from 'react';
 import { theme } from '../logic/theme';
-import { LucideIcon } from './desktop/LucideIcon';
+import { HelioxLogo } from './brand/HelioxLogo';
+import { BoardSwitcher } from './BoardSwitcher';
 
 export const TopBar = React.memo(function TopBar() {
   return (
@@ -31,15 +32,36 @@ export const TopBar = React.memo(function TopBar() {
         zIndex: 50,
       }}
     >
-      <div className="py-3 flex items-center justify-end" style={{ paddingLeft: '88px', paddingRight: '24px', gap: '10px' }}>
-        <LucideIcon name="Orbit" size={22} style={{ color: '#ffffff' }} />
-        <span
-          className="text-xl font-bold leading-7"
-          style={{ fontFamily: theme.fontGrotesk, color: theme.textSecondary }}
-          data-testid="topbar-brand"
-        >
-          Heliox <span style={{ color: theme.textFaint, fontWeight: 400 }}>(HeO₂)</span>
-        </span>
+      {/* 3-zone layout: left spacer (keeps the macOS traffic-light inset via
+          paddingLeft below), center board switcher, right brand cluster
+          (unchanged). A grid with a 1fr/auto/1fr template centers the middle
+          column regardless of how wide the outer zones end up. */}
+      <div
+        className="py-3"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr auto 1fr',
+          alignItems: 'center',
+          paddingLeft: '88px',
+          paddingRight: '24px',
+        }}
+      >
+        <div aria-hidden="true" />
+
+        <div className="flex items-center justify-center">
+          <BoardSwitcher />
+        </div>
+
+        <div className="flex items-center justify-end" style={{ gap: '10px' }}>
+          <HelioxLogo size={22} />
+          <span
+            className="text-xl font-bold leading-7"
+            style={{ fontFamily: theme.fontDisplay, color: theme.textSecondary, letterSpacing: '0.03em' }}
+            data-testid="topbar-brand"
+          >
+            Heliox
+          </span>
+        </div>
       </div>
     </header>
   );

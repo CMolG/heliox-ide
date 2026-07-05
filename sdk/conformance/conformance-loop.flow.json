@@ -1,0 +1,39 @@
+{
+  "version": "1",
+  "id": "conformance-loop",
+  "name": "Conformance Loop",
+  "rootStepId": "step-a",
+  "steps": [
+    {
+      "id": "step-a",
+      "type": "llm_call",
+      "prompt": "Step A: initialise the loop pipeline.",
+      "dependsOn": [],
+      "tools": []
+    },
+    {
+      "id": "step-b1",
+      "type": "llm_call",
+      "prompt": "Step B1: first half of the loop body.",
+      "dependsOn": ["step-a"],
+      "tools": []
+    },
+    {
+      "id": "step-b2",
+      "type": "llm_call",
+      "prompt": "Step B2: second half of the loop body; loops back to step-b1.",
+      "dependsOn": ["step-b1"],
+      "tools": []
+    },
+    {
+      "id": "step-c",
+      "type": "llm_call",
+      "prompt": "Step C: finalise once the loop converges.",
+      "dependsOn": ["step-b2"],
+      "tools": []
+    }
+  ],
+  "loops": [
+    { "id": "loop-1", "sourceStepId": "step-b2", "targetStepId": "step-b1", "maxIterations": 3 }
+  ]
+}

@@ -92,97 +92,125 @@ export function TopRoleAttachment({
     setAnimKey((prev) => prev + 1);
   };
 
-  // ── Styles ──
+  // "Phone cover" wrap — asymmetric border: thick top, medium sides, thin bottom
+  const borderTop = 12;   // 4× base
+  const borderSide = 6;   // 2× base
+  const borderBottom = 3; // 1× base (thin but present — completes the frame)
 
-  const wrapperStyle: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 12,
-    width: '100%',
-    maxWidth: 320,
-    margin: '0 auto',
+  const coverStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: -borderTop,
+    left: -borderSide,
+    right: -borderSide,
+    bottom: -borderBottom,
+    borderRadius: 16,
+    borderStyle: 'solid',
+    borderColor: activeColor,
+    borderTopWidth: borderTop,
+    borderLeftWidth: borderSide,
+    borderRightWidth: borderSide,
+    borderBottomWidth: borderBottom,
+    pointerEvents: 'none',
+    transition: 'border-color 0.5s ease, box-shadow 0.5s ease',
+    boxShadow: `0 0 22px ${activeColor}28, inset 0 0 14px ${activeColor}0a`,
+    zIndex: -1,
   };
 
-  const svgContainerStyle: React.CSSProperties = {
-    position: 'relative',
-    width: '100%',
-    filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.3))',
+  // Subtle inner glow at the bottom to blend the thin border
+  const fadeOverlayStyle: React.CSSProperties = {
+    position: 'absolute',
+    left: -borderSide,
+    right: -borderSide,
+    bottom: -borderBottom,
+    height: '30%',
+    background: `linear-gradient(to top, ${activeColor}0c, transparent)`,
+    pointerEvents: 'none',
+    borderRadius: '0 0 16px 16px',
+  };
+
+  // Role name label centered on the top edge (offset for thick top border)
+  const labelStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: -(borderTop + 10),
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0,
+    pointerEvents: 'none',
+    zIndex: 2,
+    whiteSpace: 'nowrap',
+  };
+
+  const letterStyle: React.CSSProperties = {
+    fontFamily: theme.fontGrotesk,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.18em',
+    textTransform: 'uppercase',
+    color: activeColor,
+    transition: 'color 0.5s ease',
+    textShadow: `0 0 8px ${activeColor}44`,
   };
 
   const chipRowStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: -(borderTop + 10),
+    right: 12,
     display: 'flex',
-    gap: 8,
-    justifyContent: 'center',
-    flexWrap: 'wrap',
+    gap: 4,
+    alignItems: 'center',
+    pointerEvents: 'auto',
+    zIndex: 2,
   };
 
   return (
-    <div style={wrapperStyle} data-testid="top-role-attachment" role="region" aria-label="Active role selector">
-      {/* SVG Arc Visualization */}
-      <div style={svgContainerStyle}>
-        <svg viewBox="0 0 400 260" style={{ width: '100%', height: 'auto', overflow: 'visible' }} role="img" aria-label={activeRole ? `Active role: ${activeTitle}` : 'No active role'}>
-          <defs>
-            {/* Text path — slightly larger radius than the semicircle */}
-            <path
-              id="heliox-role-text-arc"
-              d="M 55 230 A 145 145 0 0 1 345 230"
-              fill="none"
-            />
-          </defs>
+    <div data-testid="top-role-attachment" role="region" aria-label="Active role selector" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+      {/* Phone-cover border wrap */}
+      <div style={coverStyle} />
+      <div style={fadeOverlayStyle} />
 
-          {/* Solid semicircle */}
-          <path
-            d="M 70 230 A 130 130 0 0 1 330 230 Z"
-            fill={activeColor}
-            style={{ transition: 'fill 0.5s ease' }}
-          />
+      {/* Animated role name at top center */}
+      {activeRole && (
+        <div style={labelStyle}>
+          <span
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              background: '#141414',
+              padding: '2px 10px',
+              borderRadius: 8,
+              border: `1px solid ${activeColor}33`,
+            }}
+          >
+            {activeTitle.split('').map((char, index) => (
+              <span
+                key={`${activeRole.name}-${animKey}-${index}`}
+                className="heliox-pop-letter"
+                style={{ ...letterStyle, animationDelay: `${index * 40}ms` }}
+              >
+                {char === ' ' ? '\u00A0' : char}
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
 
-          {/* Curved text */}
-          {activeRole && (
-            <text
-              aria-hidden="true"
-              style={{
-                fill: activeColor,
-                fontFamily: theme.fontGrotesk,
-                fontSize: 22,
-                fontWeight: 700,
-                letterSpacing: '0.15em',
-                textTransform: 'uppercase' as const,
-                transition: 'fill 0.5s ease',
-              }}
-            >
-              <textPath href="#heliox-role-text-arc" startOffset="50%" textAnchor="middle">
-                {activeTitle.split('').map((char, index) => (
-                  <tspan
-                    key={`${activeRole.name}-${animKey}-${index}`}
-                    className="heliox-pop-letter"
-                    style={{ animationDelay: `${index * 40}ms` }}
-                  >
-                    {char === ' ' ? '\u00A0' : char}
-                  </tspan>
-                ))}
-              </textPath>
-            </text>
-          )}
-        </svg>
-      </div>
-
-      {/* Role selector chips */}
+      {/* Role selector dots — top-right */}
       <div style={chipRowStyle} role="radiogroup" aria-label="Available roles">
         {roles.map((role) => {
           const color = resolveColor(role);
           const isActive = role.name === activeRoleName;
 
           const chipStyle: React.CSSProperties = {
-            width: isActive ? 14 : 10,
-            height: isActive ? 14 : 10,
+            width: isActive ? 10 : 7,
+            height: isActive ? 10 : 7,
             borderRadius: '50%',
             background: isActive ? color : `${color}44`,
-            border: `2px solid ${color}`,
+            border: `1.5px solid ${color}`,
             cursor: 'pointer',
             transition: 'all 0.25s ease',
-            boxShadow: isActive ? `0 0 10px ${color}66` : 'none',
+            boxShadow: isActive ? `0 0 8px ${color}55` : 'none',
           };
 
           return (

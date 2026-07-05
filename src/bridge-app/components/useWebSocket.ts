@@ -16,7 +16,7 @@ interface UseWebSocketReturn {
   sendCommand: (action: string, args?: Record<string, unknown>) => void;
 }
 
-export function useWebSocket(url: string | null): UseWebSocketReturn {
+export function useWebSocket(url: string | null, protocol?: string): UseWebSocketReturn {
   const [connected, setConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WsMessage | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -26,7 +26,13 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
   const connect = useCallback(() => {
     if (!url) return;
 
-    const ws = new WebSocket(url);
+    // Session token rides as a WebSocket subprotocol, not a query string —
+    // browsers won't let a WebSocket set custom headers, but subprotocols
+    // (Sec-WebSocket-Protocol) never appear in a URL, so they don't land in
+    // history or logs the way `?token=` would. `protocol` is a plain string
+    // (not an array literal) so its identity is stable across renders and
+    // doesn't retrigger the reconnect effect below.
+    const ws = new WebSocket(url, protocol ? [protocol] : undefined);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -58,7 +64,7 @@ export function useWebSocket(url: string | null): UseWebSocketReturn {
     ws.onerror = () => {
       ws.close();
     };
-  }, [url]);
+  }, [url, protocol]);
 
   const cleanup = useCallback(() => {
     if (pingTimer.current) {

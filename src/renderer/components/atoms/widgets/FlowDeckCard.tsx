@@ -11,6 +11,10 @@
  *
  * Architectural role:
  * - UI boundary module in the renderer process (presentation + local interaction).
+ *
+ * TODO(design): Card surface is provisional pending the upcoming visual
+ * refresh. Hold the line on adding more inline styles — the redesign will
+ * replace this layer wholesale. See DraggableCard.tsx for the broader anchor.
  */
 import React, { useCallback } from 'react';
 import { useDesktopStore } from '@/renderer/store/desktop-store';

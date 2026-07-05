@@ -12,6 +12,12 @@ When this modifier is active, all generated UI elements must meet WCAG 2.1 Level
 6. **Screen reader compatibility.** Dynamic content changes must be announced via `aria-live` regions. Form errors must be associated with their inputs via `aria-describedby`. Loading states must be communicated via `aria-busy`.
 7. **Motion and animation.** Respect `prefers-reduced-motion`. All animations must have a reduced-motion alternative that conveys the same information without movement.
 8. **Touch targets.** All interactive elements must have a minimum touch target of 44x44 CSS pixels (WCAG AAA) with adequate spacing between adjacent targets.
+9. **Composite widgets follow WAI-ARIA Authoring Practices exactly.** For grids, listboxes, comboboxes, menus, tabs, tree views, and date pickers:
+   - Mark selectable items with `aria-selected` (or `aria-checked`) — a screen reader must be able to tell which items are selected. Missing `aria-selected` on a selected cell is a hard failure.
+   - Use **roving `tabindex`**: exactly one tab stop for the whole widget, with arrow keys (and Home/End/PageUp/PageDown where appropriate) moving focus inside it.
+   - Use **semantic headings** (`<h1>`–`<h6>`), never `role="heading"` on a `<div>`.
+   - Avoid `role="application"` unless you fully reimplement browser keyboard semantics; it traps assistive-tech navigation otherwise.
+   - Every ARIA state you style in CSS must actually be set in JS — no dead `aria-*` rules.
 
 ## Behavioral Overrides
 

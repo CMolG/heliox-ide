@@ -14,12 +14,34 @@ import { ipcMain, BrowserWindow, dialog, app, Notification } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 import { AgentManager } from './agent-manager';
 import { Flow, FileEntry, CliStatus, RunAgentParams, errMsg } from '../types';
+import type { AgenticFlow } from '../types/harness';
+import type {
+  ModelPolicy, SelectionStrategy, ConnectionTestRequest,
+  ProviderConnectionInput, ProviderConnectionUpdate, ConnectionResolver,
+} from '../types/ipc-events';
 import { execFile } from 'child_process';
 import { readdir, stat, readFile, writeFile, mkdir, unlink, rm, rename, access } from 'fs/promises';
 import { join, basename, relative } from 'path';
 import { promisify } from 'util';
 import { createHash } from 'crypto';
 import { log } from './logger';
+import {
+  listProviders, listModels as opencodeListModels, saveProviderCredential,
+  removeProviderCredential, opencodeStatus,
+} from './opencode-providers';
+import {
+  listConnections, createConnection, updateConnection, deleteConnection,
+  getDecryptedToken, setModelEnabled, mergeModelList,
+} from './provider-connections';
+import { testConnection } from './provider-connection-tester';
+import { executeAgenticFlow } from './harness-engine/executor';
+import { exportFlow } from './flow-export/heliox-flow';
+import { setHarnessEventWindow } from './harness-engine/event-bus';
+import { assemblePipeline } from './meta-agent/pipeline-generator';
+import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
+import { registerMcpCommandPolicyIpcHandlers } from './harness-engine/mcp-command-policy';
+import { registerScorecardIpc, registerArenaIpc } from './performance-frontier/ipc';
+import { registerTelemetryIpcHandlers } from './telemetry-ping';
 
 const execFileAsync = promisify(execFile);
 
@@ -42,7 +64,7 @@ const IGNORED_DIRS = new Set([
   '.idea', '.vscode',
 ]);
 
-const MARKET_PROMPT_CATEGORIES = new Set(['flows', 'roles', 'mods', 'design-systems']);
+const MARKET_PROMPT_CATEGORIES = new Set(['flows', 'roles', 'mods', 'steps']);
 
 function getProjectConfigDir(projectPath: string): string {
   const hash = createHash('md5').update(projectPath).digest('hex').slice(0, 12);
@@ -127,6 +149,55 @@ const EVENT_TYPE_MAP: Record<AgentEventName, string> = {
   'patch-failed': 'file-changed',
 };
 
+const VALID_MODEL_POLICY_MODES = new Set(['fixed', 'smart-local', 'smart-external']);
+const VALID_SELECTION_STRATEGIES = new Set(['best-score', 'cheapest', 'fastest', 'best-value']);
+
+/**
+ * Loose IPC-boundary validation for `heliox:start-harness`'s `options.modelPolicy`.
+ * Renderer input is `unknown` by construction (crossed the context bridge) —
+ * anything that doesn't shape up as a real `ModelPolicy` is dropped back to
+ * `undefined` rather than thrown on, matching this IPC layer's convention of
+ * normalized, non-throwing handlers. `executeAgenticFlow` treats a missing
+ * policy exactly like `{mode:'fixed'}` (no router), so "ignore" is always safe.
+ */
+function sanitizeModelPolicy(value: unknown): ModelPolicy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const mode = (value as { mode?: unknown }).mode;
+  if (typeof mode !== 'string' || !VALID_MODEL_POLICY_MODES.has(mode)) return undefined;
+
+  if (mode === 'smart-local') {
+    const strategy = (value as { strategy?: unknown }).strategy;
+    if (typeof strategy !== 'string' || !VALID_SELECTION_STRATEGIES.has(strategy)) return undefined;
+    return { mode: 'smart-local', strategy: strategy as SelectionStrategy };
+  }
+
+  return { mode } as ModelPolicy;
+}
+
+/**
+ * Build the synchronous `ConnectionResolver` a harness run needs to resolve
+ * `conn:<connectionId>/<modelId>` model ids (see llm-runner.ts#resolveHarnessModel).
+ * Reads every saved connection + its decrypted token ONCE, up front, so the
+ * resolver itself never touches disk mid-run. Never throws — a failure here
+ * (e.g. a corrupt provider-connections.json) degrades to an empty resolver
+ * rather than blocking the whole flow, matching this module's convention of
+ * normalized, non-throwing handlers.
+ */
+async function buildConnectionResolver(): Promise<ConnectionResolver> {
+  try {
+    const connections = await listConnections();
+    const entries = await Promise.all(connections.map(async (c) => {
+      const token = await getDecryptedToken(c.id);
+      return [c.id, { protocol: c.protocol, baseUrl: c.baseUrl, token }] as const;
+    }));
+    const byId = new Map(entries);
+    return (id: string) => byId.get(id);
+  } catch (err) {
+    log.warn('[Heliox Harness] failed to load provider connections for model resolution:', errMsg(err));
+    return () => undefined;
+  }
+}
+
 function getIpcWindow(): BrowserWindow | null {
   if (currentIpcWindow && !currentIpcWindow.isDestroyed()) {
     return currentIpcWindow;
@@ -153,13 +224,24 @@ function sendToRenderer(channel: string, payload: unknown): void {
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   currentIpcWindow = mainWindow;
+  setHarnessEventWindow(mainWindow);
   if (ipcHandlersRegistered) return;
   ipcHandlersRegistered = true;
 
   // ── Agent lifecycle and streaming bridge ─────────────────────────────────────
   ipcMain.handle('heliox:init-baselines', async (_event, flows: Flow[]) => {
-    await agentManager.initialize(flows);
-    return { success: true };
+    // Audit 1.7 — surfaces the one-time "downloading Chromium" progress (if
+    // any) emitted from AgentManager#initialize while baselines are computed.
+    const onProgress = (data: { message: string }) => {
+      sendToRenderer('heliox:agent-event', { type: 'snapshot-browser-progress', ...data });
+    };
+    agentManager.on('snapshot-browser-progress', onProgress);
+    try {
+      await agentManager.initialize(flows);
+      return { success: true };
+    } finally {
+      agentManager.removeListener('snapshot-browser-progress', onProgress);
+    }
   });
 
   ipcMain.handle('heliox:run-agent', async (_event, params: RunAgentParams) => {
@@ -185,6 +267,48 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       for (const [eventName, handler] of listeners) {
         agentManager.removeListener(eventName, handler);
       }
+    }
+  });
+
+  ipcMain.handle('heliox:start-harness', async (
+    _event,
+    flow: AgenticFlow,
+    options?: { modelPolicy?: unknown; modelId?: unknown },
+  ) => {
+    if (!flow || typeof flow !== 'object') {
+      return { success: false, error: 'Invalid AgenticFlow payload.' };
+    }
+
+    const modelPolicy = sanitizeModelPolicy(options?.modelPolicy);
+    const modelId = typeof options?.modelId === 'string' ? options.modelId : undefined;
+    // Pre-fetch every saved connection's decrypted token ONCE per run and
+    // close over a plain synchronous map — resolveHarnessModel (and anything
+    // that threads a `conn:<connectionId>/<modelId>` modelId down to it) never
+    // touches disk itself. A lookup failure here (e.g. a corrupt store file)
+    // degrades to "no connections resolvable" rather than blocking the run —
+    // any step that isn't actually using a `conn:` model is unaffected.
+    const resolveConnection = await buildConnectionResolver();
+
+    setTimeout(() => {
+      void executeAgenticFlow(flow, { modelPolicy, modelId, resolveConnection }).catch((err) => {
+        const message = errMsg(err);
+        log.error(`[Heliox Harness] execution failed: ${message}`);
+      });
+    }, 0);
+
+    return { success: true };
+  });
+
+  ipcMain.handle('heliox:assemble-pipeline', async (_event, userIntent: string) => {
+    if (typeof userIntent !== 'string' || userIntent.trim().length === 0) {
+      return { success: false, error: 'A non-empty user intent is required.' };
+    }
+
+    try {
+      const data = await assemblePipeline(userIntent.trim());
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
     }
   });
 
@@ -259,9 +383,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle('heliox:check-cli', async (): Promise<CliStatus> => {
-    const NONE: CliStatus = { copilotInstalled: false, ghInstalled: false, ghCopilotInstalled: false, nodeInstalled: false, gitInstalled: false };
-    // Process checks are best-effort and isolated so one missing executable
-    // doesn't prevent reporting the others.
+    const NONE: CliStatus = { opencodeInstalled: false, opencodeVersion: null, nodeInstalled: false, gitInstalled: false };
     const check = async (cmd: string, args: string[]): Promise<boolean> => {
       try {
         await execFileAsync(cmd, args, { timeout: 5000 });
@@ -272,27 +394,128 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     };
 
     try {
-      const [copilotInstalled, ghInstalled, nodeInstalled, gitInstalled] = await Promise.all([
-        check('copilot', ['--version']),
-        check('gh', ['--version']),
+      const [oc, nodeInstalled, gitInstalled] = await Promise.all([
+        opencodeStatus(),
         check('node', ['--version']),
         check('git', ['--version']),
       ]);
-
-      let ghCopilotInstalled = false;
-      if (ghInstalled) {
-        ghCopilotInstalled = await check('gh', ['copilot', '--help']);
-      }
-
       return {
-        copilotInstalled,
-        ghInstalled,
-        ghCopilotInstalled: copilotInstalled || ghCopilotInstalled,
+        opencodeInstalled: oc.installed,
+        opencodeVersion: oc.version,
         nodeInstalled,
         gitInstalled,
       };
     } catch {
       return NONE;
+    }
+  });
+
+  // ── OpenCode provider catalog & credentials ────────────────────────────────
+  ipcMain.handle('opencode:list-providers', async () => listProviders());
+
+  ipcMain.handle('opencode:list-provider-models', async (_e, providerId: string) =>
+    opencodeListModels(providerId)
+  );
+
+  ipcMain.handle('opencode:save-credential', async (_e, providerId: string, key: string) => {
+    try {
+      await saveProviderCredential(providerId, key);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('opencode:remove-credential', async (_e, providerId: string) => {
+    try {
+      await removeProviderCredential(providerId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('opencode:status', async () => opencodeStatus());
+
+  // ── Provider Connections (DBeaver-style, Phase 6) ──────────────────────────
+  // Replaces the old opencode-backed provider-picker UI (see ConnectionsSection.tsx).
+  // Tokens never cross this boundary in plaintext — profiles only carry
+  // `hasToken`; `getDecryptedToken` is called main-side only, here and from
+  // the `resolveConnection` closure built for `heliox:start-harness` below.
+  ipcMain.handle('provider-connections:list', async () => {
+    try {
+      return { success: true, data: await listConnections() };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:create', async (_e, input: ProviderConnectionInput) => {
+    try {
+      return { success: true, data: await createConnection(input) };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:update', async (_e, id: string, patch: ProviderConnectionUpdate) => {
+    try {
+      const data = await updateConnection(id, patch);
+      if (!data) return { success: false, error: `No connection with id "${id}".` };
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:delete', async (_e, id: string) => {
+    try {
+      await deleteConnection(id);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:set-model-enabled', async (_e, id: string, modelId: string, enabled: boolean) => {
+    try {
+      const data = await setModelEnabled(id, modelId, enabled);
+      if (!data) return { success: false, error: `No connection with id "${id}".` };
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:test', async (_e, request: ConnectionTestRequest) => {
+    try {
+      // Draft profile (pre-save testing) — no persistence, no model merge.
+      if (!('connectionId' in request)) {
+        const result = await testConnection(request);
+        return { success: true, data: { result } };
+      }
+
+      // Saved connection — resolve its decrypted token main-side, run the
+      // probe, and on success merge the fetched model list into the profile
+      // (new models arrive enabled, vanished models are dropped) so the UI
+      // gets a fully refreshed card in one round trip.
+      const [connections, token] = await Promise.all([
+        listConnections(),
+        getDecryptedToken(request.connectionId),
+      ]);
+      const conn = connections.find((c) => c.id === request.connectionId);
+      if (!conn) return { success: false, error: `No connection with id "${request.connectionId}".` };
+
+      const result = await testConnection({ protocol: conn.protocol, baseUrl: conn.baseUrl, token });
+      const patch: ProviderConnectionUpdate = {
+        lastTestedAt: Date.now(),
+        lastTestOk: result.ok,
+        ...(result.ok && result.models ? { models: mergeModelList(conn.models, result.models) } : {}),
+      };
+      const connection = await updateConnection(request.connectionId, patch);
+      return { success: true, data: { result, connection } };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
     }
   });
 
@@ -459,117 +682,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return result.filePaths[0] ?? null;
   });
 
-  // ── Models cache (disk-backed, 24 h TTL) ────────────────────────────────────
-  const MODELS_CACHE_PATH = join(app.getPath('userData'), 'models-cache.json');
-  const MODELS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-  // Cheapest model available — used only for the listModels query (near-zero cost).
-  // Users can override with HELIOX_LIST_MODEL env var.
-  const LIST_MODEL = process.env.HELIOX_LIST_MODEL ?? 'gpt-4.1';
-
-  const FALLBACK_MODELS = [
-    'claude-sonnet-4.6', 'claude-sonnet-4.5', 'claude-haiku-4.5',
-    'claude-opus-4.6', 'claude-opus-4.6-fast', 'claude-opus-4.5', 'claude-sonnet-4',
-    'gemini-3-pro-preview',
-    'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.2',
-    'gpt-5.1-codex-max', 'gpt-5.1-codex', 'gpt-5.1',
-    'gpt-5.4-mini', 'gpt-5.1-codex-mini', 'gpt-5-mini', 'gpt-4.1',
-  ];
-
-  interface ModelsCache { models: string[]; fetchedAt: number; }
-
-  async function readModelsCache(): Promise<ModelsCache | null> {
-    try {
-      const raw = await readFile(MODELS_CACHE_PATH, 'utf-8');
-      const parsed = JSON.parse(raw) as ModelsCache;
-      if (Array.isArray(parsed.models) && typeof parsed.fetchedAt === 'number') return parsed;
-    } catch { /* missing or corrupt */ }
-    return null;
-  }
-
-  async function writeModelsCache(models: string[]): Promise<void> {
-    try {
-      await writeFile(MODELS_CACHE_PATH, JSON.stringify({ models, fetchedAt: Date.now() }), 'utf-8');
-    } catch (err) {
-      log.warn('[Heliox] Could not write models cache:', (err as Error).message);
-    }
-  }
-
-  async function fetchModelsFromCli(): Promise<string[] | null> {
-    try {
-      const { stdout } = await execFileAsync('copilot', [
-        '-p', 'Respond ONLY with a JSON array of all available model IDs. No markdown, no explanation, just the raw JSON array.',
-        '--output-format', 'json',
-        '--model', LIST_MODEL,
-      ], { timeout: 30_000, env: { ...process.env, PATH: `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin` } });
-
-      // CLI emits JSONL events; aggregate assistant deltas then extract the
-      // first JSON array payload produced by the prompt contract.
-      let content = '';
-      for (const line of stdout.split('\n')) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.type === 'assistant.message_delta' && event.data?.deltaContent) {
-            content += event.data.deltaContent;
-          }
-        } catch { /* non-JSON line */ }
-      }
-
-      const jsonMatch = content.match(/\[[\s\S]*?\]/);
-      if (jsonMatch) {
-        const models = JSON.parse(jsonMatch[0]) as string[];
-        if (Array.isArray(models) && models.length > 0 && models.every(m => typeof m === 'string')) {
-          return models;
-        }
-      }
-    } catch (err) {
-      log.warn('[Heliox] Failed to fetch models from copilot CLI:', (err as Error).message);
-    }
-    return null;
-  }
-
+  // ── Model list (delegated to opencode CLI) ─────────────────────────────────
+  // Disk cache lives in opencode-providers; this IPC handler is a thin wrapper.
   ipcMain.handle('heliox:list-models', async (): Promise<string[]> => {
-    // HELIOX_MODELS env var: bypass everything (used in E2E tests and custom setups)
     const envModels = process.env.HELIOX_MODELS;
     if (envModels) {
-      const models = envModels.split(',').map(m => m.trim()).filter(Boolean);
-      log.info('[Heliox] Using HELIOX_MODELS env override:', models);
-      return models;
+      return envModels.split(',').map(m => m.trim()).filter(Boolean);
     }
-
-    // Check disk cache — use it if still fresh (< 24 h)
-    const cached = await readModelsCache();
-    if (cached && Date.now() - cached.fetchedAt < MODELS_CACHE_TTL_MS) {
-      log.info('[Heliox] Using cached models (age:', Math.round((Date.now() - cached.fetchedAt) / 60_000), 'min)');
-      return cached.models;
+    const models = await opencodeListModels();
+    if (models.length === 0) {
+      log.warn('[Heliox] opencode returned no models — verify a provider is authorized');
     }
-
-    // Cache missing or stale — fetch from CLI with the cheap model
-    log.info('[Heliox] Fetching model list via copilot CLI with model:', LIST_MODEL);
-    const fetched = await fetchModelsFromCli();
-    if (fetched) {
-      await writeModelsCache(fetched);
-      return fetched;
-    }
-
-    // Keep serving stale cache rather than showing hardcoded fallback
-    if (cached) {
-      log.warn('[Heliox] CLI fetch failed — serving stale cache');
-      return cached.models;
-    }
-
-    log.warn('[Heliox] No cache and CLI fetch failed — using built-in fallback list');
-    return FALLBACK_MODELS;
+    return models;
   });
 
-  // Called when an agent fails with a model error — forces a fresh fetch next time
   ipcMain.handle('heliox:invalidate-models-cache', async (): Promise<void> => {
-    try {
-      const { unlink } = await import('fs/promises');
-      await unlink(MODELS_CACHE_PATH);
-      log.info('[Heliox] Models cache invalidated');
-    } catch { /* file may not exist */ }
+    // Force a refresh on the next call by passing { refresh: true }.
+    await opencodeListModels(undefined, { refresh: true });
   });
 
   ipcMain.handle('heliox:list-project-files', async (_event, projectPath: string): Promise<string[]> => {
@@ -621,6 +750,33 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return true;
     } catch {
       return false;
+    }
+  });
+
+  // Export a canvas-compiled AgenticFlow to the portable heliox-flow.json
+  // interchange format (src/main/flow-export/heliox-flow.ts) — the format the
+  // Java/Python runtimes and the SDK conformance suite consume. Clones the
+  // heliox:save-file dialog pattern above.
+  ipcMain.handle('heliox:export-flow', async (_event, flow: AgenticFlow): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> => {
+    try {
+      const exported = exportFlow(flow);
+      const options: SaveDialogOptions = {
+        title: 'Export Flow',
+        defaultPath: `${flow.id}.flow.json`,
+        filters: [
+          { name: 'Heliox Flow', extensions: ['json'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      };
+      const win = getIpcWindow();
+      const { canceled, filePath } = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options);
+      if (canceled || !filePath) return { success: false, canceled: true };
+      await writeFile(filePath, JSON.stringify(exported, null, 2), 'utf-8');
+      return { success: true, path: filePath };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
     }
   });
 
@@ -1094,7 +1250,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('bridge:start', async () => {
     try {
-      const { startBridgeServer, isBridgeRunning, generateBridgeQR } = await import('./bridge');
+      const { startBridgeServer, isBridgeRunning, generateBridgeQR, getPairingToken } = await import('./bridge');
       if (isBridgeRunning()) {
         return { success: true, message: 'Bridge already running' };
       }
@@ -1106,7 +1262,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       };
 
       const result = startBridgeServer(getState);
-      const qr = await generateBridgeQR(result.port, '0.0.0.0', result.pin);
+      // The QR encodes the one-time pairing token (fragment-carried), never the PIN.
+      const pairingToken = getPairingToken();
+      const qr = pairingToken
+        ? await generateBridgeQR(result.port, '0.0.0.0', pairingToken)
+        : { url: '', qrDataUrl: '', localIp: '' };
       return { success: true, port: result.port, pin: result.pin, ...qr };
     } catch (err) {
       return { success: false, error: errMsg(err) };
@@ -1142,12 +1302,54 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('bridge:get-qr', async () => {
     try {
-      const { getBridgeConfig, generateBridgeQR } = await import('./bridge');
+      const { getBridgeConfig, getPairingToken, generateBridgeQR } = await import('./bridge');
       const config = getBridgeConfig();
-      if (!config) return { success: false, error: 'Bridge not running' };
-      const qr = await generateBridgeQR(config.port, config.host, config.pin);
+      const pairingToken = getPairingToken();
+      if (!config || !pairingToken) {
+        return { success: false, error: 'Bridge not running or pairing token expired — refresh PIN for a new QR' };
+      }
+      const qr = await generateBridgeQR(config.port, config.host, pairingToken);
       return { success: true, ...qr };
     } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  // ── Time-travel checkpoint IPC (ARCH-073) ─────────────────────────────────
+  // Delegated to a dedicated module to keep this file additive.
+  registerCheckpointIpcHandlers();
+
+  // ── MCP command allowlist + consent (audit 1.4) ───────────────────────────
+  // mcp:listApprovedCommands / mcp:approveCommand / mcp:revokeCommand.
+  registerMcpCommandPolicyIpcHandlers();
+
+  // ── Anonymous opt-in telemetry (audit 1.8b) ───────────────────────────────
+  // telemetry:getOptIn / telemetry:setOptIn.
+  registerTelemetryIpcHandlers();
+
+  // ── Performance Frontier Scorecard + Arena IPC (ARCH-079) ─────────────────
+  // Registers pf:run-scorecard / pf:scorecard-progress and
+  // pf:run-arena / pf:arena-progress so the renderer panels can invoke them.
+  registerScorecardIpc(mainWindow);
+  registerArenaIpc(mainWindow);
+
+  // ─── Arena leaderboard ────────────────────────────────────────────────────
+  // Reads the JSON file written by `npm run pf:arena`. ENOENT is not an error —
+  // it simply means no Arena run has been executed yet for this project.
+
+  ipcMain.handle('arena:read-leaderboard', async (_e, projectPath: string) => {
+    const leaderboardPath = join(
+      projectPath, '.heliox', 'performance-frontier', 'heliox-leaderboard.json',
+    );
+    try {
+      const raw = await readFile(leaderboardPath, 'utf-8');
+      const entries = JSON.parse(raw) as import('../types/arena').ArenaLeaderboardEntry[];
+      return { success: true, data: entries };
+    } catch (err) {
+      // ENOENT → no Arena run yet; return an empty list rather than an error
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { success: true, data: [] };
+      }
       return { success: false, error: errMsg(err) };
     }
   });

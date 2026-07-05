@@ -24,6 +24,18 @@ import { useDesktopStore } from '@/renderer/store/desktop-store';
 export function SideBar() {
   const windows = useDesktopStore(s => s.windows);
   const connections = useDesktopStore(s => s.connections);
+  // Counts frames with a manual loop rather than `.filter(...).length`, which
+  // would allocate a throwaway array on every store `set()` (pan/zoom/drag
+  // ticks included) just to read its length. The selector still RECOMPUTES
+  // on every tick — that part's unavoidable, we need the fresh count to know
+  // whether it moved — but returning a primitive means SideBar only
+  // RE-RENDERS when the flow count itself actually changes, not on every
+  // unrelated mentalNodes mutation (step drags, mental-card edits, etc).
+  const frameCount = useDesktopStore(s => {
+    let count = 0;
+    for (const node of s.mentalNodes) if (node.type === 'frame') count++;
+    return count;
+  });
 
   return (
     <div
@@ -46,12 +58,12 @@ export function SideBar() {
         }}
       >
         <LucideIcon name="Blocks" size={13} />
-        Windows
+        Components
         <span style={{
           marginLeft: 'auto', fontSize: 10, fontWeight: 400,
           color: theme.textGhost, marginRight: 4,
         }}>
-          {windows.length}
+          {windows.length + frameCount}
         </span>
       </div>
 

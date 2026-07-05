@@ -13,6 +13,13 @@ export default defineConfig({
       external: [
         'electron', 'playwright', 'child_process', 'crypto', 'events', 'path', 'fs', 'fs/promises', 'util',
         'better-sqlite3',
+        // jsdom (pulled in by performance-frontier's design-verifier) reads its
+        // own on-disk assets — e.g. lib/jsdom/browser/default-stylesheet.css —
+        // via __dirname-relative fs.readFileSync. Bundling rewrites those paths
+        // and the main process throws ENOENT at load. Keep it external so it is
+        // required from node_modules with correct asset resolution, exactly like
+        // the better-sqlite3 native module above.
+        'jsdom',
       ],
     },
   },

@@ -33,12 +33,14 @@ export function setCommandCallback(cb: (action: string, args?: Record<string, un
 /** Handle a new WebSocket connection */
 export function handleSocketConnection(
   ws: WebSocket,
-  req: IncomingMessage,
+  _req: IncomingMessage,
   getState: () => BridgeStatePayload
 ): void {
-  // Extract token from query string
-  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
-  const token = url.searchParams.get('token');
+  // Token travels as a negotiated WebSocket subprotocol, not a query string —
+  // browsers can't set custom headers on the WS handshake, but `ws.protocol`
+  // (Sec-WebSocket-Protocol) never appears in a URL, so it doesn't hit logs,
+  // browser history, or Referer headers the way a query param would.
+  const token = ws.protocol || null;
 
   if (!token) {
     ws.close(4001, 'Missing token');

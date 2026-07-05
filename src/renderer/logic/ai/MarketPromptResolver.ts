@@ -12,7 +12,7 @@
  *   or prompt composition (AiComposer)
  */
 
-export type MarketCategory = 'flows' | 'roles' | 'mods' | 'design-systems';
+export type MarketCategory = 'flows' | 'roles' | 'mods' | 'steps';
 
 /**
  * Resolves a single market prompt by category and item name.

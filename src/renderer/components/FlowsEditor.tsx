@@ -215,8 +215,7 @@ Generate 3-8 flows covering the main functionality. Return ONLY the JSON array.`
         contextProjectPath: projectPath,
         model: 'claude-sonnet-4.6',
         effort: 'high',
-        aiAdapter: appSettings.aiAdapter ?? appSettings.cliAdapter,
-        customCliPath: appSettings.customCliPath,
+        aiAdapter: appSettings.aiAdapter,
       });
 
       if (!result.success) {

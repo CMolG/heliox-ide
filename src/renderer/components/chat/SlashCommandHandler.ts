@@ -7,7 +7,7 @@
  *
  * Boundaries:
  * - Owns: client-side command parsing and local command routing behavior
- * - Does NOT own: Copilot CLI execution, transport orchestration, or backend command semantics
+ * - Does NOT own: OpenCode CLI execution, transport orchestration, or backend command semantics
  *
  * Architectural role:
  * - Renderer chat integration boundary translating text commands into UI/store mutations.
@@ -23,7 +23,7 @@ export const SLASH_COMMANDS: { cmd: string; desc: string; local?: boolean }[] = 
   { cmd: '/usage', desc: 'Show session usage stats', local: true },
   { cmd: '/role', desc: 'Switch or view roles', local: true },
   { cmd: '/help', desc: 'Show command reference', local: true },
-  // Copilot passthrough commands
+  // OpenCode passthrough commands
   { cmd: '/compact', desc: 'Compact conversation history' },
   { cmd: '/context', desc: 'Show/manage context' },
   { cmd: '/diff', desc: 'Show current changes' },
@@ -47,7 +47,7 @@ export interface SlashCommandActions {
   updateSessionMessages: (sessionId: string, msgs: ChatMessage[]) => void;
   addLogEntry: (entry: Omit<LogEntry, 'id'>) => void;
   getState: () => {
-    sessions: { id: string; model: string; copilotSessionId?: string; number: number; tokenUsage?: { premiumRequests?: number; totalApiDurationMs?: number }; roleId?: string }[];
+    sessions: { id: string; model: string; opencodeSessionId?: string; number: number; tokenUsage?: { premiumRequests?: number; totalApiDurationMs?: number }; roleId?: string }[];
     roles: { id: string; name: string; icon: string }[];
     totalPremiumRequests: number;
     totalApiDuration: number;
@@ -82,7 +82,7 @@ export function handleSlashCommand(
         actions.addSessionMessage(sessionId, {
           id: `sys-cmd-${Date.now()}`,
           role: 'system',
-          content: `Available models: ${actions.availableModels.join(', ')}\n\nCurrent: ${session?.model ?? 'copilot'}\nUsage: /model <name>`,
+          content: `Available models: ${actions.availableModels.join(', ')}\n\nCurrent: ${session?.model ?? 'opencode/claude-sonnet-4-6'}\nUsage: /model <name>`,
           timestamp: Date.now(),
         });
       }
@@ -132,7 +132,7 @@ export function handleSlashCommand(
       const lines = [
         '── Current Session ──',
         usage
-          ? `• Premium requests: ${usage.premiumRequests ?? 'N/A'}\n• API time: ${usage.totalApiDurationMs ? (usage.totalApiDurationMs / 1000).toFixed(1) + 's' : 'N/A'}\n• Model: ${session?.model ?? 'copilot'}\n• Copilot session: ${session?.copilotSessionId ?? 'N/A'}`
+          ? `• Premium requests: ${usage.premiumRequests ?? 'N/A'}\n• API time: ${usage.totalApiDurationMs ? (usage.totalApiDurationMs / 1000).toFixed(1) + 's' : 'N/A'}\n• Model: ${session?.model ?? 'opencode/claude-sonnet-4-6'}\n• OpenCode session: ${session?.opencodeSessionId ?? 'N/A'}`
           : 'No usage data yet — send a message first.',
         '',
         '── All Sessions ──',
@@ -156,7 +156,7 @@ export function handleSlashCommand(
       actions.addSessionMessage(sessionId, {
         id: `sys-cmd-${Date.now()}`,
         role: 'system',
-        content: `Heliox commands:\n• /model [name] — Switch or view models\n• /effort [level] — Set reasoning effort (L/M/H/X)\n• /clear — Clear chat messages\n• /usage — Show session usage stats\n• /role [name] — Switch or view roles\n• /help — Show this help\n\nAll other copilot commands (/compact, /context, /diff, etc.) are passed directly to copilot CLI.`,
+        content: `Heliox commands:\n• /model [name] — Switch or view models\n• /effort [level] — Set reasoning effort (L/M/H/X)\n• /clear — Clear chat messages\n• /usage — Show session usage stats\n• /role [name] — Switch or view roles\n• /help — Show this help\n\nAll other commands (/compact, /context, /diff, etc.) are passed directly to OpenCode.`,
         timestamp: Date.now(),
       });
       return true;
@@ -198,7 +198,7 @@ export function handleSlashCommand(
       actions.addSessionMessage(sessionId, {
         id: `sys-passthrough-${Date.now()}`,
         role: 'system',
-        content: `Passing /${cmdName} to copilot...`,
+        content: `Passing /${cmdName} to OpenCode...`,
         timestamp: Date.now(),
       });
       return false;

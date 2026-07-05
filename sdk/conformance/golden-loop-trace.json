@@ -1,0 +1,10 @@
+[
+  {"stepId":"step-a","iteration":1,"output":"A output"},
+  {"stepId":"step-b1","iteration":1,"output":"B1 pass 1"},
+  {"stepId":"step-b2","iteration":1,"output":"B2 pass 1"},
+  {"stepId":"step-b1","iteration":2,"output":"B1 pass 2"},
+  {"stepId":"step-b2","iteration":2,"output":"B2 pass 2"},
+  {"stepId":"step-b1","iteration":3,"output":"B1 pass 3"},
+  {"stepId":"step-b2","iteration":3,"output":"B2 pass 3"},
+  {"stepId":"step-c","iteration":1,"output":"C output"}
+]

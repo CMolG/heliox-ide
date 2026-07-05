@@ -91,9 +91,9 @@ export class DevSessionLogger {
     this.line(`Session ID  : ${this.agentId}`);
     this.line(`Started     : ${new Date(this.startTime).toISOString()}`);
     this.line(`CWD         : ${this.cwd}`);
-    this.line(`Model       : ${params.model ?? 'copilot'}`);
+    this.line(`Model       : ${params.model ?? 'opencode/claude-sonnet-4-6'}`);
     this.line(`Effort      : ${params.effort ?? 'default'}`);
-    this.line(`AI Adapter  : ${params.aiAdapter ?? 'copilot'}`);
+    this.line(`AI Adapter  : ${params.aiAdapter ?? 'opencode'}`);
     if (params.resumeSessionId) {
       this.line(`Resume From : ${params.resumeSessionId}`);
     }
@@ -147,7 +147,7 @@ export class DevSessionLogger {
         this.line(`  Exit code       : ${data.exitCode ?? 0}`);
         this.line(`  Premium requests: ${data.premiumRequests ?? '?'}`);
         this.line(`  API duration    : ${data.totalApiDurationMs ?? '?'}ms`);
-        if (data.sessionId) this.line(`  Copilot session : ${data.sessionId}`);
+        if (data.sessionId) this.line(`  OpenCode session : ${data.sessionId}`);
         break;
       }
       case 'error':

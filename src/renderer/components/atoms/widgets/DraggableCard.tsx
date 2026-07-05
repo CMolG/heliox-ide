@@ -11,6 +11,12 @@
  *
  * Architectural role:
  * - UI boundary module in the renderer process (presentation + local interaction).
+ *
+ * TODO(design): The current backlog-card visual is provisional and will be
+ * fully redesigned. Owner: Carlos. Until then, keep markup minimal so the
+ * redesign can swap styling without touching DnD wiring or BacklogCard data.
+ * Coupled files to revisit together: FlowDeckCard.tsx, KanbanColumn.tsx,
+ * BacklogKanbanWidget.tsx, BacklogCardModal.tsx.
  */
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';

@@ -1,0 +1,93 @@
+name: SDK Conformance
+
+# Phase 4a — cross-runtime conformance contract (sdk/conformance/README.md).
+# Path-scoped so it only runs when the interchange format, its fixtures, or
+# the runtimes that consume them actually change — kept separate from the
+# main ci.yml matrix so it doesn't bloat every unrelated PR's checks.
+#
+# Three jobs mirror the three runtimes the conformance suite proves parity
+# across: TypeScript (this repo's IDE), Java, and Python. All three read the
+# same shared fixtures in sdk/conformance/ — see that directory's README for
+# the full guarantee-by-guarantee contract table.
+
+on:
+  push:
+    branches: [main, feat/dev]
+    paths:
+      - 'sdk/**'
+      - 'src/main/flow-export/**'
+      - 'src/types/harness.ts'
+      - '.github/workflows/sdk-conformance.yml'
+  pull_request:
+    branches: [main, feat/dev]
+    paths:
+      - 'sdk/**'
+      - 'src/main/flow-export/**'
+      - 'src/types/harness.ts'
+      - '.github/workflows/sdk-conformance.yml'
+
+concurrency:
+  group: sdk-conformance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ts-flow-export:
+    name: TypeScript — flow-export + conformance suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run flow-export conformance suite
+        run: npx vitest run src/main/flow-export
+
+  java:
+    name: Java — cross-runtime conformance suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java (Temurin 21)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run Java conformance suite
+        # The Java runtime does not implement loop expansion yet (that's a
+        # separate, later task) — this exercises the existing DAG-order,
+        # semantic-parity, and tool-calling fixtures against sdk/java/pom.xml.
+        run: mvn -f sdk/java/pom.xml test
+
+  python:
+    name: Python — cross-runtime conformance suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        # sdk/python's own dev extra (pyproject.toml: [project.optional-dependencies].dev)
+        # pins the same constraint; heliox_sdk itself declares zero runtime deps and the
+        # test suite makes itself importable via a sys.path shim (see
+        # tests/test_cross_runtime_conformance.py), so no package install is needed —
+        # only the test runner.
+        run: python3 -m pip install "pytest>=9.0"
+
+      - name: Run Python conformance suite
+        # Same scope note as the Java job above — loop fixtures land once
+        # sdk/python implements loop expansion.
+        run: python3 -m pytest sdk/python -q

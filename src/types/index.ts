@@ -6,6 +6,9 @@
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
 // src/types/index.ts — Heliox IDE shared types
+import type { AgenticFlow } from './harness';
+import type { HarnessEventPayload, ModelPolicy } from './ipc-events';
+import type { PipelineAssembly } from './meta-agent';
 
 export interface PerformanceMetrics {
   lcp: number;            // Largest Contentful Paint (ms)
@@ -108,11 +111,8 @@ export interface AiOutputEvent {
   usage?: Record<string, unknown>;
 }
 
-/** @deprecated Use AiOutputEvent instead */
-export type CopilotOutputEvent = AiOutputEvent;
-
-/** Supported AI adapter identifiers */
-export type AiAdapterName = 'copilot' | 'claude' | 'openai' | 'openrouter' | 'opencode';
+/** The only supported AI adapter — OpenCode handles every provider. */
+export type AiAdapterName = 'opencode';
 
 // Normalized event types we care about
 // Feedback payload sent back to the agent for auto-correction
@@ -135,10 +135,12 @@ export interface MetricViolation {
 // ─── App Settings ───────────────────────────────────────────────
 
 export interface AppSettings {
+  /** Pinned to 'opencode' — kept on the schema so callers can stay generic. */
   aiAdapter: AiAdapterName;
-  /** @deprecated Use aiAdapter instead */
-  cliAdapter?: AiAdapterName;
-  customCliPath: string;
+  /** Provider id selected in the picker (matches auth.json key). */
+  selectedProvider: string;
+  /** Full `provider/model` string passed to `opencode run --model`. */
+  selectedModel: string;
   autoCommit: boolean;
   runE2E: boolean;
   sendOnEnter: boolean;
@@ -188,7 +190,8 @@ export interface Session {
   completedAt?: number;
   endedAt?: number;
   messages: ChatMessage[];
-  copilotSessionId?: string;
+  /** OpenCode session id used to resume a conversation (`--session`). */
+  opencodeSessionId?: string;
   tokenUsage?: {
     premiumRequests?: number;
     totalTokens?: number;
@@ -220,18 +223,14 @@ export interface RunAgentParams {
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
   resumeSessionId?: string;
+  /** Reserved for the IPC contract — only 'opencode' is honored. */
   aiAdapter?: AiAdapterName;
-  /** @deprecated Use aiAdapter instead */
-  cliAdapter?: AiAdapterName;
-  customCliPath?: string;
   autoCommit?: boolean;
   runE2E?: boolean;
   /** Role system prompt content (injected by renderer from market/store) */
   rolePrompt?: string;
   /** Modifier prompt contents (injected by renderer from market/store) */
   modPrompts?: string[];
-  /** Design system prompt content (injected by renderer from market/store) */
-  designSystemPrompt?: string;
   /** Session role id used for context-map digest ranking */
   roleId?: string;
   /** Active directives to inject by mode */
@@ -311,11 +310,21 @@ export interface FileEntry {
 }
 
 export interface CliStatus {
-  copilotInstalled: boolean;
-  ghInstalled: boolean;
-  ghCopilotInstalled: boolean;
+  opencodeInstalled: boolean;
+  opencodeVersion: string | null;
   nodeInstalled: boolean;
   gitInstalled: boolean;
+}
+
+/** Provider metadata exposed to the renderer for the picker. */
+export interface OpencodeProvider {
+  id: string;
+  label: string;
+  description: string;
+  accent: string;
+  authorized: boolean;
+  authHint?: string;
+  keyPrefix?: string;
 }
 
 export interface GitStatusInfo {
@@ -328,6 +337,16 @@ export interface GitStatusInfo {
 export interface HelioxAPI {
   initBaselines: (flows: Flow[]) => Promise<IpcResult>;
   runAgent: (params: RunAgentParams) => Promise<IpcResult>;
+  /**
+   * Dispatch an `AgenticFlow` for execution. `options.modelPolicy` opts the run
+   * into WS2 smart routing (`smart-local` / `smart-external`); omitted or
+   * `{mode:'fixed'}` keeps today's behavior. `options.modelId` is the flow's
+   * own already-resolved model (e.g. the Arena "deploy" choice) — the router
+   * outranks it, which itself is outranked by any step's own manual override.
+   */
+  startHarness: (flow: AgenticFlow, options?: { modelPolicy?: ModelPolicy; modelId?: string }) => Promise<IpcResult>;
+  exportFlow: (flow: AgenticFlow) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>;
+  assemblePipeline: (userIntent: string) => Promise<{ success: boolean; data?: PipelineAssembly; error?: string }>;
   readMarketInventory: (projectPath: string) => Promise<import('./market').MarketInventory | null>;
   readMarketPrompt: (projectPath: string, category: string, name: string) => Promise<string | null>;
   readBacklog: (projectPath: string) => Promise<import('./market').BacklogCard[]>;
@@ -350,6 +369,7 @@ export interface HelioxAPI {
   rejectDiff: (diffId: string, feedback: string) => Promise<IpcResult>;
   shutdown: () => Promise<IpcResult>;
   onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
+  onHarnessEvent: (callback: (event: HarnessEventPayload) => void) => () => void;
   openFolderDialog: () => Promise<string | null>;
   readDirectory: (dirPath: string) => Promise<FileEntry[]>;
   checkCli: () => Promise<CliStatus>;
@@ -383,6 +403,33 @@ export interface HelioxAPI {
   openFileDialog: (cwd: string) => Promise<string | null>;
   listModels: () => Promise<string[]>;
   invalidateModelsCache: () => Promise<void>;
+  // ── OpenCode providers ─────────────────────────────────────────
+  opencodeListProviders: () => Promise<OpencodeProvider[]>;
+  opencodeListProviderModels: (providerId: string) => Promise<string[]>;
+  opencodeSaveCredential: (providerId: string, key: string) => Promise<{ success: boolean; error?: string }>;
+  opencodeRemoveCredential: (providerId: string) => Promise<{ success: boolean; error?: string }>;
+  opencodeStatus: () => Promise<{ installed: boolean; version: string | null; path: string | null }>;
+
+  // ── Provider Connections (DBeaver-style, Phase 6) ───────────────
+  // Replaces the old opencode-backed provider-picker UI (see ConnectionsSection.tsx).
+  providerConnectionsList: () => Promise<{ success: boolean; data?: import('./ipc-events').ProviderConnection[]; error?: string }>;
+  providerConnectionsCreate: (
+    input: import('./ipc-events').ProviderConnectionInput,
+  ) => Promise<{ success: boolean; data?: import('./ipc-events').ProviderConnection; error?: string }>;
+  providerConnectionsUpdate: (
+    id: string,
+    patch: import('./ipc-events').ProviderConnectionUpdate,
+  ) => Promise<{ success: boolean; data?: import('./ipc-events').ProviderConnection; error?: string }>;
+  providerConnectionsDelete: (id: string) => Promise<{ success: boolean; error?: string }>;
+  providerConnectionsSetModelEnabled: (
+    id: string,
+    modelId: string,
+    enabled: boolean,
+  ) => Promise<{ success: boolean; data?: import('./ipc-events').ProviderConnection; error?: string }>;
+  providerConnectionsTest: (
+    request: import('./ipc-events').ConnectionTestRequest,
+  ) => Promise<import('./ipc-events').ConnectionTestResponse>;
+
   getConfigDir: (projectPath: string) => Promise<string>;
   listProjectFiles: (projectPath: string) => Promise<string[]>;
   saveFile: (defaultPath: string, content: string) => Promise<boolean>;
@@ -432,6 +479,108 @@ export interface HelioxAPI {
       affectedSessions?: string[];
     }) => void,
   ) => () => void;
+
+  // ── M1 Dev-server watcher ──────────────────────────────────────────────────
+  /** Start polling candidate ports for the given project path. */
+  startDevServerWatch: (projectPath: string) => Promise<{ success: boolean; error?: string }>;
+  /** Stop polling (all watchers if no arg, or just the one for the given project). */
+  stopDevServerWatch: () => Promise<{ success: boolean; error?: string }>;
+  /** Subscribe to dev-server-detected push events. Returns unsubscribe fn. */
+  onDevServerDetected: (callback: (payload: DevServerDetectedPayload) => void) => () => void;
+
+  // ── M2 Browser control (native CDP via webContents.debugger) ──────────────
+  /** Attach a CDP debugger session to the webview identified by webContentsId. Idempotent. */
+  browserAttach: (id: number) => Promise<{ success: boolean; error?: string }>;
+  /** Navigate the webview to url and return the resulting AOM snapshot. */
+  browserGoto: (id: number, url: string) => Promise<{ success: boolean; data?: import('./browser').AomSnapshot; error?: string }>;
+  /** Return a fresh AOM snapshot of the current page without navigating. */
+  browserObserve: (id: number) => Promise<{ success: boolean; data?: import('./browser').AomSnapshot; error?: string }>;
+  /** Perform a DOM action on an AOM element by its numeric id. Returns a fresh AOM snapshot. */
+  browserAct: (id: number, elementId: number, action: import('./browser').BrowserAction, value?: string) => Promise<{ success: boolean; data?: import('./browser').AomSnapshot; error?: string }>;
+  /** Extract SEO metadata + Core Web Vitals from the current page (navigates to url first if provided). */
+  browserExtractSeo: (id: number, url?: string) => Promise<{ success: boolean; data?: import('./browser').SeoReport; error?: string }>;
+  /** Detach the CDP debugger. Idempotent — never throws on already-detached sessions. */
+  browserDetach: (id: number) => Promise<{ success: boolean; error?: string }>;
+  /** Set (or clear with null) which webview is the active agent surface (main-side; read by M3). */
+  browserSetAgentSurface: (id: number | null) => Promise<{ success: boolean; error?: string }>;
+
+  // ── Arena leaderboard ──────────────────────────────────────────────────────
+  /**
+   * Read the Arena leaderboard JSON for the given project.
+   * Returns `{ success: true, data: [] }` when no Arena run exists yet —
+   * ENOENT is treated as "no data" rather than an error at the IPC layer.
+   */
+  readArenaLeaderboard(projectPath: string): Promise<{
+    success: boolean;
+    data?: import('./arena').ArenaLeaderboardEntry[];
+    error?: string;
+  }>;
+
+  // ── Time-travel checkpoints (ARCH-073) ─────────────────────────────────────
+  /** List all checkpoints for a run in chronological order. */
+  listCheckpoints(runId: string): Promise<import('./ipc-events').ListCheckpointsResponse>;
+  /** Fork a run from a checkpoint, optionally with an edited step output. */
+  harnessReplayFrom(
+    flow: import('./harness').AgenticFlow,
+    checkpointId: string,
+    editedOutput?: string,
+  ): Promise<import('./ipc-events').ReplayFromResponse>;
+
+  // ── Performance Frontier Scorecard + Arena (ARCH-079) ──────────────────────
+  /** Invoke pf:run-scorecard; returns the full structured scorecard or an error. */
+  runScorecard(opts?: import('./ipc-events').ScorecardRunOptions): Promise<{
+    success: boolean;
+    data?: import('./ipc-events').ScorecardResult;
+    error?: string;
+  }>;
+  /**
+   * Subscribe to incremental progress events streamed on pf:scorecard-progress
+   * while a scorecard run is in flight.  Returns an unsubscribe function.
+   */
+  onScorecardProgress(cb: (event: import('./ipc-events').ScorecardProgressEvent) => void): () => void;
+  /** Invoke pf:run-arena; returns the full leaderboard + recommendations or an error. */
+  runArena(opts?: import('./ipc-events').ArenaRunOptions): Promise<{
+    success: boolean;
+    data?: import('./ipc-events').ArenaResult;
+    error?: string;
+  }>;
+  /**
+   * Subscribe to per-model progress events streamed on pf:arena-progress
+   * while an Arena run is in flight.  Returns an unsubscribe function.
+   */
+  onArenaProgress(cb: (event: import('./ipc-events').ArenaProgressEvent) => void): () => void;
+
+  // ── MCP command allowlist + consent (audit 1.4) ────────────────────────────
+  /** List stdio MCP commands the user has explicitly approved. */
+  mcpListApprovedCommands(): Promise<{
+    success: boolean;
+    data?: Array<{ command: string; args: string[]; approvedAt: string }>;
+    error?: string;
+  }>;
+  /** Approve an exact command+args pair so future spawns of it are allowed. */
+  mcpApproveCommand(command: string, args?: string[]): Promise<{
+    success: boolean;
+    data?: Array<{ command: string; args: string[]; approvedAt: string }>;
+    error?: string;
+  }>;
+  /** Revoke a previously approved command+args pair. */
+  mcpRevokeCommand(command: string, args?: string[]): Promise<{
+    success: boolean;
+    data?: Array<{ command: string; args: string[]; approvedAt: string }>;
+    error?: string;
+  }>;
+
+  // ── Anonymous opt-in telemetry (audit 1.8b) ────────────────────────────────
+  /** Read the current anonymous-telemetry opt-in flag (default false). */
+  telemetryGetOptIn(): Promise<{ success: boolean; data?: boolean; error?: string }>;
+  /** Set the anonymous-telemetry opt-in flag. */
+  telemetrySetOptIn(optIn: boolean): Promise<{ success: boolean; data?: boolean; error?: string }>;
+}
+
+/** Payload emitted by the main-process dev-server watcher when a new port comes up. */
+export interface DevServerDetectedPayload {
+  url: string;
+  port: number;
 }
 
 // ─── Storage Layer Types ────────────────────────────────────────────────────

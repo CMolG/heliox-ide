@@ -19,6 +19,7 @@ import { LucideIcon } from './LucideIcon';
 import { ProjectPickerModal } from './ProjectPickerModal';
 import { DockPopover } from './DockPopover';
 import type { AttachableType, MentalMode, MentalShape, MentalTool } from '@/types/desktop';
+import { getCliTheme } from '@/types/desktop';
 
 const ATTACHABLE_TYPE_COLORS: Record<string, string> = {
   flows: '#A78BFA',
@@ -74,10 +75,10 @@ export function Dock() {
 
   const projectName = projectPath?.split('/').pop() ?? 'project';
 
-  // Attachable items (roles, mods, flows)
+  // Attachable items (roles, mods, flows, steps)
   const attachableItems = useMemo(() =>
     availablePlugins.filter(p =>
-      p.category === 'roles' || p.category === 'modifiers' || p.category === 'flows'
+      p.category === 'roles' || p.category === 'modifiers' || p.category === 'flows' || p.category === 'steps'
     ), [availablePlugins]);
 
   // Infinite wrap-around scroll
@@ -106,10 +107,10 @@ export function Dock() {
   const spawnChat = useCallback((childProjectPath: string, position?: { x: number; y: number }) => {
     const childName = childProjectPath.split('/').pop() ?? 'project';
     const sessionId = addSession();
-    const provLabel = cliProvider === 'copilot' ? 'Copilot' : cliProvider;
+    const provLabel = getCliTheme(cliProvider).label;
     addWindow('chat', {
       title: `${provLabel} / ${childName}`,
-      iconName: CLI_ICON_NAMES[cliProvider],
+      iconName: CLI_ICON_NAMES[cliProvider] ?? CLI_ICON_NAMES.opencode ?? 'Terminal',
       sessionId,
       childProjectPath,
       ...(position ? { position } : {}),
@@ -186,22 +187,42 @@ export function Dock() {
           }
           break;
         }
-        case 'grid': {
-          useDesktopStore.getState().addGrid();
+        case 'new-step': {
+          // Create a single step node at the current viewport center.
+          const state = useDesktopStore.getState();
+          const pan = state.canvasPan;
+          const zoom = state.canvasZoom;
+          const vpW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+          const vpH = typeof window !== 'undefined' ? window.innerHeight : 800;
+          const cx = (vpW / 2 - pan.x) / zoom;
+          const cy = (vpH / 2 - pan.y) / zoom;
+          state.addStepNode({ position: { x: cx - 150, y: cy - 95 } });
           break;
         }
-        case 'design-system-editor': {
-          const existing = useDesktopStore.getState().windows.find(w => w.type === 'design-system-editor');
-          if (existing) {
-            navigateToWindow(existing.id);
-          } else {
-            const winId = addWindow('design-system-editor', {
-              title: 'Design System Editor',
-              iconName: 'Palette',
-              size: { width: 860, height: 640 },
-            });
-            requestAnimationFrame(() => navigateToWindow(winId));
-          }
+        case 'new-flow': {
+          // Create a flow scaffold: an initiator step + one next step, wired
+          // with a directed FlowEdge (source right handle → target left handle).
+          // The initiator's isRoot badge (Play icon in StepNode) marks it as
+          // the flow entry point. Chat windows remain a separate entity — wiring
+          // a chat session into the graph as the initiator is a follow-up task.
+          const state = useDesktopStore.getState();
+          const pan = state.canvasPan;
+          const zoom = state.canvasZoom;
+          const vpW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+          const vpH = typeof window !== 'undefined' ? window.innerHeight : 800;
+          const cx = (vpW / 2 - pan.x) / zoom;
+          const cy = (vpH / 2 - pan.y) / zoom;
+          const initiatorId = state.addStepNode({
+            position: { x: cx - 180, y: cy },
+            title: 'Flow Start',
+            stepType: 'llm_call',
+          });
+          const nextId = state.addStepNode({
+            position: { x: cx + 180, y: cy },
+            title: 'Next Step',
+            stepType: 'llm_call',
+          });
+          state.addMentalEdge(initiatorId, nextId, 'link', 'right', 'left');
           break;
         }
       }
@@ -274,15 +295,6 @@ export function Dock() {
               size: { width: 720, height: 480 },
               position: { x: dropX, y: dropY },
             });
-          } else if (item.type === 'action' && item.action === 'grid') {
-            const store = useDesktopStore.getState();
-            const zoom = store.canvasZoom;
-            const pan = store.canvasPan;
-            const containerEl = document.querySelector('.desktop-canvas');
-            const rect = containerEl?.getBoundingClientRect();
-            const cx = rect ? (ev.clientX - rect.left - pan.x) / zoom : dropX;
-            const cy = rect ? (ev.clientY - rect.top - pan.y) / zoom : dropY;
-            store.addGrid({ position: { x: cx, y: cy } });
           } else if (item.type === 'plugin' && item.pluginId) {
             const plugin = installedPlugins.find(p => p.id === item.pluginId);
             if (plugin) {
@@ -329,7 +341,7 @@ export function Dock() {
 
       if (isOut) {
         // Map plugin category → attachable type
-        const typeMap: Record<string, AttachableType> = { roles: 'role', modifiers: 'mod', flows: 'flow', 'design-systems': 'design-system' };
+        const typeMap: Record<string, AttachableType> = { roles: 'role', modifiers: 'mod', flows: 'flow', steps: 'step' };
         const attType = typeMap[plugin.category];
         if (attType) {
           // Convert screen coords → canvas coords (accounting for pan/zoom)

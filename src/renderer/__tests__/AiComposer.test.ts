@@ -119,14 +119,6 @@ describe('AiComposer (RISEN Engine)', () => {
     expect(result).toContain('- Under 500 words');
   });
 
-  it('includes design system in prison section', () => {
-    const result = new AiComposer('task')
-      .withDesignSystem('Use Tailwind tokens')
-      .compose();
-    expect(result).toContain('[DESIGN SYSTEM]');
-    expect(result).toContain('Use Tailwind tokens');
-  });
-
   it('includes memory section', () => {
     const result = new AiComposer('task')
       .withMemory('Prefers functional components')
@@ -238,7 +230,6 @@ describe('AiComposer (RISEN Engine)', () => {
       .withPersona('You are a senior engineer')
       .withCognitiveSteps(['Analyze', 'Build', 'Test'])
       .withStrictConstraints(['No external deps'])
-      .withDesignSystem('Tailwind v4')
       .withContextDigest('React + Vite')
       .withMemory('Prefers hooks')
       .withOutputSchema()

@@ -1,14 +1,33 @@
-name: Publish Heliox IDE
+name: Release
 
+# Audit action 1.10 / the release→web workstream. Acceptance test: publishing
+# a release requires only `git tag vX.Y.Z && git push --tags` — everything
+# below is what makes that true. See docs/RELEASE_CHECKLIST.md for the full,
+# ordered human checklist (version bump, QA matrix, when to click "Publish").
+#
+# Job graph:
+#   publish (matrix: ubuntu/macos/windows)  →  checksums
+#   Each `publish` leg runs `electron-forge publish`, which creates (or
+#   reuses) a single draft GitHub Release for the tag and uploads that
+#   platform's installers to it. `checksums` then downloads every asset the
+#   matrix produced, hashes them, and attaches SHA256SUMS to the same draft.
+#   Nothing is published to users automatically — draft: true is set in
+#   forge.config.ts, so a human still reviews + clicks "Publish" per the
+#   checklist.
 on:
   push:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   publish:
+    name: Build + publish draft (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
@@ -18,12 +37,53 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Publish app
+      - name: Publish app (creates/updates a draft release for this tag)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization (audit 1.1) — forge.config.ts reads
+          # these and degrades to an unsigned build when they're absent,
+          # which is what happens today (no secrets configured yet). Populate
+          # once Apple Developer credentials exist.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          OSX_SIGN_IDENTITY: ${{ secrets.OSX_SIGN_IDENTITY }}
+          # Windows signing — same degrade-gracefully contract.
+          WINDOWS_SIGN_PARAMS: ${{ secrets.WINDOWS_SIGN_PARAMS }}
+          WINDOWS_CERTIFICATE_FILE: ${{ secrets.WINDOWS_CERTIFICATE_FILE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: npm run publish
+
+  checksums:
+    name: Generate + attach SHA256SUMS
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all draft release assets for this tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-assets
+          gh release download "${GITHUB_REF_NAME}" -p '*' -D release-assets
+
+      - name: Generate SHA256SUMS
+        working-directory: release-assets
+        run: |
+          # Drop any stale SHA256SUMS from a prior run of this workflow before
+          # hashing, so this file never contains an entry for itself.
+          rm -f SHA256SUMS
+          shasum -a 256 -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload SHA256SUMS to the draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" release-assets/SHA256SUMS --clobber

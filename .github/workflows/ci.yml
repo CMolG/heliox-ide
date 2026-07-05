@@ -1,0 +1,219 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/dev]
+  pull_request:
+    branches: [main, feat/dev]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint + unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Electron binary
+        # Electron's postinstall download flakes intermittently on the macOS
+        # arm64 runners, leaving node_modules/electron without dist/path.txt —
+        # every suite that imports 'electron' then dies at collection with
+        # "Electron failed to install correctly". require() only resolves the
+        # binary path (never launches), so this is a cheap no-op when healthy;
+        # when broken it re-runs the postinstall, and fails loudly here if the
+        # re-download fails too.
+        shell: bash
+        run: node -e "require('electron')" || node node_modules/electron/install.js
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+  build:
+    name: Package app (${{ matrix.os }})
+    # Artifacts only for pushes (not PRs) — PR builds would double CI cost
+    # for little value since merges to feat/dev/main rebuild anyway.
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Electron binary
+        # Same self-heal as the test job: Electron's postinstall download flakes
+        # on macOS arm64 runners, leaving node_modules/electron without
+        # dist/path.txt. require() only resolves the binary path (never
+        # launches), so this is a cheap no-op when healthy and re-runs the
+        # postinstall when broken.
+        shell: bash
+        run: node -e "require('electron')" || node node_modules/electron/install.js
+
+      - name: Make distributables (unsigned, zip-only)
+        # ZIP-only per-push build: forge emits a portable .zip of the packaged
+        # app on every OS. The polished installers (dmg via appdmg, Squirrel,
+        # deb/rpm) need native/optional toolchains that flake on hosted runners,
+        # so they stay a release.yml concern (see forge.config.ts
+        # HELIOX_MAKE_ZIP_ONLY). Signing likewise stays unsigned here.
+        env:
+          HELIOX_MAKE_ZIP_ONLY: '1'
+        run: npm run make
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: heliox-ide-${{ github.sha }}-${{ matrix.os }}
+          path: out/make/**
+          retention-days: 14
+          if-no-files-found: error
+
+  publish-latest:
+    name: Publish rolling "latest" release
+    needs: build
+    # Only the mainline feeds the public, always-latest download that the
+    # marketing site (heliox-ide-web → GitHub Releases API) surfaces. Feature
+    # branches still get per-run zip artifacts from `build`, just not this
+    # rolling release. Skips forks/PRs (no push, no default-branch ref).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download every OS's build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect the zip distributables + checksums
+        run: |
+          mkdir -p dist
+          # `build` uploaded out/make/** per OS; the portable app zips live
+          # under out/make/zip/<platform>/<arch>/. Flatten them into dist/ (the
+          # three filenames already carry platform+arch, so no collisions).
+          find artifacts -name '*.zip' -exec cp {} dist/ \;
+          if [ -z "$(ls -A dist)" ]; then
+            echo "::error::No zip distributables found in the build artifacts."
+            exit 1
+          fi
+          ( cd dist && shasum -a 256 -- *.zip > SHA256SUMS )
+          echo "Rolling-release payload:"; ls -la dist
+
+      - name: (Re)publish the rolling "latest" prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Recreate the single rolling release each push so it always holds
+          # only the current commit's assets and its tag points at this commit.
+          # `|| true` tolerates the first-ever run (no release/tag yet). The tag
+          # name stays "latest", so the download URLs are stable across pushes.
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create latest \
+            --title "Latest (rolling build)" \
+            --notes "Automated build from ${GITHUB_SHA} on $(date -u +%Y-%m-%dT%H:%MZ). Unsigned prerelease — see the download page for first-launch (Gatekeeper/SmartScreen) notes." \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            dist/*.zip dist/SHA256SUMS
+
+  e2e-smoke:
+    name: E2E smoke (ubuntu, xvfb)
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 25
+    # Audit action 1.9 ("E2E in CI, even if a reduced smoke suite"): this is
+    # the first cut of running real Electron E2E tests in CI. Electron under
+    # a virtual display is more timing/rendering-sensitive than a local run,
+    # so this job is a soft gate (reports status, never blocks a PR) until it
+    # has proven stable over real runs. Remove `continue-on-error` once that
+    # holds true for a few weeks.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Allow Electron's SUID sandbox
+        # Ubuntu 24.04 runners restrict unprivileged user namespaces via
+        # AppArmor, which kills Electron at launch ("Process failed to
+        # launch!") before any test runs. This is the fix recommended by the
+        # Electron docs for CI; the alternative — passing --no-sandbox to the
+        # app under test — would make E2E exercise a config production never uses.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Install Playwright browser + OS dependencies
+        run: npx playwright install chromium --with-deps
+
+      - name: Build Electron main + preload bundles
+        # The E2E suite launches Electron directly against the repo root
+        # (see e2e/test-helpers.ts), which resolves package.json's "main" to
+        # .vite/build/index.js. That directory is .gitignore'd and is NOT
+        # produced by e2e/global-setup.ts (which only boots the renderer's
+        # Vite dev server on :5173) — it is electron-forge's Vite plugin
+        # build output. `electron-forge package` is the smallest Forge
+        # command that produces it without requiring a display.
+        run: npx electron-forge package
+
+      - name: Run E2E smoke suite
+        # Smallest and most self-contained specs in e2e/: bridge.spec.ts is
+        # IPC-surface + file-content checks (no pixel/mouse-gesture timing),
+        # context-map.spec.ts is a local IPC CRUD round-trip. Both avoid the
+        # pixel-bounding-box and mouse-drag-gesture assertions that specs like
+        # dock-fixed-on-pan.spec.ts use, which are more prone to flaking under
+        # a virtual display — good candidates for a *later* smoke addition
+        # once this job has proven itself.
+        run: xvfb-run --auto-servernum npx playwright test e2e/bridge.spec.ts e2e/context-map.spec.ts
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

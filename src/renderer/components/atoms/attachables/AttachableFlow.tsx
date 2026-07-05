@@ -15,13 +15,24 @@
 // src/renderer/components/atoms/attachables/AttachableFlow.tsx
 import React, { useState } from 'react';
 import { MarketFlow } from '@/types/market';
+import type { AgenticExecutionStatus } from '@/types/harness';
 import { theme } from '../../../logic/theme';
 import { AttachableWrapper } from '../AttachableWrapper';
 import * as MdIcons from 'react-icons/md'; // Importamos todos los iconos de Material
 
 // ─── Props ───────────────────────────────────────────────────────
 
-type FlowStatus = 'idle' | 'running' | 'paused' | 'completed';
+// Reconciled with the canonical AgenticExecutionStatus (src/types/harness.ts)
+// instead of keeping its own drifted 4-value copy — states-polish.md §2:
+// "AttachableFlow.tsx defines its own local FlowStatus with a working Start
+// button for 'paused' — but harness-store.ts never sets the canonical status
+// to 'paused'. Two models of the same concept; one is fiction." Safe to do
+// here: AttachableContent.tsx is this component's only call site and it
+// never passes a `status` prop, so every render today already falls back to
+// the `= 'idle'` default below regardless of this type change. Kept as a
+// local alias (rather than importing AgenticExecutionStatus at every
+// reference below) so the rest of this file didn't need to change names.
+type FlowStatus = AgenticExecutionStatus;
 
 interface AttachableFlowProps {
   flow: MarketFlow;
@@ -295,12 +306,17 @@ export function AttachableFlow({
             {/* Controles de ejecución — visibles cuando no está idle (o al hacer hover, opcional) */}
             {status !== 'idle' && (
                 <div style={controlsRowStyle} data-testid="flow-controls" role="group" aria-label="Flow controls">
-                  {(status === 'paused' || status === 'completed') && (
+                  {/* 'error' joins paused/completed here — the canonical enum
+                      the old local FlowStatus didn't have. A stopped flow
+                      (however it stopped) must stay restartable; 'compiling'
+                      deliberately gets no Start/Pause below, only Stop —
+                      there's nothing to (re)start mid-compile. */}
+                  {(status === 'paused' || status === 'completed' || status === 'error') && (
                       <button
                           style={{ ...controlBtnBase, color: theme.success }}
                           onClick={onStart}
-                          aria-label="Start flow"
-                          title="Start"
+                          aria-label={status === 'error' ? 'Restart flow' : 'Start flow'}
+                          title={status === 'error' ? 'Restart' : 'Start'}
                       >
                         <MdIcons.MdPlayArrow />
                       </button>

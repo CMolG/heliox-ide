@@ -1,0 +1,24 @@
+{
+  "version": "1",
+  "id": "conformance-contract",
+  "name": "Conformance Contract",
+  "rootStepId": "step-a",
+  "steps": [
+    {
+      "id": "step-a",
+      "type": "llm_call",
+      "prompt": "Step A: draft the implementation plan.",
+      "dependsOn": [],
+      "tools": []
+    },
+    {
+      "id": "step-b",
+      "type": "llm_call",
+      "prompt": "Step B: implement the plan and write the required files.",
+      "dependsOn": ["step-a"],
+      "tools": [],
+      "contract": { "mustWriteFiles": true, "maxAttempts": 2 },
+      "model": "openai/gpt-4o-mini"
+    }
+  ]
+}

@@ -23,8 +23,8 @@ import { getHueFromHex, getMentalTextContrastColor, mentalHueToHex } from '../..
 import type { MentalShape } from '@/types/desktop';
 
 const MENTAL_COLOR_SWATCHES = [
-  '#EDE9FE', '#FBCFE8', '#FDE68A', '#86EFAC',
-  '#BFDBFE', '#F9A8D4', '#FDBA74', '#C4B5FD',
+  '#BFDBFE', '#EDE9FE', '#FBCFE8', '#FDE68A',
+  '#86EFAC', '#F9A8D4', '#FDBA74', '#C4B5FD',
 ];
 
 export interface MentalNodeData {
@@ -144,7 +144,13 @@ function getHandles(shape: MentalShape): HandlePosition[] {
 
 // ─── Node Component ──────────────────────────────────────────────
 
-export function MentalNode({ id, data }: NodeProps) {
+// No raw-array store subscription to narrow here (unlike StepNode/FrameNode)
+// — every selector below already resolves to a primitive or an action
+// reference. React.memo still pays off: MentalGraphCanvas's `rfNodes` memo
+// rebuilds every node's object on any selection change, and this bails the
+// inner render whenever this specific node's own `id`/`data`/`selected` are
+// unchanged (perf fix, 2026-07-05 canvas/inspector plan Phase 3).
+export const MentalNode = React.memo(function MentalNode({ id, data }: NodeProps) {
   const nodeData = data as unknown as MentalNodeData;
   const { text, color, width, height, shape = 'square' } = nodeData;
 
@@ -153,6 +159,7 @@ export function MentalNode({ id, data }: NodeProps) {
   const mentalTool = useDesktopStore((s) => s.mentalTool);
   const mentalEditingNodeId = useDesktopStore((s) => s.mentalEditingNodeId);
   const setMentalEditingNodeId = useDesktopStore((s) => s.setMentalEditingNodeId);
+  const bringMentalToFront = useDesktopStore((s) => s.bringMentalToFront);
 
   const [isColorModalOpen, setIsColorModalOpen] = useState(false);
   const [hue, setHue] = useState(() => getHueFromHex(color));
@@ -199,6 +206,7 @@ export function MentalNode({ id, data }: NodeProps) {
         data-testid={`mental-graph-node-${id}`}
         className={`mental-card mental-shape-${shape}`}
         style={{ width, height, position: 'relative' }}
+        onPointerDownCapture={() => bringMentalToFront(id)}
         onClick={() => {
           if (mentalTool === 'ramification') return;
           setMentalEditingNodeId(id);
@@ -362,4 +370,4 @@ export function MentalNode({ id, data }: NodeProps) {
       )}
     </>
   );
-}
+});

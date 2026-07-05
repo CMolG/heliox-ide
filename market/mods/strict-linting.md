@@ -15,4 +15,4 @@ When this modifier is active, the agent enforces the strictest possible linting 
 
 - Before committing any code change, the agent MUST run the full linting suite and verify zero warnings/errors.
 - If a linting rule conflicts with functionality, the agent must find a way to satisfy both — never disable the rule.
-- When modifying existing code that has pre-existing lint violations, the agent must fix those violations in the same commit.
+- When modifying existing code that has pre-existing lint violations, the agent must fix those violations in the same commit. If a change-minimization constraint (e.g. regression-sentinel, output-budget) is also active, fix only the violations on lines you already touch and report the rest instead of fixing them.

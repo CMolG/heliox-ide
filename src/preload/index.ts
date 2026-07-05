@@ -9,6 +9,20 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import type { Flow, RunAgentParams, AgentEvent, HelioxAPI } from '../types';
 import type { ContextMapNode, ContextMapEdge } from '../types/context-map';
+import type { AgenticFlow } from '../types/harness';
+import type {
+  HarnessEventPayload,
+  ListCheckpointsResponse,
+  ReplayFromResponse,
+  ScorecardRunOptions,
+  ScorecardProgressEvent,
+  ScorecardResult,
+  ArenaRunOptions,
+  ArenaProgressEvent,
+  ArenaResult,
+  ModelPolicy,
+} from '../types/ipc-events';
+import type { BrowserAction } from '../types/browser';
 
 const helioxAPI: HelioxAPI = {
   initBaselines: (flows: Flow[]) =>
@@ -16,6 +30,15 @@ const helioxAPI: HelioxAPI = {
 
   runAgent: (params: RunAgentParams) =>
     ipcRenderer.invoke('heliox:run-agent', params),
+
+  startHarness: (flow: AgenticFlow, options?: { modelPolicy?: ModelPolicy; modelId?: string }) =>
+    ipcRenderer.invoke('heliox:start-harness', flow, options),
+
+  exportFlow: (flow: AgenticFlow) =>
+    ipcRenderer.invoke('heliox:export-flow', flow),
+
+  assemblePipeline: (userIntent: string) =>
+    ipcRenderer.invoke('heliox:assemble-pipeline', userIntent),
 
   approveDiff: (diffId: string) =>
     ipcRenderer.invoke('heliox:approve-diff', diffId),
@@ -30,6 +53,12 @@ const helioxAPI: HelioxAPI = {
     const handler = (_event: IpcRendererEvent, data: AgentEvent) => callback(data);
     ipcRenderer.on('heliox:agent-event', handler);
     return () => { ipcRenderer.removeListener('heliox:agent-event', handler); };
+  },
+
+  onHarnessEvent: (callback: (event: HarnessEventPayload) => void) => {
+    const handler = (_event: IpcRendererEvent, data: HarnessEventPayload) => callback(data);
+    ipcRenderer.on('heliox:harness-event', handler);
+    return () => { ipcRenderer.removeListener('heliox:harness-event', handler); };
   },
 
   openFolderDialog: () =>
@@ -92,6 +121,32 @@ const helioxAPI: HelioxAPI = {
 
   invalidateModelsCache: () =>
     ipcRenderer.invoke('heliox:invalidate-models-cache'),
+
+  // ── OpenCode providers ──────────────────────────────────────────
+  opencodeListProviders: () =>
+    ipcRenderer.invoke('opencode:list-providers'),
+  opencodeListProviderModels: (providerId: string) =>
+    ipcRenderer.invoke('opencode:list-provider-models', providerId),
+  opencodeSaveCredential: (providerId: string, key: string) =>
+    ipcRenderer.invoke('opencode:save-credential', providerId, key),
+  opencodeRemoveCredential: (providerId: string) =>
+    ipcRenderer.invoke('opencode:remove-credential', providerId),
+  opencodeStatus: () =>
+    ipcRenderer.invoke('opencode:status'),
+
+  // ── Provider Connections (DBeaver-style, Phase 6) ───────────────
+  providerConnectionsList: () =>
+    ipcRenderer.invoke('provider-connections:list'),
+  providerConnectionsCreate: (input: import('../types/ipc-events').ProviderConnectionInput) =>
+    ipcRenderer.invoke('provider-connections:create', input),
+  providerConnectionsUpdate: (id: string, patch: import('../types/ipc-events').ProviderConnectionUpdate) =>
+    ipcRenderer.invoke('provider-connections:update', id, patch),
+  providerConnectionsDelete: (id: string) =>
+    ipcRenderer.invoke('provider-connections:delete', id),
+  providerConnectionsSetModelEnabled: (id: string, modelId: string, enabled: boolean) =>
+    ipcRenderer.invoke('provider-connections:set-model-enabled', id, modelId, enabled),
+  providerConnectionsTest: (request: import('../types/ipc-events').ConnectionTestRequest) =>
+    ipcRenderer.invoke('provider-connections:test', request),
 
   getConfigDir: (projectPath: string) =>
     ipcRenderer.invoke('heliox:get-config-dir', projectPath),
@@ -246,6 +301,106 @@ const helioxAPI: HelioxAPI = {
       ipcRenderer.removeListener('heliox:attachable-updated', handler);
     };
   },
+
+  // ── M1 Dev-server watcher ───────────────────────────────────────
+  // Renderer calls startDevServerWatch when a project opens; the main process
+  // polls candidate ports and pushes 'heliox:dev-server-detected' events back.
+
+  startDevServerWatch: (projectPath: string) =>
+    ipcRenderer.invoke('devserver:start-watch', projectPath),
+
+  stopDevServerWatch: () =>
+    ipcRenderer.invoke('devserver:stop-watch'),
+
+  onDevServerDetected: (callback: (payload: { url: string; port: number }) => void) => {
+    const handler = (_event: IpcRendererEvent, data: { url: string; port: number }) =>
+      callback(data);
+    ipcRenderer.on('heliox:dev-server-detected', handler);
+    return () => { ipcRenderer.removeListener('heliox:dev-server-detected', handler); };
+  },
+
+  // ── M2 Browser control (native CDP via webContents.debugger) ────────────
+  // All channels follow the {success, data?, error?} return convention.
+  // The `id` argument is the Electron webContentsId stored in the desktop store
+  // after the <webview> fires dom-ready (DesktopWindow.webContentsId).
+
+  browserAttach: (id: number) =>
+    ipcRenderer.invoke('browser:attach', id),
+
+  browserGoto: (id: number, url: string) =>
+    ipcRenderer.invoke('browser:goto', id, url),
+
+  browserObserve: (id: number) =>
+    ipcRenderer.invoke('browser:observe', id),
+
+  browserAct: (id: number, elementId: number, action: BrowserAction, value?: string) =>
+    ipcRenderer.invoke('browser:act', id, elementId, action, value),
+
+  browserExtractSeo: (id: number, url?: string) =>
+    ipcRenderer.invoke('browser:extract-seo', id, url),
+
+  browserDetach: (id: number) =>
+    ipcRenderer.invoke('browser:detach', id),
+
+  browserSetAgentSurface: (id: number | null) =>
+    ipcRenderer.invoke('browser:set-agent-surface', id),
+
+  // ── Arena leaderboard ───────────────────────────────────────────
+  // Reads the leaderboard JSON produced by `npm run pf:arena`.
+  // Returns { success, data } — data is [] when no run exists yet.
+  readArenaLeaderboard: (projectPath: string) =>
+    ipcRenderer.invoke('arena:read-leaderboard', projectPath),
+
+  // ── Time-travel checkpoints (ARCH-073) ─────────────────────────
+  // List all checkpoints for a run. Returns { success, data, error }.
+  listCheckpoints: (runId: string): Promise<ListCheckpointsResponse> =>
+    ipcRenderer.invoke('harness:list-checkpoints', runId),
+
+  // Fork a run from a checkpoint (optionally with an edited step output).
+  // Returns { success, data: { forkRunId, seededStepIds, isDeterministicReplay }, error }.
+  harnessReplayFrom: (
+    flow: import('../types/harness').AgenticFlow,
+    checkpointId: string,
+    editedOutput?: string,
+  ): Promise<ReplayFromResponse> =>
+    ipcRenderer.invoke('harness:replay-from', flow, checkpointId, editedOutput),
+
+  // ── Performance Frontier Scorecard + Arena (ARCH-079) ──────────────────────
+  // Invoke channels match ipc.ts exactly (pf:run-scorecard / pf:run-arena).
+  // Progress channels match the constants in ipc.ts (pf:scorecard-progress /
+  // pf:arena-progress). Each `on*` method returns an unsubscribe fn.
+
+  runScorecard: (opts?: ScorecardRunOptions): Promise<{ success: boolean; data?: ScorecardResult; error?: string }> =>
+    ipcRenderer.invoke('pf:run-scorecard', opts),
+
+  onScorecardProgress: (cb: (event: ScorecardProgressEvent) => void): () => void => {
+    const handler = (_event: IpcRendererEvent, data: ScorecardProgressEvent) => cb(data);
+    ipcRenderer.on('pf:scorecard-progress', handler);
+    return () => { ipcRenderer.removeListener('pf:scorecard-progress', handler); };
+  },
+
+  runArena: (opts?: ArenaRunOptions): Promise<{ success: boolean; data?: ArenaResult; error?: string }> =>
+    ipcRenderer.invoke('pf:run-arena', opts),
+
+  onArenaProgress: (cb: (event: ArenaProgressEvent) => void): () => void => {
+    const handler = (_event: IpcRendererEvent, data: ArenaProgressEvent) => cb(data);
+    ipcRenderer.on('pf:arena-progress', handler);
+    return () => { ipcRenderer.removeListener('pf:arena-progress', handler); };
+  },
+
+  // ── MCP command allowlist + consent (audit 1.4) ─────────────────
+  mcpListApprovedCommands: () =>
+    ipcRenderer.invoke('mcp:listApprovedCommands'),
+  mcpApproveCommand: (command: string, args?: string[]) =>
+    ipcRenderer.invoke('mcp:approveCommand', command, args ?? []),
+  mcpRevokeCommand: (command: string, args?: string[]) =>
+    ipcRenderer.invoke('mcp:revokeCommand', command, args ?? []),
+
+  // ── Anonymous opt-in telemetry (audit 1.8b) ──────────────────────
+  telemetryGetOptIn: () =>
+    ipcRenderer.invoke('telemetry:getOptIn'),
+  telemetrySetOptIn: (optIn: boolean) =>
+    ipcRenderer.invoke('telemetry:setOptIn', optIn),
 };
 
 // Menu events from main process

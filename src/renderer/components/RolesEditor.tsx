@@ -20,7 +20,7 @@ import { RoleIcon, ROLE_ICON_NAMES } from './ui/RoleIcon';
 import { theme } from '../logic/theme';
 import { HelioxDropdown } from './ui/HelioxDropdown';
 import { useAutoSave } from '@/renderer/logic/hooks/useAutoSave';
-const FALLBACK_MODELS = ['copilot'];
+const FALLBACK_MODELS = ['opencode/claude-sonnet-4-6'];
 
 const PRESET_ROLES: { name: string; icon: string; description: string; systemPrompt: string }[] = [
   {
@@ -57,7 +57,7 @@ export function RolesEditor() {
   const [formName, setFormName] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formSystemPrompt, setFormSystemPrompt] = useState('');
-  const [formModel, setFormModel] = useState('copilot');
+  const [formModel, setFormModel] = useState('opencode/claude-sonnet-4-6');
   const [formTemperature, setFormTemperature] = useState(0.3);
   const [formMaxTokens, setFormMaxTokens] = useState(4096);
   const [formIcon, setFormIcon] = useState('cpu');
@@ -75,7 +75,7 @@ export function RolesEditor() {
     setFormName('');
     setFormDescription('');
     setFormSystemPrompt('');
-    setFormModel('copilot');
+    setFormModel('opencode/claude-sonnet-4-6');
     setFormTemperature(0.3);
     setFormMaxTokens(4096);
     setFormIcon('cpu');
@@ -151,7 +151,7 @@ export function RolesEditor() {
       name: preset.name,
       description: preset.description,
       systemPrompt: preset.systemPrompt,
-      model: 'copilot',
+      model: 'opencode/claude-sonnet-4-6',
       temperature: 0.3,
       maxTokens: 4096,
       icon: preset.icon,

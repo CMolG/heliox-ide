@@ -17,6 +17,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useHelioxStore } from '../store';
 import { errMsg } from '@/types';
 import { theme } from '../logic/theme';
+import { HelioxLogo } from './brand/HelioxLogo';
 
 export function ProjectExplorer() {
   const { recentProjects, setProjectPath, addRecentProject } = useHelioxStore();
@@ -99,26 +100,13 @@ export function ProjectExplorer() {
       onDrop={handleDrop}
     >
       <div className="flex flex-col items-center gap-12 max-w-md w-full px-8">
-        {/* HeO₂ icon */}
+        {/* Heliox brand mark */}
         <div className="flex flex-col items-center gap-4">
-          <div
-            className="w-20 h-20 rounded-full flex items-center justify-center"
-            style={{
-              background: 'linear-gradient(135deg, rgba(214,211,209,0.08) 0%, rgba(63,63,70,0.08) 100%)',
-              outline: '1px solid rgba(214,211,209,0.08)',
-              outlineOffset: '-1px',
-            }}
-          >
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <circle cx="18" cy="18" r="6" fill="#525252" />
-              <circle cx="18" cy="18" r="12" stroke="#3f3f46" strokeWidth="1" strokeDasharray="4 3" />
-              <circle cx="18" cy="18" r="17" stroke="#27272a" strokeWidth="0.5" />
-            </svg>
-          </div>
+          <HelioxLogo size={76} />
           <div className="text-center">
             <h1
               className="text-2xl font-bold leading-8"
-              style={{ fontFamily: theme.fontGrotesk, color: theme.textSecondary }}
+              style={{ fontFamily: theme.fontDisplay, color: theme.textSecondary, letterSpacing: '0.02em' }}
             >
               Open a project
             </h1>

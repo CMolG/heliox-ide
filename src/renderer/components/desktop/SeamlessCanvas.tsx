@@ -14,14 +14,13 @@
  */
 // src/renderer/components/desktop/SeamlessCanvas.tsx — Main canvas with pan, zoom, multi-select, and drag-drop
 import React, { useCallback, useRef, useState, useEffect, createContext } from 'react';
-import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { DndContext, DragOverlay, PointerSensor, pointerWithin, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 import { useDesktopStore } from '../../store/desktop-store';
 import { DesktopWindow } from './DesktopWindow';
 import { DesktopAttachable, AttachableOverlayCard } from './DesktopAttachable';
 import { SnapGuides } from './SnapGuides';
 import { WindowConnections } from './WindowConnections';
-import { MentalConnectionsLayer } from './MentalConnectionsLayer';
 import { MentalGraphCanvas } from './mental/MentalGraphCanvas';
 import { Dock } from './Dock';
 import { TutorialEngine } from './tutorial/TutorialEngine';
@@ -33,21 +32,46 @@ import { FileViewerApp } from '@/renderer/components/atoms/apps/FileViewerApp';
 import { DiffViewerApp } from '@/renderer/components/atoms/apps/DiffViewerApp';
 import { BacklogKanbanWidget } from '@/renderer/components/atoms/widgets/BacklogKanbanWidget';
 import { PromptDevZoneApp } from '@/renderer/components/atoms/apps/PromptDevZoneApp';
-import { DesignSystemEditorApp } from '@/renderer/components/atoms/apps/DesignSystemEditorApp';
-import { NotificationCenterApp } from '@/renderer/components/atoms/apps/NotificationCenterApp';
-import { SessionStatusDock } from '@/renderer/components/atoms/plugins/SessionStatusDock';
+import { WebPreviewApp } from '@/renderer/components/atoms/apps/WebPreviewApp';
+import { ArenaDashboardApp } from '@/renderer/components/atoms/apps/ArenaDashboardApp';
+import { WidgetLauncher } from './hud/WidgetLauncher';
+import { HudWidgetLayer } from './hud/HudWidgetLayer';
 import { DesktopCanvasBg } from './DesktopCanvasBg';
 import { BacklogCardModal } from './BacklogCardModal';
 import { CanvasContextMenu } from './CanvasContextMenu';
-import { DesktopGridComponent } from './DesktopGridComponent';
+import type { MarketMod, MarketRole } from '@/types/market';
 
 /** Canvas container dimensions — consumed by DesktopWindow for maximized viewport calc */
 export const CanvasSizeContext = createContext<{ width: number; height: number }>({ width: 1200, height: 800 });
 
+interface DraggedAtomData {
+  type?: string;
+  name?: string;
+  mod?: MarketMod;
+  role?: MarketRole;
+}
+
+function isStepNodeDropTarget(overId: string): boolean {
+  return useDesktopStore.getState().mentalNodes.some((node) => node.id === overId && node.type === 'step');
+}
+
+function resolveDraggedMod(data: DraggedAtomData): MarketMod | null {
+  if (data.type !== 'mod') return null;
+  if (data.mod) return data.mod;
+  if (!data.name) return null;
+  return useDesktopStore.getState().marketInventory?.mods.find((mod) => mod.name === data.name) ?? null;
+}
+
+function resolveDraggedRole(data: DraggedAtomData): MarketRole | null {
+  if (data.type !== 'role') return null;
+  if (data.role) return data.role;
+  if (!data.name) return null;
+  return useDesktopStore.getState().marketInventory?.roles.find((role) => role.name === data.name) ?? null;
+}
+
 export function SeamlessCanvas() {
   const windows = useDesktopStore(s => s.windows);
   const attachables = useDesktopStore(s => s.attachables);
-  const grids = useDesktopStore(s => s.grids);
   const canvasPan = useDesktopStore(s => s.canvasPan);
   const setCanvasPan = useDesktopStore(s => s.setCanvasPan);
   const canvasZoom = useDesktopStore(s => s.canvasZoom);
@@ -78,6 +102,24 @@ export function SeamlessCanvas() {
     setActiveDragId(null);
 
     const attachableId = active.id as string;
+
+    if (over && isStepNodeDropTarget(String(over.id))) {
+      const stepId = String(over.id);
+      const data = (active.data.current ?? {}) as DraggedAtomData;
+      const mod = resolveDraggedMod(data);
+      if (mod) {
+        useDesktopStore.getState().addModToStep(stepId, mod);
+        return;
+      }
+
+      const role = resolveDraggedRole(data);
+      if (role) {
+        useDesktopStore.getState().addRoleToStep(stepId, role);
+        return;
+      }
+
+      return;
+    }
 
     // Dropped on a window drop zone?
     if (over && (over.id as string).startsWith('window-drop-')) {
@@ -235,7 +277,7 @@ export function SeamlessCanvas() {
           width: shapeWidth,
           height: shapeHeight,
           text: '',
-          color: '#EDE9FE',
+          color: '#BFDBFE',
           shape: activeShape,
         });
         store.setMentalEditingNodeId(nodeId);
@@ -307,7 +349,7 @@ export function SeamlessCanvas() {
       width: 220,
       height: 120,
       text: '',
-      color: '#EDE9FE',
+      color: '#BFDBFE',
       shape: 'square',
     });
     setMentalEditingNodeId(nodeId);
@@ -350,11 +392,8 @@ export function SeamlessCanvas() {
         break;
       }
       case 'mental-draw-toggle': {
-        store.setMentalMode('square');
-        break;
-      }
-      case 'mental-square-mode': {
-        store.setMentalMode('square');
+        const current = store.mentalMode;
+        store.setMentalMode(current === 'off' ? 'square' : 'off');
         break;
       }
       case 'mental-select-tool': {
@@ -370,13 +409,9 @@ export function SeamlessCanvas() {
         break;
       }
       case 'prompt-dev-zone': {
-        store.addWindow('prompt-dev-zone', { title: 'Prompt Dev Zone', position: { x: cx, y: cy }, size: { width: 720, height: 520 } });
-        break;
-      }
-      case 'design-system-editor': {
-        const existing = store.windows.find(w => w.type === 'design-system-editor');
-        if (existing) { store.navigateToWindow(existing.id); break; }
-        store.addWindow('design-system-editor', { title: 'Design System Editor', iconName: 'Palette', position: { x: cx, y: cy }, size: { width: 860, height: 640 } });
+        if (import.meta.env.DEV) {
+          store.addWindow('prompt-dev-zone', { title: 'Prompt Dev Zone', position: { x: cx, y: cy }, size: { width: 720, height: 520 } });
+        }
         break;
       }
       case 'arrange': {
@@ -399,10 +434,6 @@ export function SeamlessCanvas() {
       case 'reset-view': {
         store.setCanvasPan({ x: 0, y: 0 });
         store.setCanvasZoom(1);
-        break;
-      }
-      case 'grid': {
-        store.addGrid({ position: { x: cx, y: cy } });
         break;
       }
     }
@@ -443,8 +474,14 @@ export function SeamlessCanvas() {
     if (win.type === 'file-viewer' && win.filePath) return <FileViewerApp windowId={win.id} filePath={win.filePath} />;
     if (win.type === 'diff-viewer') return <DiffViewerApp windowId={win.id} sessionId={win.sessionId} />;
     if (win.type === 'backlog') return <BacklogKanbanWidget windowId={win.id} />;
-    if (win.type === 'prompt-dev-zone') return <PromptDevZoneApp windowId={win.id} />;
-    if (win.type === 'design-system-editor') return <DesignSystemEditorApp windowId={win.id} />;
+    if (win.type === 'prompt-dev-zone') {
+      if (!import.meta.env.DEV) return null;
+      return <PromptDevZoneApp windowId={win.id} />;
+    }
+    // M1 — embedded preview webview; url is guaranteed present when type === 'web-preview'
+    if (win.type === 'web-preview' && win.url) return <WebPreviewApp windowId={win.id} url={win.url} />;
+    // Arena leaderboard dashboard
+    if (win.type === 'arena') return <ArenaDashboardApp windowId={win.id} />;
     return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#525252', fontSize: 13 }}>Empty window</div>;
   };
 
@@ -459,7 +496,17 @@ export function SeamlessCanvas() {
 
   return (
     <CanvasSizeContext.Provider value={canvasSize}>
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    {/* collisionDetection=pointerWithin (not the dnd-kit default rectIntersection):
+        rectIntersection ranks droppables by raw overlap AREA between the dragged
+        card's bounding box and each candidate's rect. Pipeline steps commonly sit
+        adjacent to each other, and a user rarely grabs a Role/Mod card from its
+        exact center — with an off-center grab, the card's translated rect can
+        overlap a NEIGHBORING step more than the one the cursor is actually over,
+        so rectIntersection silently attaches to (or fails to attach to) the wrong
+        step. pointerWithin instead requires the pointer's own coordinate to fall
+        inside the target's rect, matching what the user visually did. See
+        StepNode.dnd.test.tsx's "precision regression" cases for a reproduction. */}
+    <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div
         ref={containerRef}
         className="heliox-desktop desktop-canvas"
@@ -479,45 +526,59 @@ export function SeamlessCanvas() {
         {/* Interactive shape-grid background */}
         <DesktopCanvasBg />
 
-        {/* Pannable canvas layer — camera transform (translate + scale). */}
+        {/* Pannable canvas layer — camera transform (translate + optional scale).
+            At canvasZoom === 1 only an integer translate is applied (no scale()),
+            keeping text on the pixel grid for native subpixel anti-aliasing.
+            Scale() is only added when zoomed so we never promote a GPU layer
+            unnecessarily at 100% zoom.
+            z-index 1: connections and attachables render BEHIND the unified
+            windows+mental layer (hosted inside the React Flow viewport at z 2). */}
         <div
           className="desktop-pan-layer"
           data-zooming={isZooming || undefined}
           style={{
-            transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`,
+            transform: (() => {
+              const z = canvasZoom;
+              const tx = z === 1 ? Math.round(canvasPan.x) : canvasPan.x;
+              const ty = z === 1 ? Math.round(canvasPan.y) : canvasPan.y;
+              return z === 1
+                ? `translate(${tx}px, ${ty}px)`
+                : `translate(${tx}px, ${ty}px) scale(${z})`;
+            })(),
             transformOrigin: '0 0',
             position: 'absolute',
             inset: 0,
             pointerEvents: 'none',
+            zIndex: 1,
           }}
         >
           {/* Connection arrows layer */}
           <WindowConnections />
-          <MentalConnectionsLayer />
 
-          {/* Snap guide overlay */}
-          <SnapGuides />
-
-          {/* Desktop Attachables (non-mental draggable market items) */}
-          {attachables.filter(att => att.type !== 'mental').map(att => (
+          {/* Desktop Attachables (role / mod / flow) */}
+          {attachables.map(att => (
             <DesktopAttachable key={att.id} attachable={att} />
-          ))}
-
-          {/* Desktop Grids (top-level layout containers) */}
-          {grids.map(grid => (
-            <DesktopGridComponent key={grid.id} grid={grid} />
-          ))}
-
-          {/* All windows rendered in one map for stable keys (state preserved across minimize/maximize) */}
-          {windows.map(win => (
-            <DesktopWindow key={win.id} windowId={win.id}>
-              {renderWindowContent(win)}
-            </DesktopWindow>
           ))}
         </div>
 
-        {/* Mental Graph canvas (React Flow surface — manages its own pan/zoom) */}
-        <MentalGraphCanvas />
+        {/* Mental Graph canvas (React Flow surface — manages its own pan/zoom).
+            Windows and SnapGuides are passed as viewportChildren so they render
+            inside React Flow's transformed viewport (.react-flow__viewport) at
+            the same coordinate space as mental nodes. The React Flow viewport
+            applies the same translate+scale that the pan-layer uses, driven by
+            canvasPan/canvasZoom from the store, so window positions align. */}
+        <MentalGraphCanvas
+          viewportChildren={
+            <>
+              {windows.map(win => (
+                <DesktopWindow key={win.id} windowId={win.id}>
+                  {renderWindowContent(win)}
+                </DesktopWindow>
+              ))}
+              <SnapGuides />
+            </>
+          }
+        />
 
         {/* Rubber-band selection rectangle */}
         {!hasMaximizedWindow && selectionBox && selectionBox.width > 5 && (
@@ -542,8 +603,8 @@ export function SeamlessCanvas() {
               top: Math.min(mentalDrawRect.startY, mentalDrawRect.endY),
               width: Math.abs(mentalDrawRect.endX - mentalDrawRect.startX),
               height: Math.abs(mentalDrawRect.endY - mentalDrawRect.startY),
-              borderColor: 'rgba(167, 139, 250, 0.85)',
-              background: 'rgba(167, 139, 250, 0.12)',
+              borderColor: 'rgba(77, 168, 255, 0.85)',
+              background: 'rgba(77, 168, 255, 0.12)',
             }}
           />
         )}
@@ -574,14 +635,14 @@ export function SeamlessCanvas() {
         {/* Dock (fixed, not affected by pan/zoom) — includes attachables */}
         <Dock />
 
-        {/* Session status dock — vertical left side */}
-        <SessionStatusDock />
-
         {/* Marketplace overlay */}
         <MarketplaceApp />
 
-        {/* Notification center */}
-        <NotificationCenterApp />
+        {/* HUD widget layer — screen-fixed, sits above canvas, below modals */}
+        <HudWidgetLayer />
+
+        {/* Widget launcher (replaces standalone notification bell) */}
+        <WidgetLauncher />
 
         {/* Canvas-level backlog card modal */}
         <BacklogCardModal />

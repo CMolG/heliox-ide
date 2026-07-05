@@ -1,0 +1,6 @@
+{
+  "step-a": ["A output"],
+  "step-b1": ["B1 pass 1", "B1 pass 2", "B1 pass 3"],
+  "step-b2": ["B2 pass 1", "B2 pass 2", "B2 pass 3"],
+  "step-c": ["C output"]
+}

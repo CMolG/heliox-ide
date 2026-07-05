@@ -1,0 +1,7 @@
+[
+  { "stepId": "step-a", "output": "Result of step A" },
+  { "stepId": "step-b", "output": "Result of step B" },
+  { "stepId": "step-c", "output": "Result of step C" },
+  { "stepId": "step-d", "output": "Result of step D" },
+  { "stepId": "step-e", "output": "Result: HELLO CONFORMANCE" }
+]

@@ -2,17 +2,18 @@
  * DesktopAttachable.tsx — Renderer Desktop Surface Component
  *
  * Responsibility:
- * - Renders the DesktopAttachable surface in the renderer layer.
- * - Encapsulates Desktop canvas/window composition within the renderer workspace.
+ * - Renders a draggable canvas item for the AttachableType variants
+ *   (role / mod / flow).
  *
  * Boundaries:
  * - Owns: component-level rendering, styling, and local interaction wiring
- * - Does NOT own: cross-feature domain policy, persistence, IPC transport, or main-process orchestration
+ * - Does NOT own: cross-feature domain policy, persistence, IPC transport,
+ *   or main-process orchestration. Mental nodes are NOT attachables — they
+ *   live in the xyflow surface (see mental/MentalGraphCanvas).
  *
  * Architectural role:
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
-// src/renderer/components/desktop/DesktopAttachable.tsx — Draggable canvas item delegating to atom components
 import React, { useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { useDesktopStore } from '../../store/desktop-store';
@@ -32,8 +33,7 @@ export const TYPE_META: Record<AttachableType, { color: string; icon: string; la
   role: { color: '#E87040', icon: 'User', label: 'Role' },
   mod: { color: '#4285F4', icon: 'Wrench', label: 'Mod' },
   flow: { color: '#A78BFA', icon: 'Route', label: 'Flow' },
-  'design-system': { color: '#10B981', icon: 'Palette', label: 'Design System' },
-  mental: { color: '#A78BFA', icon: 'Shapes', label: 'Mental' },
+  step: { color: '#2BB673', icon: 'ListChecks', label: 'Step' },
 };
 
 // ─── Component ──────────────────────────────────────────────────
@@ -45,13 +45,8 @@ interface Props {
 export function DesktopAttachable({ attachable }: Props) {
   const removeAttachable = useDesktopStore(s => s.removeAttachable);
   const marketInventory = useDesktopStore(s => s.marketInventory);
-  const mentalMode = useDesktopStore(s => s.mentalMode);
-  const setMentalLineSourceId = useDesktopStore(s => s.setMentalLineSourceId);
-  const addMentalConnection = useDesktopStore(s => s.addMentalConnection);
-  const mentalLineSourceId = useDesktopStore(s => s.mentalLineSourceId);
 
   const [hovered, setHovered] = useState(false);
-  const [mentalContextMenu, setMentalContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: attachable.id,
@@ -64,11 +59,9 @@ export function DesktopAttachable({ attachable }: Props) {
 
   const marketItem = resolveMarketItem(attachable, marketInventory);
   const displayName = kebabToTitle(attachable.name);
-  const isMental = attachable.type === 'mental';
-  const isMentalLineSource = isMental && mentalMode === 'lines' && mentalLineSourceId === attachable.id;
 
   // Width varies by type: flows are wider (richer content + badges)
-  const cardWidth = attachable.type === 'flow' ? 280 : (attachable.type === 'mental' ? (attachable.mental?.width ?? 220) : 220);
+  const cardWidth = attachable.type === 'flow' ? 280 : 220;
 
   const containerStyle: React.CSSProperties = {
     position: 'absolute',
@@ -100,110 +93,31 @@ export function DesktopAttachable({ attachable }: Props) {
     zIndex: 2,
   };
 
-  const shouldBlockMentalDragFromTarget = (target: EventTarget | null): boolean => {
-    if (!(target instanceof HTMLElement)) return false;
-    const noDragElement = target.closest('[data-mental-no-drag="true"]');
-    if (!noDragElement) return false;
-    return true;
-  };
-
   return (
     <div
       ref={setNodeRef}
       style={containerStyle}
       data-testid={`desktop-attachable-${attachable.type}-${attachable.name}`}
       data-attachable-id={attachable.id}
-      data-mental-line-source={isMentalLineSource || undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onContextMenu={(e) => {
-        if (!isMental) return;
-        e.preventDefault();
-        e.stopPropagation();
-        setMentalContextMenu({ x: e.clientX, y: e.clientY });
-      }}
-      onClick={(e) => {
-        if (!isMental || mentalMode !== 'lines') return;
-        if (mentalContextMenu) return;
-        e.stopPropagation();
-        if (mentalLineSourceId === null) {
-          setMentalLineSourceId(attachable.id);
-          return;
-        }
-        if (mentalLineSourceId === attachable.id) return;
-        const created = addMentalConnection(mentalLineSourceId, attachable.id);
-        if (created) {
-          setMentalLineSourceId(null);
-        }
-      }}
-      onPointerDownCapture={(e) => {
-        if (!isMental || mentalMode !== 'shapes') return;
-        if (shouldBlockMentalDragFromTarget(e.target)) {
-          e.stopPropagation();
-        }
-      }}
-      {...(isMental && mentalMode === 'lines' ? {} : listeners)}
-      {...(isMental && mentalMode === 'lines' ? {} : attributes)}
+      {...listeners}
+      {...attributes}
     >
       <div style={{ position: 'relative' }}>
-        {/* Close button (all non-mental attachables) */}
-        {!isMental && (
-          <button
-            style={closeStyle}
-            onClick={(e) => { e.stopPropagation(); removeAttachable(attachable.id); }}
-            onPointerDown={(e) => e.stopPropagation()}
-            aria-label={`Remove ${displayName} attachable`}
-            data-testid={`attachable-close-${attachable.id}`}
-          >
-            <LucideIcon name="X" size={10} />
-          </button>
-        )}
+        <button
+          style={closeStyle}
+          onClick={(e) => { e.stopPropagation(); removeAttachable(attachable.id); }}
+          onPointerDown={(e) => e.stopPropagation()}
+          aria-label={`Remove ${displayName} attachable`}
+          data-testid={`attachable-close-${attachable.id}`}
+        >
+          <LucideIcon name="X" size={10} />
+        </button>
 
         {/* Delegate to the type-specific atom component */}
         <AttachableContent attachable={attachable} marketItem={marketItem} />
       </div>
-      {isMental && mentalContextMenu && (
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 10002 }}
-          onClick={() => setMentalContextMenu(null)}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              left: mentalContextMenu.x,
-              top: mentalContextMenu.y,
-              minWidth: 130,
-              padding: 6,
-              borderRadius: 8,
-              background: 'rgba(20, 20, 20, 0.95)',
-              border: '1px solid rgba(255, 255, 255, 0.14)',
-              boxShadow: '0 8px 20px rgba(0,0,0,0.35)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              style={{
-                width: '100%',
-                border: 'none',
-                borderRadius: 6,
-                background: 'transparent',
-                color: '#f4f4f5',
-                fontSize: 12,
-                textAlign: 'left',
-                padding: '6px 8px',
-              }}
-              onClick={() => {
-                removeAttachable(attachable.id);
-                setMentalContextMenu(null);
-              }}
-              data-testid={`mental-card-delete-${attachable.id}`}
-            >
-              Delete card
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

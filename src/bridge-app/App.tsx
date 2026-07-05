@@ -42,13 +42,12 @@ export function App() {
   const [sessionMessages, setSessionMessages] = useState<SessionMessage[]>([]);
   const [stateInfo, setStateInfo] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
+  const [autoPairing, setAutoPairing] = useState(false);
 
-  // Auto-fill PIN from URL
-  const urlPin = new URLSearchParams(location.search).get('pin') ?? '';
-
-  // WebSocket connection
+  // WebSocket connection — token rides as a subprotocol, never a query string.
   const { connected, lastMessage, sendCommand } = useWebSocket(
-    token ? `${API.replace('http', 'ws')}/?token=${token}` : null
+    token ? `${API.replace('http', 'ws')}/` : null,
+    token ?? undefined
   );
 
   // Handle incoming WebSocket messages
@@ -102,25 +101,46 @@ export function App() {
     } catch { /* ignore */ }
   }, [token]);
 
-  // Auth handler
-  const handleAuth = useCallback(async (pin: string) => {
+  // Auth handler — exchanges a pairing token (QR) or PIN (manual) for a
+  // session token. Always a POST body, never a query string, for either credential.
+  const authenticate = useCallback(async (credentials: { pin?: string; pairingToken?: string }) => {
     setError(null);
     try {
       const res = await fetch(`${API}/bridge/auth`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin, deviceName: navigator.userAgent.slice(0, 40) }),
+        body: JSON.stringify({ ...credentials, deviceName: navigator.userAgent.slice(0, 40) }),
       });
       const data = await res.json();
       if (data.success && data.token) {
         setToken(data.token);
         setScreen('sessions');
-      } else {
-        setError(data.error || 'Authentication failed');
+        return true;
       }
+      setError(data.error || 'Authentication failed');
+      return false;
     } catch {
       setError('Connection failed — check WiFi');
+      return false;
     }
+  }, []);
+
+  const handleAuth = useCallback((pin: string) => authenticate({ pin }), [authenticate]);
+
+  // Auto-pairing from the QR: the pairing token lives in the URL fragment
+  // (never the query string — fragments never reach the server), read once
+  // client-side and exchanged immediately. The fragment is scrubbed from the
+  // visible URL/history right away so the one-time secret doesn't linger
+  // in browser chrome after it's been consumed.
+  useEffect(() => {
+    const match = /(?:^|&)pt=([^&]+)/.exec(location.hash.slice(1));
+    if (!match) return;
+    const pairingToken = decodeURIComponent(match[1]);
+    history.replaceState(null, '', location.pathname + location.search);
+    setAutoPairing(true);
+    authenticate({ pairingToken }).finally(() => setAutoPairing(false));
+    // Runs once on mount — reading the fragment a QR scan lands with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load sessions when authenticated
@@ -202,7 +222,7 @@ export function App() {
     <div className="bridge-app">
       {screen === 'connect' && (
         <ConnectScreen
-          defaultPin={urlPin}
+          pairing={autoPairing}
           error={error}
           onConnect={handleAuth}
         />

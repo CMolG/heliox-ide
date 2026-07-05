@@ -13,7 +13,7 @@
  * - Orchestration component in the renderer process.
  */
 // src/renderer/App.tsx — Main Heliox IDE React component
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useRef } from 'react';
 import { TopBar } from './components/TopBar';
 import { ProjectExplorer } from './components/ProjectExplorer';
 import { ToastContainer } from './components/ui/ToastContainer';
@@ -23,8 +23,11 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { SeamlessCanvas } from './components/desktop/SeamlessCanvas';
 import { SideBar } from './components/SideBar';
 import { ExpandSideBarButton } from './components/ExpandSideBarButton';
+import { InspectorPanel } from './components/inspector/InspectorPanel';
+import { ExpandInspectorButton } from './components/ExpandInspectorButton';
 import { useHelioxStore } from './store';
 import { useDesktopStore } from './store/desktop-store';
+import { useHarnessStore, lastLogMessage } from './store/harness-store';
 import { useAgentEvents } from '@/renderer/logic/hooks/useAgentEvents';
 import { applyCliTheme } from './logic/theme';
 
@@ -42,6 +45,11 @@ export function App() {
   const addWindow = useDesktopStore(s => s.addWindow);
   const setShowMarketplace = useDesktopStore(s => s.setShowMarketplace);
   const setMarketInventory = useDesktopStore(s => s.setMarketInventory);
+  // `!== false` (not truthy) so pre-Phase-8 persisted stores — which lack
+  // `showInspector` entirely — still default to shown (see the field's doc
+  // comment in desktop-store.ts).
+  const settings = useDesktopStore(s => s.settings);
+  const showInspector = settings.showInspector !== false;
 
   // Expose stores on window for E2E testing
   useEffect(() => {
@@ -78,7 +86,7 @@ export function App() {
       addSession();
     }
 
-    // Load available models from copilot CLI
+    // Load available models from opencode (provider/model format)
     window.helioxAPI.listModels().then((models) => {
       if (models && models.length > 0) setAvailableModels(models);
     }).catch(() => {
@@ -86,15 +94,21 @@ export function App() {
     });
   }, [projectPath, addSession, setAvailableModels]);
 
-  // Onboarding sequence on first project open
+  // Onboarding sequence on first project open. Trimmed from 5 toasts to 3:
+  // dropped "Define E2E flows in the Flows tab" and "Create custom roles in
+  // the Roles tab" — those tabs don't exist anymore (Roles/Mods/Flows moved
+  // into the Marketplace + attachable Dock; see market/*/AGENTS.md). Stale
+  // copy taught a wrong model of the UI. The remaining three still hold up:
+  // "chat panel" is the same term HelpSectionContent.tsx still uses today,
+  // and the ⌘K/⌘O/⌘N shortcuts are the real ones wired in
+  // handleGlobalKeyDown below. (docs/competitive-analysis/experiment/ux-run/
+  // 02-onboarding-disclosure.md §4)
   useEffect(() => {
     if (!projectPath || appSettings.onboardingDone) return;
     const tips = [
       { delay: 500, msg: 'Welcome to Heliox IDE — your AI agent workspace' },
       { delay: 2500, msg: 'Type in the chat panel to start an agent session' },
-      { delay: 4500, msg: 'Define E2E flows in the Flows tab for validation' },
-      { delay: 6500, msg: 'Create custom roles in the Roles tab' },
-      { delay: 8500, msg: '⌘K to focus chat · ⌘O to open project · ⌘N new session' },
+      { delay: 4500, msg: '⌘K to focus chat · ⌘O to open project · ⌘N new session' },
     ];
     const timers = tips.map(({ delay, msg }) =>
       setTimeout(() => addToast(msg, 'info'), delay)
@@ -103,25 +117,48 @@ export function App() {
     return () => timers.forEach(clearTimeout);
   }, [projectPath, appSettings.onboardingDone, addToast, updateAppSettings]);
 
+  // Surface the harness execution error state via the existing toast system.
+  // harness-store.ts's executeFlow sets `executionStatus: 'error'` on every
+  // flow-start failure (missing IPC bridge, a start failure the main process
+  // reports, a thrown exception), and compileCurrentCanvas/runStep/
+  // runFromStep do the same for their own failures — but until now nothing
+  // ever read it: no toast, no red state, nothing (docs/competitive-analysis/
+  // experiment/ux-run/06-states-polish.md §1, §4). This reuses the same
+  // addToast(msg, 'error') call already used elsewhere in this file (CLI
+  // check below) and in useAgentEvents.ts, instead of inventing a new
+  // notification system.
+  //
+  // Edge-triggered off prevExecutionStatusRef (was !== 'error', now ===
+  // 'error') rather than level-triggered on executionStatus alone, so:
+  //  - a run that fails on several steps (each StepStatusChanged keeps
+  //    executionStatus at the same 'error' string) raises exactly one toast;
+  //  - a second, independent failure after a successful retry (which passes
+  //    back through 'compiling'/'running' first) still raises its own toast;
+  //  - the clean compiling → running → completed happy path never toasts.
+  // Not gated on `projectPath` — harness-store is a project-agnostic
+  // singleton (see its own file header), so this stays a global safety net.
+  const executionStatus = useHarnessStore((s) => s.executionStatus);
+  const prevExecutionStatusRef = useRef(executionStatus);
+  useEffect(() => {
+    const prevStatus = prevExecutionStatusRef.current;
+    prevExecutionStatusRef.current = executionStatus;
+    if (executionStatus !== 'error' || prevStatus === 'error') return;
+    const detail = lastLogMessage(useHarnessStore.getState().executionLogs);
+    addToast(detail ? `Flow execution failed: ${detail}` : 'Flow execution failed.', 'error');
+  }, [executionStatus, addToast]);
+
   // Check CLI availability when project opens
   useEffect(() => {
     if (!projectPath || !window.helioxAPI) return;
 
     window.helioxAPI.checkCli().then((status) => {
-      if (!status.copilotInstalled && !status.ghInstalled) {
+      if (!status.opencodeInstalled) {
         addLogEntry({
           timestamp: Date.now(),
           level: 'warn',
-          message: 'GitHub CLI (gh) not found. Install it: https://cli.github.com/',
+          message: 'opencode CLI not found. Install it: https://opencode.ai/docs/installation',
         });
-        addToast('GitHub CLI not installed — agent commands will fail', 'error');
-      } else if (!status.ghCopilotInstalled) {
-        addLogEntry({
-          timestamp: Date.now(),
-          level: 'warn',
-          message: 'GitHub Copilot CLI extension not found. Install: gh extension install github/gh-copilot',
-        });
-        addToast('Copilot CLI extension missing — run: gh extension install github/gh-copilot', 'error');
+        addToast('opencode CLI not installed — agent commands will fail', 'error');
       }
       if (!status.gitInstalled) {
         addLogEntry({
@@ -133,7 +170,7 @@ export function App() {
       addLogEntry({
         timestamp: Date.now(),
         level: 'info',
-        message: `CLI status: copilot=${status.copilotInstalled ? '✓' : '✗'} gh=${status.ghInstalled ? '✓' : '✗'} copilot-ext=${status.ghCopilotInstalled ? '✓' : '✗'} git=${status.gitInstalled ? '✓' : '✗'} node=${status.nodeInstalled ? '✓' : '✗'}`,
+        message: `CLI status: opencode=${status.opencodeInstalled ? `✓ ${status.opencodeVersion ?? ''}` : '✗'} git=${status.gitInstalled ? '✓' : '✗'} node=${status.nodeInstalled ? '✓' : '✗'}`,
       });
     }).catch(() => {
       // Non-critical — silently ignore check failures
@@ -193,6 +230,34 @@ export function App() {
     return () => window.removeEventListener('heliox:switch-project', handler);
   }, [openProjects, projectPath, setProjectPath]);
 
+  // M1 — Start/stop dev-server polling whenever the active project changes.
+  // The main process polls candidate ports and pushes 'heliox:dev-server-detected'
+  // events; the companion effect below subscribes to those events.
+  useEffect(() => {
+    if (!projectPath || !window.helioxAPI) return;
+    window.helioxAPI.startDevServerWatch(projectPath).catch(() => {/* non-critical */});
+    return () => {
+      window.helioxAPI?.stopDevServerWatch().catch(() => {/* non-critical */});
+    };
+  }, [projectPath]);
+
+  // M1 — Auto-open a web-preview window when a new dev server is detected.
+  // Deduplication: if a 'web-preview' window is already bound to the same port
+  // we skip spawning a second one (idempotent across React re-renders and hot
+  // reloads that restart the dev server on the same port).
+  useEffect(() => {
+    if (!window.helioxAPI) return;
+    const unsub = window.helioxAPI.onDevServerDetected(({ url, port }) => {
+      const existing = useDesktopStore.getState().windows;
+      const alreadyOpen = existing.some(
+        w => w.type === 'web-preview' && w.boundPort === port,
+      );
+      if (alreadyOpen) return;
+      addWindow('web-preview', { url, boundPort: port });
+    });
+    return unsub;
+  }, [addWindow]);
+
   // Global keyboard shortcuts
   const handleGlobalKeyDown = useCallback((e: KeyboardEvent) => {
     const isMeta = e.metaKey || e.ctrlKey;
@@ -234,6 +299,17 @@ export function App() {
     if (isMeta && e.key === 'b' && !isInput) {
       e.preventDefault();
       toggleSidebar();
+      return;
+    }
+
+    // Cmd+. — toggle right-side inspector column. Reads/writes desktop-store
+    // via .getState() (like the other desktop-store branches in this
+    // handler) rather than the `settings` hook value above, so this
+    // callback's dependency array doesn't need to change.
+    if (isMeta && e.key === '.' && !isInput) {
+      e.preventDefault();
+      const dState = useDesktopStore.getState();
+      dState.updateSettings({ showInspector: !(dState.settings.showInspector !== false) });
       return;
     }
 
@@ -319,6 +395,7 @@ export function App() {
     <div
       className="heliox-layout overflow-hidden"
       data-sidebar={showSidebar}
+      data-inspector={showInspector}
       role="application"
       aria-label="Heliox IDE"
     >
@@ -343,6 +420,21 @@ export function App() {
           <SeamlessCanvas />
         </ErrorBoundary>
       </main>
+      <div
+        className="heliox-inspector overflow-hidden transition-all duration-200"
+        style={{
+          width: showInspector ? '300px' : '0px',
+          minWidth: showInspector ? '300px' : '0px',
+          opacity: showInspector ? 1 : 0,
+        }}
+      >
+        {showInspector && (
+          <ErrorBoundary fallbackLabel="Inspector">
+            <InspectorPanel />
+          </ErrorBoundary>
+        )}
+      </div>
+      {!showInspector && <ExpandInspectorButton />}
       <ToastContainer />
       <SettingsModal />
       <HelpModal />

@@ -18,6 +18,7 @@
 import { test, expect, type Page, type ElectronApplication } from '@playwright/test';
 import { _electron as electron } from 'playwright';
 import path from 'path';
+import { getElectronLaunchArgs, getE2EEnv } from './test-helpers';
 
 let app: ElectronApplication;
 let page: Page;
@@ -26,14 +27,9 @@ let page: Page;
 
 test.beforeAll(async () => {
   app = await electron.launch({
-    args: [path.join(__dirname, '..')],
+    args: getElectronLaunchArgs(),
     cwd: path.join(__dirname, '..'),
-    env: {
-      ...process.env,
-      NODE_ENV: 'development',
-      ELECTRON_IS_DEV: '1',
-      HELIOX_MODELS: 'copilot',
-    },
+    env: getE2EEnv(),
     timeout: 30_000,
   });
 
@@ -163,17 +159,20 @@ test.describe('Mental map canvas visibility', () => {
     await expect(canvas).toBeVisible({ timeout: 5_000 });
   });
 
-  test('React Flow canvas is NOT rendered in off mode', async () => {
+  test('React Flow canvas is ALWAYS rendered (visible even in off mode)', async () => {
+    // The canvas container is unconditionally mounted — it is always in the DOM.
+    // "off" mode disables DRAWING TOOLS (crosshair cursor, draw-on-mousedown) but
+    // does NOT unmount or hide the canvas. Mental cards persist regardless of mode.
     await page.evaluate(() => {
       const s = (window as any).__DESKTOP_STORE__?.getState();
-      // Clear all nodes so canvas has no reason to render
+      // Clear all nodes — canvas should still be visible even with no nodes
       for (const n of [...(s?.mentalNodes ?? [])]) s?.removeMentalNode(n.id);
       s?.setMentalMode('off');
     });
     await page.waitForTimeout(200);
 
     const canvas = page.locator('[data-testid="mental-graph-canvas"]');
-    await expect(canvas).not.toBeVisible({ timeout: 3_000 });
+    await expect(canvas).toBeVisible({ timeout: 3_000 });
   });
 
   test('canvas has correct data-mental-tool attribute for select tool', async () => {
@@ -557,7 +556,10 @@ test.describe('Mental map edges', () => {
 // ─── Mode switching ───────────────────────────────────────────────
 
 test.describe('Mental map mode switching', () => {
-  test('switching from square to off hides the React Flow canvas', async () => {
+  test('switching from square to off keeps the React Flow canvas visible', async () => {
+    // The canvas is always rendered regardless of mentalMode.
+    // Switching to "off" disables drawing tool interactions but does NOT hide the canvas.
+    // Mental cards already on the canvas remain visible — the canvas is never unmounted.
     await page.evaluate(() => {
       (window as any).__DESKTOP_STORE__?.getState()?.setMentalMode('square');
     });
@@ -566,12 +568,13 @@ test.describe('Mental map mode switching', () => {
 
     await page.evaluate(() => {
       const s = (window as any).__DESKTOP_STORE__?.getState();
-      // Clear all nodes so canvas has no reason to render
+      // Clear all nodes — canvas should still be present even with no nodes
       for (const n of [...(s?.mentalNodes ?? [])]) s?.removeMentalNode(n.id);
       s?.setMentalMode('off');
     });
     await page.waitForTimeout(200);
-    await expect(page.locator('[data-testid="mental-graph-canvas"]')).not.toBeVisible({ timeout: 3_000 });
+    // Canvas remains visible — switching to off only affects drawing tool affordances
+    await expect(page.locator('[data-testid="mental-graph-canvas"]')).toBeVisible({ timeout: 3_000 });
   });
 
   test('switching from off back to square restores the canvas', async () => {

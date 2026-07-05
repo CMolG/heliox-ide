@@ -15,7 +15,8 @@
 // src/renderer/components/HelpModal.tsx — IDE documentation with sidebar navigation
 import React, { useState, useCallback, useEffect } from 'react';
 import { useHelioxStore } from '../../store';
-import { VscRocket, VscComment, VscRefresh, VscPerson, VscSettingsGear } from 'react-icons/vsc';
+import { useDesktopStore } from '../../store/desktop-store';
+import { VscRocket, VscComment, VscRefresh, VscPerson, VscSettingsGear, VscGraph, VscPlay } from 'react-icons/vsc';
 import { FiCommand } from 'react-icons/fi';
 import { theme } from '../../logic/theme';
 import { SectionContent } from './HelpSectionContent';
@@ -26,17 +27,28 @@ const SECTIONS: { id: DocSection; label: string; icon: React.ReactNode }[] = [
   { id: 'sessions', label: 'Sessions', icon: <VscComment size={14} /> },
   { id: 'flows', label: 'E2E Flows', icon: <VscRefresh size={14} /> },
   { id: 'roles', label: 'Roles', icon: <VscPerson size={14} /> },
+  { id: 'pipelines', label: 'Pipelines', icon: <VscGraph size={14} /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <FiCommand size={14} /> },
   { id: 'settings', label: 'Settings', icon: <VscSettingsGear size={14} /> },
 ];
 
 export function HelpModal() {
   const { showHelp, setShowHelp } = useHelioxStore();
+  const setActiveTutorial = useDesktopStore(s => s.setActiveTutorial);
+  const updateDesktopSettings = useDesktopStore(s => s.updateSettings);
   const [activeSection, setActiveSection] = useState<DocSection>('overview');
 
   const handleClose = useCallback(() => {
     setShowHelp(false);
   }, [setShowHelp]);
+
+  const handleTakeTour = useCallback(() => {
+    // Same on-demand trigger Settings › Tutorials uses — the workspace tour
+    // no longer auto-launches, so this is now the primary way to (re)start it.
+    updateDesktopSettings({ tourCompleted: false, tutorialCompleted: {} });
+    setActiveTutorial('workspace');
+    handleClose();
+  }, [updateDesktopSettings, setActiveTutorial, handleClose]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -96,6 +108,17 @@ export function HelpModal() {
           ))}
 
           <div className="flex-1" />
+
+          <button
+            onClick={handleTakeTour}
+            data-testid="help-take-the-tour"
+            className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-left transition hover:bg-white/3"
+            style={{ color: theme.accentBlue }}
+            aria-label="Take the guided workspace tour"
+          >
+            <span className="text-sm"><VscPlay size={14} /></span>
+            <span className="text-xs font-medium" style={{ fontFamily: theme.fontGrotesk }}>Take the tour</span>
+          </button>
 
           <button
             onClick={handleClose}

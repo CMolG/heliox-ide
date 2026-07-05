@@ -6,7 +6,11 @@
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
 // src/snapshot-engine/metrics-collector.ts
-import { Page } from 'playwright';
+// `Page` is a type-only import: this file must never force 'playwright' to
+// load eagerly — see the ordering note in runner.ts#init and
+// src/main/snapshot-browser-installer.ts (PLAYWRIGHT_BROWSERS_PATH must be
+// set before 'playwright' is first required in the process).
+import type { Page } from 'playwright';
 import { PerformanceMetrics } from '@/types';
 
 /**

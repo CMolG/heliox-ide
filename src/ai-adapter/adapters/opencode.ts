@@ -2,101 +2,149 @@
  * opencode.ts — AI Adapter / Adapters
  *
  * Responsibility:
- * - OpenCode CLI adapter (spawns `opencode` binary from opencode.ai)
- * - Normalizes OpenCode's JSONL output into canonical AiOutputEvent format
+ * - Spawn the `opencode run` CLI with the chosen provider/model.
+ * - Translate opencode's JSON event stream (`--format json`) into the
+ *   canonical AiOutputEvent shape consumed by agent-manager.
  *
  * Boundaries:
- * - Owns: CLI command construction, OpenCode-specific event normalization
- * - Does NOT own: JSONL parsing, event routing (inherited from CliAdapter)
+ * - Owns: CLI command shape, opencode-specific event normalization.
+ * - Does NOT own: process lifecycle or routing (inherited from CliAdapter).
  */
 import { CliAdapter } from '../cli-adapter';
 import type { AiAdapterName, AdapterRunOptions, AiOutputEvent } from '../types';
+
+/** Map our four-level effort to opencode's `--variant` reasoning level. */
+const EFFORT_TO_VARIANT: Record<NonNullable<AdapterRunOptions['effort']>, string> = {
+  low: 'minimal',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'max',
+};
 
 export class OpenCodeAdapter extends CliAdapter {
   readonly displayName = 'OpenCode';
   readonly name: AiAdapterName = 'opencode';
 
   protected buildCommand(options: AdapterRunOptions): { cmd: string; args: string[] } {
-    const args = [
-      '-p', options.prompt,
-      '--output-format', 'json',
+    // opencode run takes the message as positional args. We pipe a single
+    // argv string so multiline prompts survive shell quoting.
+    const args: string[] = [
+      'run',
+      options.prompt,
+      '--format', 'json',
+      '--dangerously-skip-permissions',
     ];
 
     if (options.model) args.push('--model', options.model);
+    if (options.agent) args.push('--agent', options.agent);
+    if (options.effort) args.push('--variant', EFFORT_TO_VARIANT[options.effort]);
+    if (options.resumeSessionId) args.push('--session', options.resumeSessionId);
 
     return { cmd: 'opencode', args };
   }
 
   /**
-   * Normalizes OpenCode JSONL events to AiOutputEvent format.
-   *
-   * OpenCode emits events with a `kind` field rather than `type`.
-   * Falls through to canonical format if already compatible.
+   * Translate opencode's JSON envelope (`{type, sessionID, part, ...}`) into
+   * the canonical AiOutputEvent shape. Returning null skips the event.
    */
   protected normalizeEvent(raw: Record<string, unknown>): AiOutputEvent | null {
-    // OpenCode uses `kind` instead of `type` in some output modes
-    if (raw.kind && !raw.type) {
-      const kind = raw.kind as string;
-      const kindMap: Record<string, string> = {
-        'text_delta': 'assistant.message_delta',
-        'thinking_delta': 'assistant.thinking_delta',
-        'message': 'assistant.message',
-        'tool_call': 'assistant.message',
-        'tool_result': 'tool.result',
-        'turn_start': 'assistant.turn_start',
-        'turn_end': 'assistant.turn_end',
-        'done': 'result',
-      };
+    const type = raw.type as string | undefined;
+    if (!type) return null;
+    const sessionID = raw.sessionID as string | undefined;
+    const part = (raw.part ?? {}) as Record<string, unknown>;
+    const messageID = (part.messageID as string) ?? (raw.messageID as string) ?? `oc-${sessionID ?? 'session'}`;
 
-      const mappedType = kindMap[kind];
-      if (!mappedType) return null;
+    switch (type) {
+      case 'step_start':
+        return { type: 'assistant.turn_start', sessionId: sessionID, data: { messageId: messageID } };
 
-      // Reshape data fields for delta events
-      if (kind === 'text_delta') {
+      case 'step_finish': {
+        const tokens = (part.tokens ?? {}) as Record<string, unknown>;
         return {
-          type: mappedType,
+          type: 'assistant.turn_end',
+          sessionId: sessionID,
           data: {
-            deltaContent: raw.text as string,
-            messageId: (raw.id as string) ?? 'opencode-stream',
+            messageId: messageID,
+            outputTokens: tokens.output as number ?? 0,
+            reason: part.reason as string,
           },
         };
       }
 
-      if (kind === 'thinking_delta') {
+      case 'text': {
+        const text = (part.text as string) ?? '';
         return {
-          type: mappedType,
-          data: {
-            deltaContent: raw.text as string,
-            messageId: (raw.id as string) ?? 'opencode-thinking',
-          },
+          type: 'assistant.message',
+          sessionId: sessionID,
+          data: { content: text, messageId: messageID, outputTokens: 0 },
         };
       }
 
-      if (kind === 'tool_call') {
+      case 'reasoning': {
+        const text = (part.text as string) ?? '';
         return {
-          type: mappedType,
+          type: 'assistant.thinking_delta',
+          sessionId: sessionID,
+          data: { deltaContent: text, messageId: messageID },
+        };
+      }
+
+      case 'tool': {
+        const tool = (part.tool as string) ?? (part.name as string) ?? 'tool';
+        const state = (part.state ?? {}) as Record<string, unknown>;
+        const input = (state.input ?? part.input ?? {}) as Record<string, unknown>;
+        const output = state.output as string | undefined;
+        if (output !== undefined) {
+          return {
+            type: 'tool.result',
+            sessionId: sessionID,
+            data: { tool, result: output, filePath: input.filePath ?? input.path },
+          };
+        }
+        return {
+          type: 'assistant.message',
+          sessionId: sessionID,
           data: {
             content: '',
-            messageId: (raw.id as string) ?? `opencode-tool-${Date.now()}`,
+            messageId: messageID,
             outputTokens: 0,
-            toolRequests: [{ tool: raw.name as string, input: raw.input ?? {} }],
+            toolRequests: [{ tool, input }],
           },
         };
       }
 
-      if (kind === 'done') {
+      case 'finish':
+      case 'done': {
+        const tokens = (part.tokens ?? raw.tokens ?? {}) as Record<string, unknown>;
         return {
           type: 'result',
-          exitCode: raw.success === false ? 1 : 0,
-          sessionId: raw.session_id as string,
-          usage: raw.usage as Record<string, unknown>,
+          sessionId: sessionID,
+          exitCode: 0,
+          usage: {
+            outputTokens: tokens.output as number ?? 0,
+            inputTokens: tokens.input as number ?? 0,
+            totalApiDurationMs: raw.durationMs as number,
+          },
         };
       }
 
-      return { type: mappedType, data: raw.data as Record<string, unknown> ?? {} };
-    }
+      case 'error': {
+        const error = (raw.error ?? {}) as Record<string, unknown>;
+        const data = (error.data ?? {}) as Record<string, unknown>;
+        const message = (data.message as string) ?? (error.name as string) ?? 'opencode error';
+        this.emit('stderr', message);
+        return {
+          type: 'result',
+          sessionId: sessionID,
+          exitCode: 1,
+          data: { error: message },
+        };
+      }
 
-    // Already canonical format — pass through
-    return raw as unknown as AiOutputEvent;
+      default:
+        // Unknown opencode events are passed through as raw passthrough so the
+        // renderer terminal still shows them — agent-manager will ignore them.
+        return null;
+    }
   }
 }

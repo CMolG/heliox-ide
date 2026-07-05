@@ -13,7 +13,8 @@
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
 // src/renderer/components/atoms/attachment/RightFlowAttachment.tsx — Flow ribbon on the right edge of a window
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { MarketFlow } from '@/types/market';
 import { theme } from '../../../logic/theme';
 
@@ -68,9 +69,23 @@ function ensureFlowAttachAnimation() {
 
 export function RightFlowAttachment({ flow, onDetach, onClickFlow }: RightFlowAttachmentProps) {
   const [hovered, setHovered] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const displayName = kebabToTitle(flow.name);
 
   React.useEffect(() => { ensureFlowAttachAnimation(); }, []);
+
+  // Close the right-click menu on outside click or Escape
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null); };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
 
   // Complexity badge color
   const complexityColors: Record<string, string> = {
@@ -174,8 +189,9 @@ export function RightFlowAttachment({ flow, onDetach, onClickFlow }: RightFlowAt
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onClick={onClickFlow}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); }}
         role="button"
-        aria-label={`Flow: ${displayName}. Click for details.`}
+        aria-label={`Flow: ${displayName}. Click for details. Right-click to remove.`}
       >
         {/* Flow icon */}
         <div style={iconAreaStyle} aria-hidden="true">⟳</div>
@@ -188,6 +204,39 @@ export function RightFlowAttachment({ flow, onDetach, onClickFlow }: RightFlowAt
           ⚡ {flow.recommendedComplexity}
         </span>
       </div>
+
+      {/* Right-click context menu — portalled to body to escape the window transform context */}
+      {menu && createPortal(
+        <div
+          data-testid={`flow-context-menu-${flow.name}`}
+          role="menu"
+          style={{
+            position: 'fixed', left: menu.x, top: menu.y, zIndex: 10000,
+            minWidth: 160, padding: 4, borderRadius: 8,
+            background: theme.surfaceCard, border: `1px solid ${theme.borderMedium}`,
+            boxShadow: '0 12px 32px rgba(0,0,0,0.5)', fontFamily: theme.fontInter,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-testid={`flow-remove-${flow.name}`}
+            onClick={() => { onDetach(); setMenu(null); }}
+            style={{
+              width: '100%', textAlign: 'left', padding: '6px 10px', borderRadius: 6,
+              border: 'none', background: 'transparent', color: theme.danger,
+              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = theme.surfaceHover; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+          >
+            Remove flow
+          </button>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
