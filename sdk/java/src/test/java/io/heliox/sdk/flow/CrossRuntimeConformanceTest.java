@@ -1,6 +1,7 @@
 package io.heliox.sdk.flow;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.heliox.sdk.engine.FlowExecutor;
 import io.heliox.sdk.engine.StepExecutor;
 import io.heliox.sdk.internal.Json;
@@ -18,6 +19,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -470,5 +473,129 @@ class CrossRuntimeConformanceTest {
         String independentResult = tool.uppercase("hello conformance");
         assertEquals(UPPERCASE_TOOL_RESULT, independentResult,
             "The golden result must equal uppercase(\"hello conformance\") — verifying the tool logic");
+    }
+
+    // ---- Loop execution parity (Phase 4a) -------------------------------------------------
+
+    /**
+     * LOOP EXECUTION CONFORMANCE PARITY (Phase 4a) — proves the Java runtime expands
+     * {@code conformance-loop.flow.json}'s bounded loop-back edge (loop-1: step-b2 ->
+     * step-b1, maxIterations=3) into the same per-iteration instance trace as the TS/Python
+     * runtimes — see {@code golden-loop-trace.json} and {@code sdk/conformance/README.md}.
+     *
+     * <p>The loop body {@code {step-b1, step-b2}} interleaves pass-by-pass
+     * ({@code b1@1, b2@1, b1@2, b2@2, b1@3, b2@3}) rather than running all of step-b1's
+     * passes before any of step-b2's; {@code step-c} waits for the loop's final pass.
+     */
+    @Test
+    void loopExecutionMatchesGoldenTrace() throws Exception {
+        Path flowFixture = resolveConformanceFile("conformance-loop.flow.json");
+        FlowDefinition flow = FlowImport.fromCanonicalFile(flowFixture);
+
+        assertEquals(1, flow.loops().size(), "conformance-loop.flow.json must declare exactly one loop");
+        assertEquals("loop-1", flow.loops().get(0).id());
+        assertEquals("step-b2", flow.loops().get(0).sourceStepId());
+        assertEquals("step-b1", flow.loops().get(0).targetStepId());
+        assertEquals(3, flow.loops().get(0).maxIterations());
+
+        Path scriptedPath = resolveConformanceFile("scripted-loop-responses.json");
+        Map<String, List<String>> scriptedLoopResponses = Json.MAPPER.readValue(
+            scriptedPath.toFile(),
+            new TypeReference<Map<String, List<String>>>() {}
+        );
+
+        Path goldenPath = resolveConformanceFile("golden-loop-trace.json");
+        List<Map<String, Object>> goldenTrace = Json.MAPPER.readValue(
+            goldenPath.toFile(),
+            new TypeReference<List<Map<String, Object>>>() {}
+        );
+
+        Map<String, String> promptToId = new LinkedHashMap<>();
+        for (StepConfig step : flow.steps()) {
+            promptToId.put(step.promptTemplate(), step.id());
+        }
+
+        // Per-step FIFO queues — the fake provider pops the next scripted response for
+        // whichever step matches the request's prompt on every call (one call per iteration;
+        // the prompt text itself does not vary by iteration).
+        Map<String, ConcurrentLinkedDeque<String>> queues = new ConcurrentHashMap<>();
+        scriptedLoopResponses.forEach((stepId, responses) -> queues.put(stepId, new ConcurrentLinkedDeque<>(responses)));
+
+        FakeProvider provider = new FakeProvider().responder(request -> {
+            String userContent = request.messages().stream()
+                .filter(m -> m.role() == ChatMessage.Role.USER)
+                .map(ChatMessage::content)
+                .findFirst()
+                .orElse("");
+
+            String matchedId = null;
+            for (Map.Entry<String, String> entry : promptToId.entrySet()) {
+                if (userContent.contains(entry.getKey())) {
+                    matchedId = entry.getValue();
+                    break;
+                }
+            }
+
+            ConcurrentLinkedDeque<String> queue = matchedId != null ? queues.get(matchedId) : null;
+            String text = queue != null ? queue.poll() : null;
+            return LlmResponse.of(text != null ? text : "");
+        });
+
+        FlowExecutor executor = new FlowExecutor(new StepExecutor(provider));
+        List<FlowExecutor.TraceEntry> trace = executor.executeAllTextTrace(flow, 1, Map.of()).get();
+
+        assertEquals(goldenTrace.size(), trace.size(),
+            "Trace length must match golden-loop-trace.json. Golden=" + goldenTrace.size()
+                + " Observed=" + trace.size());
+
+        for (int i = 0; i < goldenTrace.size(); i++) {
+            Map<String, Object> expected = goldenTrace.get(i);
+            FlowExecutor.TraceEntry actual = trace.get(i);
+
+            assertEquals(expected.get("stepId"), actual.stepId(),
+                "Trace entry[" + i + "] stepId mismatch. Expected=" + expected.get("stepId")
+                    + " Actual=" + actual.stepId());
+            assertEquals(((Number) expected.get("iteration")).intValue(), actual.iteration(),
+                "Trace entry[" + i + "] iteration mismatch for stepId='" + actual.stepId() + "'.");
+            assertEquals(expected.get("output"), actual.output(),
+                "Trace entry[" + i + "] output mismatch for stepId='" + actual.stepId() + "'. "
+                    + "All three runtimes must reproduce golden-loop-trace.json exactly.");
+        }
+
+        // Every per-step queue must be fully drained — proves each iteration triggered
+        // exactly one provider call (no skipped/duplicated passes).
+        queues.forEach((stepId, queue) -> assertTrue(queue.isEmpty(),
+            "Step '" + stepId + "' has " + queue.size() + " unconsumed scripted response(s)."));
+    }
+
+    // ---- Contract/model round-trip (Phase 4a) ----------------------------------------------
+
+    /**
+     * CONTRACT/MODEL CARRY-OPAQUE PARITY (Phase 4a) — proves {@code step-b}'s {@code contract}
+     * (StepContract) and {@code model} override survive {@link FlowImport} parsing byte-for-byte.
+     * This format never interprets either field — it only guarantees they are carried opaquely
+     * (see {@code golden-contract-roundtrip.json}, the TS-side proof of the same contract).
+     */
+    @Test
+    void contractAndModelAreCarried() {
+        Path fixture = resolveConformanceFile("conformance-contract.flow.json");
+        FlowDefinition flow = FlowImport.fromCanonicalFile(fixture);
+
+        StepConfig stepA = flow.steps().stream().filter(s -> "step-a".equals(s.id())).findFirst()
+            .orElseThrow(() -> new AssertionError("step-a not found in fixture"));
+        StepConfig stepB = flow.steps().stream().filter(s -> "step-b".equals(s.id())).findFirst()
+            .orElseThrow(() -> new AssertionError("step-b not found in fixture"));
+
+        assertNull(stepA.contract(), "step-a must not carry a contract");
+        assertNull(stepA.model(), "step-a must not carry a model override");
+
+        JsonNode contract = stepB.contract();
+        assertNotNull(contract, "step-b must carry its contract opaquely");
+        assertTrue(contract.get("mustWriteFiles").asBoolean(),
+            "step-b contract.mustWriteFiles must survive parsing");
+        assertEquals(2, contract.get("maxAttempts").asInt(),
+            "step-b contract.maxAttempts must survive parsing");
+        assertEquals("openai/gpt-4o-mini", stepB.model(),
+            "step-b model override must survive parsing");
     }
 }

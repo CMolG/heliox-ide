@@ -6,7 +6,7 @@
 
   <groupId>io.heliox</groupId>
   <artifactId>heliox-sdk-java</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <packaging>jar</packaging>
 
   <name>Heliox SDK for Java</name>

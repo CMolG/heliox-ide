@@ -1,10 +1,12 @@
 package io.heliox.sdk.engine;
 
 import io.heliox.sdk.flow.FlowDefinition;
+import io.heliox.sdk.flow.LoopConfig;
 import io.heliox.sdk.flow.StepConfig;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -275,6 +277,105 @@ public final class FlowExecutor {
     }
 
     // =========================================================================
+    // executeAllTextTrace — bounded loop-back edge expansion (Phase 4a)
+    // =========================================================================
+
+    /**
+     * Executes a flow exactly like {@link #executeAllText}, but first expands any
+     * {@code flow.loops()} bounded loop-back edges into a per-iteration instance graph (see
+     * {@code src/main/harness-engine/loop-plan.ts} — the normative, cross-runtime algorithm
+     * this method mirrors) before scheduling. A loop-free flow expands to exactly one instance
+     * per step, so its trace is identical in content and order to {@link #executeAllText}'s
+     * single-pass result.
+     *
+     * <p><b>Concurrency vs. determinism.</b> Instance futures are wired with the same
+     * {@code CompletableFuture} dependency-gating style as {@link #executeAllText} — independent
+     * branches genuinely run concurrently on the async pool. The returned trace, however, is
+     * assembled AFTER {@code CompletableFuture.allOf} completes, by walking a canonical
+     * {@code (stepId, iteration)}-tie-broken topological order computed once, statically, from
+     * the instance graph (see {@link #instanceExecutionOrder}) — so pool scheduling jitter can
+     * never perturb trace order.
+     *
+     * <p>Telemetry is discarded (delegates to {@link DagTelemetry#NOOP}).
+     */
+    public CompletableFuture<List<TraceEntry>> executeAllTextTrace(FlowDefinition flow,
+                                                                    int maxRetries,
+                                                                    Map<String, Object> seedContext) {
+        return executeAllTextTrace(flow, maxRetries, seedContext, DagTelemetry.NOOP);
+    }
+
+    /**
+     * {@link #executeAllTextTrace(FlowDefinition, int, Map)}, forwarding per-instance metrics to
+     * {@code telemetry} (recorded under the instance's real step id — a step with N loop passes
+     * reports N {@link DagTelemetry.NodeExecutionRecord}s, one per pass).
+     *
+     * @param flow        the flow definition to execute (loops expanded per {@code flow.loops()})
+     * @param maxRetries  retry budget forwarded to {@link StepExecutor#executeStepText}
+     * @param seedContext optional key/value pairs injected into every step instance's context
+     * @param telemetry   collector for per-instance execution metrics
+     * @return a future that resolves to the ordered {@link TraceEntry} list — one entry per
+     *         step instance, in canonical execution order
+     * @throws IllegalArgumentException if {@code flow.loops()} is structurally invalid
+     *         (missing/self-referential source or target, a source that does not
+     *         forward-reach its target, or overlapping loop bodies) — thrown synchronously,
+     *         before any future is returned, mirroring {@link #execute}'s validation style
+     */
+    public CompletableFuture<List<TraceEntry>> executeAllTextTrace(FlowDefinition flow,
+                                                                    int maxRetries,
+                                                                    Map<String, Object> seedContext,
+                                                                    DagTelemetry telemetry) {
+        Map<String, StepConfig> byId = index(flow);
+        validateDependencies(byId);
+
+        ExecutionPlan plan = expandInstances(byId, flow.loops());
+        List<InstanceKey> canonicalOrder = instanceExecutionOrder(plan);
+
+        Map<String, Object> seed = seedContext == null ? Map.of() : seedContext;
+        ConcurrentHashMap<String, String> resultsByStep = new ConcurrentHashMap<>();
+        ConcurrentHashMap<InstanceKey, String> resultsByInstance = new ConcurrentHashMap<>();
+        Map<InstanceKey, CompletableFuture<String>> instanceFutures = new HashMap<>();
+
+        // Wire every instance's future in canonical order — a valid topological order of the
+        // instance graph, so every parent future already exists when a child instance is wired.
+        for (InstanceKey key : canonicalOrder) {
+            StepConfig node = byId.get(key.stepId());
+            List<CompletableFuture<String>> parents = plan.parentKeys()
+                .getOrDefault(key, List.of())
+                .stream()
+                .map(instanceFutures::get)
+                .toList();
+
+            CompletableFuture<String> future = gate(parents).thenCompose(ignored -> {
+                StepConfig effective = withParentResults(node, seed, resultsByStep);
+                return stepExecutor.executeStepText(effective, maxRetries, telemetry)
+                    .thenApply(text -> {
+                        resultsByStep.put(node.id(), text); // real-stepId key; final pass wins downstream
+                        resultsByInstance.put(key, text);    // instance key is always unique — no races
+                        return text;
+                    });
+            });
+            instanceFutures.put(key, future);
+        }
+
+        List<CompletableFuture<String>> allFutures = canonicalOrder.stream()
+            .map(instanceFutures::get)
+            .toList();
+
+        return CompletableFuture.allOf(allFutures.toArray(CompletableFuture[]::new))
+            .thenApply(ignored -> {
+                List<TraceEntry> trace = new ArrayList<>(canonicalOrder.size());
+                for (InstanceKey key : canonicalOrder) {
+                    trace.add(new TraceEntry(key.stepId(), key.iteration(), resultsByInstance.get(key)));
+                }
+                return trace;
+            });
+    }
+
+    /** One scheduled pass of a step in an {@link #executeAllTextTrace} result. */
+    public record TraceEntry(String stepId, int iteration, String output) {
+    }
+
+    // =========================================================================
     // Shared scheduling helper
     // =========================================================================
 
@@ -349,7 +450,11 @@ public final class FlowExecutor {
                 context.put(dependency, result);
             }
         }
-        return new StepConfig(node.id(), node.systemPrompt(), node.promptTemplate(), context, node.dependencies());
+        // contract/model are carry-opaque — preserve them on the effective copy too, so a
+        // caller reading them off the step actually being executed still sees the declared
+        // value (the pre-existing 5-arg constructor silently defaulted both to null here).
+        return new StepConfig(node.id(), node.systemPrompt(), node.promptTemplate(), context,
+            node.dependencies(), node.contract(), node.model());
     }
 
     private Map<String, StepConfig> index(FlowDefinition flow) {
@@ -441,5 +546,289 @@ public final class FlowExecutor {
         throw new IllegalStateException(
             "Flow must have exactly one terminal (sink) step; found: " + sinks
                 + ". Add a final aggregation step that depends on the others.");
+    }
+
+    // =========================================================================
+    // Loop-back edge expansion — faithful port of loop-plan.ts (Phase 4a)
+    //
+    // Normative algorithm (kept in sync with src/main/harness-engine/loop-plan.ts):
+    //   1. Validate every loop and compute its body (forward-descendants of target ∩
+    //      forward-ancestors of source, inclusive); bodies must be pairwise disjoint —
+    //      nested/overlapping loops are unsupported.
+    //   2. Every step in a loop body gets maxIterations passes; every other step gets
+    //      exactly 1.
+    //   3. Instance edges: a same-body forward edge fans out per-iteration; any other
+    //      edge (plain, loop-entry, loop-exit, or cross-loop) connects the tail's LAST
+    //      pass to the head's FIRST pass.
+    //   4. Chain edges: a loop's source@k connects to its target@(k+1), i.e. completing
+    //      a pass re-triggers the body.
+    //   5. Kahn-schedule the resulting instance graph, tie-broken ascending by
+    //      (stepId, iteration).
+    // =========================================================================
+
+    /** One scheduled pass of a step — the unique node id in the expanded instance graph. */
+    private record InstanceKey(String stepId, int iteration) implements Comparable<InstanceKey> {
+        @Override
+        public int compareTo(InstanceKey other) {
+            int cmp = stepId.compareTo(other.stepId);
+            return cmp != 0 ? cmp : Integer.compare(iteration, other.iteration);
+        }
+
+        @Override
+        public String toString() {
+            return stepId + "@" + iteration;
+        }
+    }
+
+    /** A defensively re-validated loop with its computed body (see {@link #validateLoops}). */
+    private record ValidatedLoop(String id, String sourceStepId, String targetStepId,
+                                  int maxIterations, Set<String> body) {
+    }
+
+    /** The expanded, Kahn-scheduler-ready instance graph for one {@link FlowDefinition}. */
+    private record ExecutionPlan(List<InstanceKey> allInstances,
+                                  Map<InstanceKey, Integer> remainingDeps,
+                                  Map<InstanceKey, List<InstanceKey>> nextKeys,
+                                  Map<InstanceKey, List<InstanceKey>> parentKeys,
+                                  List<InstanceKey> readyKeys) {
+    }
+
+    /**
+     * Defensively re-validates {@code loops} against {@code byId} (the compiler/{@link
+     * io.heliox.sdk.flow.FlowImport} already validates well-formed loops, but a hand-built
+     * {@link FlowDefinition} may not have gone through it) and recomputes each loop's body.
+     * Bodies are required to be pairwise disjoint — nested/overlapping loops are not supported.
+     *
+     * @throws IllegalArgumentException on a missing/self-referential source or target, a source
+     *         that is not a forward-descendant of its target, or overlapping loop bodies
+     *         (message names both offending loop ids)
+     */
+    private static List<ValidatedLoop> validateLoops(Map<String, StepConfig> byId, List<LoopConfig> loops) {
+        if (loops == null || loops.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, List<String>> nextByStepId = new HashMap<>();
+        Map<String, List<String>> prevByStepId = new HashMap<>();
+        for (String id : byId.keySet()) {
+            nextByStepId.put(id, new ArrayList<>());
+        }
+        for (StepConfig step : byId.values()) {
+            prevByStepId.put(step.id(), step.dependencies());
+            for (String dependency : step.dependencies()) {
+                nextByStepId.get(dependency).add(step.id());
+            }
+        }
+
+        List<ValidatedLoop> validated = new ArrayList<>();
+        Map<String, Set<String>> bodyByLoopId = new LinkedHashMap<>();
+
+        for (LoopConfig loop : loops) {
+            if (!byId.containsKey(loop.sourceStepId())) {
+                throw new IllegalArgumentException("loop-plan: loop \"" + loop.id()
+                    + "\" source step \"" + loop.sourceStepId() + "\" does not exist in flow.");
+            }
+            if (!byId.containsKey(loop.targetStepId())) {
+                throw new IllegalArgumentException("loop-plan: loop \"" + loop.id()
+                    + "\" target step \"" + loop.targetStepId() + "\" does not exist in flow.");
+            }
+            if (loop.sourceStepId().equals(loop.targetStepId())) {
+                throw new IllegalArgumentException("loop-plan: loop \"" + loop.id()
+                    + "\" source and target are the same step \"" + loop.sourceStepId() + "\".");
+            }
+
+            Set<String> reachFromTarget = reachableSet(loop.targetStepId(), nextByStepId);
+            if (!reachFromTarget.contains(loop.sourceStepId())) {
+                throw new IllegalArgumentException("loop-plan: loop \"" + loop.id()
+                    + "\" source is not a forward-descendant of target");
+            }
+
+            Set<String> coReachToSource = reachableSet(loop.sourceStepId(), prevByStepId);
+            Set<String> body = new HashSet<>(reachFromTarget);
+            body.retainAll(coReachToSource);
+
+            for (Map.Entry<String, Set<String>> entry : bodyByLoopId.entrySet()) {
+                List<String> shared = new ArrayList<>(body);
+                shared.retainAll(entry.getValue());
+                if (!shared.isEmpty()) {
+                    Collections.sort(shared);
+                    throw new IllegalArgumentException(
+                        "loop-plan: nested or overlapping loops are not supported: steps "
+                            + String.join(", ", shared) + " belong to both loop \"" + entry.getKey()
+                            + "\" and loop \"" + loop.id() + "\".");
+                }
+            }
+            bodyByLoopId.put(loop.id(), body);
+
+            validated.add(new ValidatedLoop(loop.id(), loop.sourceStepId(), loop.targetStepId(),
+                clampLoopIterations(loop.maxIterations()), body));
+        }
+
+        return validated;
+    }
+
+    /** BFS over {@code adjacency}, inclusive of {@code start}. */
+    private static Set<String> reachableSet(String start, Map<String, List<String>> adjacency) {
+        Set<String> visited = new HashSet<>();
+        visited.add(start);
+        Deque<String> queue = new ArrayDeque<>();
+        queue.add(start);
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            for (String next : adjacency.getOrDefault(current, List.of())) {
+                if (visited.add(next)) {
+                    queue.add(next);
+                }
+            }
+        }
+        return visited;
+    }
+
+    /**
+     * Defensive re-clamp into [1, 50] — mirrors the TypeScript {@code clampLoopIterations}.
+     * {@link io.heliox.sdk.flow.FlowImport} already clamps at parse time; this protects
+     * hand-built {@link FlowDefinition}s that bypass it.
+     */
+    private static int clampLoopIterations(int value) {
+        return Math.min(50, Math.max(1, value));
+    }
+
+    /**
+     * Expands {@code byId} (the forward graph) + {@code loops} into a per-iteration
+     * {@link ExecutionPlan}. A loop-free flow yields exactly one instance per step, with
+     * {@code remainingDeps} equal to {@code dependencies().size()} — structural parity with
+     * the pre-loop scheduler.
+     */
+    private static ExecutionPlan expandInstances(Map<String, StepConfig> byId, List<LoopConfig> loops) {
+        List<ValidatedLoop> validatedLoops = validateLoops(byId, loops);
+
+        Map<String, ValidatedLoop> loopByStepId = new HashMap<>();
+        for (ValidatedLoop loop : validatedLoops) {
+            for (String stepId : loop.body()) {
+                loopByStepId.put(stepId, loop);
+            }
+        }
+
+        Map<String, Integer> countByStepId = new LinkedHashMap<>();
+        for (String stepId : byId.keySet()) {
+            ValidatedLoop loop = loopByStepId.get(stepId);
+            countByStepId.put(stepId, loop != null ? loop.maxIterations() : 1);
+        }
+
+        List<InstanceKey> allInstances = new ArrayList<>();
+        for (String stepId : byId.keySet()) {
+            int total = countByStepId.get(stepId);
+            for (int k = 1; k <= total; k++) {
+                allInstances.add(new InstanceKey(stepId, k));
+            }
+        }
+
+        Map<InstanceKey, List<InstanceKey>> nextKeys = new HashMap<>();
+        Map<InstanceKey, Integer> remainingDeps = new HashMap<>();
+        for (InstanceKey key : allInstances) {
+            nextKeys.put(key, new ArrayList<>());
+            remainingDeps.put(key, 0);
+        }
+
+        // Children (forward pointer) map, derived from dependencies (dependsOn).
+        Map<String, List<String>> childrenByStep = new LinkedHashMap<>();
+        for (String stepId : byId.keySet()) {
+            childrenByStep.put(stepId, new ArrayList<>());
+        }
+        for (StepConfig step : byId.values()) {
+            for (String dependency : step.dependencies()) {
+                childrenByStep.get(dependency).add(step.id());
+            }
+        }
+
+        // Instance edges, derived from the forward graph.
+        for (String aId : byId.keySet()) {
+            ValidatedLoop aLoop = loopByStepId.get(aId);
+            int aCount = countByStepId.get(aId);
+
+            for (String bId : childrenByStep.get(aId)) {
+                ValidatedLoop bLoop = loopByStepId.get(bId);
+                boolean sameBody = aLoop != null && bLoop != null && aLoop.id().equals(bLoop.id());
+
+                if (sameBody) {
+                    for (int k = 1; k <= aCount; k++) {
+                        addInstanceEdge(nextKeys, remainingDeps, new InstanceKey(aId, k), new InstanceKey(bId, k));
+                    }
+                } else {
+                    int tailK = aLoop != null ? aCount : 1;
+                    addInstanceEdge(nextKeys, remainingDeps, new InstanceKey(aId, tailK), new InstanceKey(bId, 1));
+                }
+            }
+        }
+
+        // Chain edges: completing pass k of the loop body re-triggers pass k+1.
+        for (ValidatedLoop loop : validatedLoops) {
+            for (int k = 1; k < loop.maxIterations(); k++) {
+                addInstanceEdge(nextKeys, remainingDeps,
+                    new InstanceKey(loop.sourceStepId(), k), new InstanceKey(loop.targetStepId(), k + 1));
+            }
+        }
+
+        // Parent (reverse) map — lets executeAllTextTrace gate an instance's future on its
+        // predecessor instance futures without re-deriving edges.
+        Map<InstanceKey, List<InstanceKey>> parentKeys = new HashMap<>();
+        for (InstanceKey key : allInstances) {
+            parentKeys.put(key, new ArrayList<>());
+        }
+        for (Map.Entry<InstanceKey, List<InstanceKey>> entry : nextKeys.entrySet()) {
+            for (InstanceKey child : entry.getValue()) {
+                parentKeys.get(child).add(entry.getKey());
+            }
+        }
+
+        List<InstanceKey> readyKeys = new ArrayList<>();
+        for (InstanceKey key : allInstances) {
+            if (remainingDeps.getOrDefault(key, 0) == 0) {
+                readyKeys.add(key);
+            }
+        }
+        Collections.sort(readyKeys);
+
+        return new ExecutionPlan(allInstances, remainingDeps, nextKeys, parentKeys, readyKeys);
+    }
+
+    private static void addInstanceEdge(Map<InstanceKey, List<InstanceKey>> nextKeys,
+                                        Map<InstanceKey, Integer> remainingDeps,
+                                        InstanceKey from, InstanceKey to) {
+        nextKeys.get(from).add(to);
+        remainingDeps.merge(to, 1, Integer::sum);
+    }
+
+    /**
+     * Pure (non-executing) Kahn traversal of {@code plan}'s instance graph, producing the
+     * canonical {@code (stepId, iteration)}-tie-broken execution order. Computed statically from
+     * the graph structure alone, so it never depends on real {@code CompletableFuture}
+     * completion timing — see {@link #executeAllTextTrace}'s class-level note on determinism.
+     */
+    private static List<InstanceKey> instanceExecutionOrder(ExecutionPlan plan) {
+        Map<InstanceKey, Integer> remaining = new HashMap<>(plan.remainingDeps());
+        Deque<InstanceKey> ready = new ArrayDeque<>(plan.readyKeys());
+        List<InstanceKey> order = new ArrayList<>();
+
+        while (!ready.isEmpty()) {
+            InstanceKey key = ready.poll();
+            order.add(key);
+
+            List<InstanceKey> newlyFree = new ArrayList<>();
+            for (InstanceKey child : plan.nextKeys().getOrDefault(key, List.of())) {
+                int remainingCount = remaining.merge(child, -1, Integer::sum);
+                if (remainingCount == 0) {
+                    newlyFree.add(child);
+                }
+            }
+            Collections.sort(newlyFree);
+            ready.addAll(newlyFree);
+        }
+
+        if (order.size() != plan.allInstances().size()) {
+            throw new IllegalStateException(
+                "Flow's loop-expanded instance graph has a dependency cycle — this indicates an internal error.");
+        }
+        return order;
     }
 }

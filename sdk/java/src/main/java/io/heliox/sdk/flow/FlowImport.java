@@ -18,7 +18,9 @@ import java.util.Map;
  * <p>The canonical format is defined in {@code sdk/conformance/conformance-chain.flow.json}.
  * Each step carries: {@code id}, {@code type}, {@code prompt}, {@code dependsOn} (parent ids),
  * optional {@code systemPrompt}, optional {@code tools} (ignored — Java has no per-step tool
- * concept), and optional {@code context} (key/value map).
+ * concept), optional {@code context} (key/value map), optional {@code contract} (carried
+ * opaquely), and optional {@code model} override. The flow itself may declare an optional
+ * {@code loops} array (bounded loop-back edges — see {@code conformance-loop.flow.json}).
  *
  * <p>Mapping to SDK types:
  * <ul>
@@ -27,9 +29,17 @@ import java.util.Map;
  *   <li>{@code dependsOn}   → {@link StepConfig#dependencies()}</li>
  *   <li>{@code context}     → {@link StepConfig#context()} (empty map when absent)</li>
  *   <li>{@code tools}       → ignored</li>
+ *   <li>{@code contract}    → {@link StepConfig#contract()} (carried opaquely, nullable)</li>
+ *   <li>{@code model}       → {@link StepConfig#model()} (nullable)</li>
+ *   <li>{@code loops}       → {@link FlowDefinition#loops()} (empty list when absent)</li>
  * </ul>
  */
 public final class FlowImport {
+
+    /** Default loop passes when a loop-back edge omits/malforms {@code maxIterations}. */
+    private static final int LOOP_DEFAULT_MAX_ITERATIONS = 3;
+    /** Hard cap on loop passes — the format-normative upper bound. */
+    private static final int LOOP_MAX_ITERATIONS_CAP = 50;
 
     private FlowImport() {
     }
@@ -81,7 +91,9 @@ public final class FlowImport {
             steps.add(parseStep(stepNode, flowId));
         }
 
-        return new FlowDefinition(flowId, steps);
+        List<LoopConfig> loops = parseLoops(root.get("loops"), flowId);
+
+        return new FlowDefinition(flowId, steps, loops);
     }
 
     /**
@@ -110,8 +122,84 @@ public final class FlowImport {
         String systemPrompt = optionalText(node, "systemPrompt");
         List<String> dependsOn = parseStringArray(node.get("dependsOn"));
         Map<String, Object> context = parseContext(node.get("context"));
+        JsonNode contract = parseContract(node.get("contract"), id, flowId);
+        String model = optionalText(node, "model");
         // "tools" and "type" are intentionally ignored.
-        return new StepConfig(id, systemPrompt, prompt, context, dependsOn);
+        return new StepConfig(id, systemPrompt, prompt, context, dependsOn, contract, model);
+    }
+
+    /** Carried opaquely — copied verbatim, never interpreted by this SDK. */
+    private static JsonNode parseContract(JsonNode contractNode, String stepId, String flowId) {
+        if (contractNode == null || contractNode.isNull()) {
+            return null;
+        }
+        if (!contractNode.isObject()) {
+            throw new IllegalArgumentException(
+                "Field 'contract' in step '" + stepId + "' of flow '" + flowId + "' must be an object.");
+        }
+        return contractNode;
+    }
+
+    // --- loop parsing ---------------------------------------------------------------------
+
+    private static List<LoopConfig> parseLoops(JsonNode loopsNode, String flowId) {
+        if (loopsNode == null || loopsNode.isNull()) {
+            return List.of();
+        }
+        if (!loopsNode.isArray()) {
+            throw new IllegalArgumentException(
+                "Canonical flow JSON 'loops' field must be an array when present, in flow '" + flowId + "'.");
+        }
+        List<LoopConfig> loops = new ArrayList<>();
+        for (JsonNode loopNode : loopsNode) {
+            loops.add(parseLoop(loopNode, flowId));
+        }
+        return loops;
+    }
+
+    private static LoopConfig parseLoop(JsonNode node, String flowId) {
+        JsonNode idNode = node.get("id");
+        if (idNode == null || idNode.isNull() || idNode.asText().isBlank()) {
+            throw new IllegalArgumentException(
+                "Required field 'id' is missing or null in a loop of flow '" + flowId + "'.");
+        }
+        String id = idNode.asText();
+
+        JsonNode sourceNode = node.get("sourceStepId");
+        if (sourceNode == null || sourceNode.isNull() || sourceNode.asText().isBlank()) {
+            throw new IllegalArgumentException(
+                "Required field 'sourceStepId' is missing or null in loop '" + id + "' of flow '" + flowId + "'.");
+        }
+        String sourceStepId = sourceNode.asText();
+
+        JsonNode targetNode = node.get("targetStepId");
+        if (targetNode == null || targetNode.isNull() || targetNode.asText().isBlank()) {
+            throw new IllegalArgumentException(
+                "Required field 'targetStepId' is missing or null in loop '" + id + "' of flow '" + flowId + "'.");
+        }
+        String targetStepId = targetNode.asText();
+
+        int maxIterations = clampLoopIterations(node.get("maxIterations"));
+
+        return new LoopConfig(id, sourceStepId, targetStepId, maxIterations);
+    }
+
+    /**
+     * Clamp a raw {@code maxIterations} node into [1, 50], defaulting a missing, null, or
+     * non-finite/non-numeric value to 3 passes. Mirrors the TypeScript
+     * {@code clampLoopIterations} (src/types/harness.ts) exactly, so every consumer of a
+     * parsed {@link LoopConfig} may assume a value in [1, 50] without re-validating.
+     */
+    private static int clampLoopIterations(JsonNode node) {
+        if (node == null || node.isNull() || !node.isNumber()) {
+            return LOOP_DEFAULT_MAX_ITERATIONS;
+        }
+        double raw = node.asDouble();
+        if (Double.isNaN(raw) || Double.isInfinite(raw)) {
+            return LOOP_DEFAULT_MAX_ITERATIONS;
+        }
+        int floored = (int) Math.floor(raw);
+        return Math.min(LOOP_MAX_ITERATIONS_CAP, Math.max(1, floored));
     }
 
     private static String requireText(JsonNode parent, String field, String location) {

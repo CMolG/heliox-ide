@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import deque
 from pathlib import Path
 
 import pytest
@@ -343,4 +344,98 @@ def test_tool_calling_parity_matches_golden_tool_calls() -> None:
     assert direct_result == UPPERCASE_TOOL_RESULT, (
         f"The golden result must equal uppercase('hello conformance'). "
         f"Got '{direct_result}'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Loop execution matches golden-loop-trace.json (Phase 4a)
+# ---------------------------------------------------------------------------
+
+def test_loop_execution_matches_golden_trace() -> None:
+    """The Python runtime expands `conformance-loop.flow.json`'s bounded
+    loop-back edge (loop-1: step-b2 -> step-b1, maxIterations=3) into the same
+    per-iteration instance trace as the TS/Java runtimes.
+
+    The loop body {step-b1, step-b2} interleaves pass-by-pass
+    (b1@1, b2@1, b1@2, b2@2, b1@3, b2@3) rather than running all of step-b1's
+    passes before any of step-b2's — see golden-loop-trace.json and
+    sdk/conformance/README.md.
+    """
+    raw = _load_fixture("conformance-loop.flow.json")
+    flow = FlowImport.from_canonical_json(raw)
+
+    assert len(flow.loops) == 1
+    assert flow.loops[0].id == "loop-1"
+    assert flow.loops[0].source_step_id == "step-b2"
+    assert flow.loops[0].target_step_id == "step-b1"
+    assert flow.loops[0].max_iterations == 3
+
+    scripted_loop_responses: dict[str, list[str]] = json.loads(
+        _load_fixture("scripted-loop-responses.json")
+    )
+    golden_trace: list[dict[str, object]] = json.loads(_load_fixture("golden-loop-trace.json"))
+
+    prompt_to_id = {step.prompt_template: step.id for step in flow.steps}
+
+    # Per-step FIFO queues — the scripted provider pops the next entry for
+    # whichever step matches the request's prompt on every call (one call per
+    # iteration; the prompt text itself does not vary by iteration).
+    queues: dict[str, deque[str]] = {
+        step_id: deque(responses) for step_id, responses in scripted_loop_responses.items()
+    }
+
+    def responder(request: LlmRequest) -> LlmResponse:
+        user_content = next(
+            (m.content for m in request.messages if m.role == "user"),
+            "",
+        )
+        matched_id = next(
+            (step_id for prompt, step_id in prompt_to_id.items() if prompt in user_content),
+            None,
+        )
+        queue = queues.get(matched_id) if matched_id else None
+        text = queue.popleft() if queue else ""
+        return LlmResponse.of(text)
+
+    provider = ScriptedProvider()
+    provider.set_responder(responder)
+
+    executor = FlowExecutor(StepExecutor(provider=provider))
+    trace = executor.execute_all_text_trace(flow)
+
+    assert trace == golden_trace, (
+        "Python loop execution trace must match golden-loop-trace.json exactly.\n"
+        f"Expected={golden_trace}\nActual={trace}"
+    )
+
+    # Every per-step queue must be fully drained — proves each iteration
+    # triggered exactly one provider call (no skipped/duplicated passes).
+    for step_id, queue in queues.items():
+        assert not queue, f"Step '{step_id}' has {len(queue)} unconsumed scripted response(s)."
+
+
+# ---------------------------------------------------------------------------
+# Test 6: contract/model survive parsing untouched (carry-opaque, Phase 4a)
+# ---------------------------------------------------------------------------
+
+def test_contract_and_model_are_carried() -> None:
+    """`step-b`'s `contract` (StepContract) and `model` override survive
+    FlowImport parsing byte-for-byte. This format never interprets either
+    field — it only guarantees they are carried opaquely (see
+    golden-contract-roundtrip.json, the TS-side proof of the same contract).
+    """
+    raw = _load_fixture("conformance-contract.flow.json")
+    flow = FlowImport.from_canonical_json(raw)
+
+    step_a = next(s for s in flow.steps if s.id == "step-a")
+    step_b = next(s for s in flow.steps if s.id == "step-b")
+
+    assert step_a.contract is None
+    assert step_a.model is None
+
+    assert step_b.contract == {"mustWriteFiles": True, "maxAttempts": 2}, (
+        f"step-b.contract must survive parsing byte-for-byte, got {step_b.contract}"
+    )
+    assert step_b.model == "openai/gpt-4o-mini", (
+        f"step-b.model must survive parsing byte-for-byte, got {step_b.model}"
     )
