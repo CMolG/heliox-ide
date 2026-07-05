@@ -48,6 +48,53 @@ jobs:
       - name: Unit tests
         run: npm test
 
+  build:
+    name: Package app (${{ matrix.os }})
+    # Artifacts only for pushes (not PRs) — PR builds would double CI cost
+    # for little value since merges to feat/dev/main rebuild anyway.
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Electron binary
+        # Same self-heal as the test job: Electron's postinstall download flakes
+        # on macOS arm64 runners, leaving node_modules/electron without
+        # dist/path.txt. require() only resolves the binary path (never
+        # launches), so this is a cheap no-op when healthy and re-runs the
+        # postinstall when broken.
+        shell: bash
+        run: node -e "require('electron')" || node node_modules/electron/install.js
+
+      - name: Make distributables (unsigned)
+        # Signing stays a release.yml concern; forge.config degrades gracefully
+        # to unsigned builds here (see "[forge.config] macOS signing: unsigned").
+        run: npm run make
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: heliox-ide-${{ github.sha }}-${{ matrix.os }}
+          path: out/make/**
+          retention-days: 14
+          if-no-files-found: error
+
   e2e-smoke:
     name: E2E smoke (ubuntu, xvfb)
     runs-on: ubuntu-latest
