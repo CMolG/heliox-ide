@@ -40,23 +40,8 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: (macOS) setuptools for node-gyp — appdmg's native deps
-        # maker-dmg's `appdmg` pulls native addons (macos-alias, fs-xattr) that
-        # node-gyp compiles. Python 3.12 (default on macos runners) dropped
-        # distutils, so those builds fail and `npm ci` SILENTLY drops the whole
-        # optional appdmg chain — later surfacing as "Cannot find module
-        # 'appdmg'" when MakerDMG runs. setuptools restores the distutils shim.
-        if: runner.os == 'macOS'
-        run: python3 -m pip install --break-system-packages setuptools
-
       - name: Install dependencies
         run: npm ci
-
-      - name: (macOS) Assert appdmg is installed (fail loud, never silent)
-        # If the native build above still failed, npm would have dropped appdmg
-        # again; catch it here instead of deep inside `electron-forge publish`.
-        if: runner.os == 'macOS'
-        run: node -e "require.resolve('appdmg')"
 
       - name: Publish app (creates/updates a draft release for this tag)
         env:

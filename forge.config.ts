@@ -14,6 +14,7 @@ import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { PublisherGithub } from '@electron-forge/publisher-github';
+import { existsSync } from 'node:fs';
 
 // ── Code signing — env-gated, degrades to unsigned builds (audit 1.1) ───────
 // None of these secrets exist in this repo yet, so every branch below is
@@ -91,9 +92,17 @@ console.log(
 // releases (release.yml) and local `make` still build the full installer set.
 const zipOnly = process.env.HELIOX_MAKE_ZIP_ONLY === '1';
 
+// maker-dmg needs the darwin-only native `appdmg`, whose macos-alias/fs-xattr
+// addons don't compile on hosted macOS runners (old native code, no prebuilds),
+// so npm drops the optional chain and MakerDMG throws "Cannot find module
+// 'appdmg'". Build the DMG only where appdmg actually resolved (local mac dev);
+// CI ships the portable mac .zip instead — which is also exactly what
+// Squirrel.Mac auto-update consumes, so the mac update path is unaffected.
+const appdmgAvailable = existsSync('node_modules/appdmg/package.json');
+
 const installerMakers = [
   new MakerSquirrel({ name: 'HelioxIDE', authors: 'Heliox', setupIcon: './assets/icon.ico', ...windowsSigning }),
-  new MakerDMG({ format: 'ULFO', icon: './assets/icon.icns' }),
+  ...(appdmgAvailable ? [new MakerDMG({ format: 'ULFO', icon: './assets/icon.icns' })] : []),
   new MakerDeb({
     options: {
       maintainer: 'Heliox',

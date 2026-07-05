@@ -4,6 +4,7 @@
   "version": "0.2.0",
   "description": "Open-source dashboard for designing agentic flows — compose visually, verify by execution, and export portable flows that run across TypeScript, Java, and Python.",
   "author": "Heliox",
+  "license": "Apache-2.0",
   "main": ".vite/build/index.js",
   "engines": {
     "node": ">=24"
