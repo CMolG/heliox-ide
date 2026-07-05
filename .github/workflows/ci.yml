@@ -100,6 +100,55 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  publish-latest:
+    name: Publish rolling "latest" release
+    needs: build
+    # Only the mainline feeds the public, always-latest download that the
+    # marketing site (heliox-ide-web → GitHub Releases API) surfaces. Feature
+    # branches still get per-run zip artifacts from `build`, just not this
+    # rolling release. Skips forks/PRs (no push, no default-branch ref).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download every OS's build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect the zip distributables + checksums
+        run: |
+          mkdir -p dist
+          # `build` uploaded out/make/** per OS; the portable app zips live
+          # under out/make/zip/<platform>/<arch>/. Flatten them into dist/ (the
+          # three filenames already carry platform+arch, so no collisions).
+          find artifacts -name '*.zip' -exec cp {} dist/ \;
+          if [ -z "$(ls -A dist)" ]; then
+            echo "::error::No zip distributables found in the build artifacts."
+            exit 1
+          fi
+          ( cd dist && shasum -a 256 -- *.zip > SHA256SUMS )
+          echo "Rolling-release payload:"; ls -la dist
+
+      - name: (Re)publish the rolling "latest" prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Recreate the single rolling release each push so it always holds
+          # only the current commit's assets and its tag points at this commit.
+          # `|| true` tolerates the first-ever run (no release/tag yet). The tag
+          # name stays "latest", so the download URLs are stable across pushes.
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create latest \
+            --title "Latest (rolling build)" \
+            --notes "Automated build from ${GITHUB_SHA} on $(date -u +%Y-%m-%dT%H:%MZ). Unsigned prerelease — see the download page for first-launch (Gatekeeper/SmartScreen) notes." \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            dist/*.zip dist/SHA256SUMS
+
   e2e-smoke:
     name: E2E smoke (ubuntu, xvfb)
     runs-on: ubuntu-latest
