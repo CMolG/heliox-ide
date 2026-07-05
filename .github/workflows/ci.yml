@@ -200,6 +200,17 @@ jobs:
         # command that produces it without requiring a display.
         run: npx electron-forge package
 
+      - name: Rebuild native modules for Electron's ABI
+        # The suite launches `electron .` against the REPO ROOT, so repo-root
+        # node_modules must match Electron's ABI. `npm ci` built better-sqlite3
+        # for Node (NODE_MODULE_VERSION 137) but Electron 41 requires 145, so the
+        # main process's synchronous initializeStorage() threw while loading the
+        # .node binary — the app.whenReady() chain rejected BEFORE createWindow(),
+        # so every spec died at `electronApplication.firstWindow` (30s timeout,
+        # deterministic). electron-forge's package step only rebuilds its own
+        # bundled copy, never repo-root — hence this explicit rebuild.
+        run: npx electron-rebuild -f
+
       - name: Run E2E smoke suite
         # Smallest and most self-contained specs in e2e/: bridge.spec.ts is
         # IPC-surface + file-content checks (no pixel/mouse-gesture timing),
