@@ -82,9 +82,14 @@ jobs:
         shell: bash
         run: node -e "require('electron')" || node node_modules/electron/install.js
 
-      - name: Make distributables (unsigned)
-        # Signing stays a release.yml concern; forge.config degrades gracefully
-        # to unsigned builds here (see "[forge.config] macOS signing: unsigned").
+      - name: Make distributables (unsigned, zip-only)
+        # ZIP-only per-push build: forge emits a portable .zip of the packaged
+        # app on every OS. The polished installers (dmg via appdmg, Squirrel,
+        # deb/rpm) need native/optional toolchains that flake on hosted runners,
+        # so they stay a release.yml concern (see forge.config.ts
+        # HELIOX_MAKE_ZIP_ONLY). Signing likewise stays unsigned here.
+        env:
+          HELIOX_MAKE_ZIP_ONLY: '1'
         run: npm run make
 
       - name: Upload artifacts

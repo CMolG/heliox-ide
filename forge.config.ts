@@ -8,6 +8,7 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import type { MakerSquirrelConfig } from '@electron-forge/maker-squirrel';
+import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
@@ -83,9 +84,34 @@ console.log(
   `Windows signing: ${Object.keys(windowsSigning).length > 0 ? 'ENABLED' : 'unsigned'}`
 );
 
+// Per-push CI builds (ci.yml `build` job) set HELIOX_MAKE_ZIP_ONLY=1 to emit a
+// fast, dependency-light .zip of the packaged app on every OS — a real runnable
+// build without the native/optional toolchains the polished installers need
+// (maker-dmg's darwin-only `appdmg`, Squirrel.Windows, deb/rpm). Tagged
+// releases (release.yml) and local `make` still build the full installer set.
+const zipOnly = process.env.HELIOX_MAKE_ZIP_ONLY === '1';
+
+const installerMakers = [
+  new MakerSquirrel({ name: 'HelioxIDE', ...windowsSigning }),
+  new MakerDMG({ format: 'ULFO' }),
+  new MakerDeb({
+    options: {
+      maintainer: 'Heliox',
+      homepage: 'https://heliox.dev',
+    },
+  }),
+  new MakerRpm({ options: { name: 'heliox-ide' } }),
+];
+
 const config: ForgeConfig = {
   packagerConfig: {
     name: 'Heliox IDE',
+    // The deb/rpm makers look for the packaged binary by the lowercase package
+    // name ("heliox-ide"), but Packager names it after `name` ("Heliox IDE")
+    // by default — the mismatch failed the Linux `make` with "could not find
+    // the Electron app binary". Pin the executable filename so every maker
+    // resolves it consistently across platforms.
+    executableName: 'heliox-ide',
     icon: './assets/icon',
     extraResource: [
       // Playwright's Chromium build is no longer bundled here (audit 1.7 —
@@ -98,15 +124,11 @@ const config: ForgeConfig = {
     ...macSigning,
   },
   makers: [
-    new MakerSquirrel({ name: 'HelioxIDE', ...windowsSigning }),
-    new MakerDMG({ format: 'ULFO' }),
-    new MakerDeb({
-      options: {
-        maintainer: 'Heliox',
-        homepage: 'https://heliox.dev',
-      },
-    }),
-    new MakerRpm({ options: { name: 'heliox-ide' } }),
+    // Always produced: a portable .zip of the packaged app on every OS — the
+    // reliable per-push CI artifact. Installers are added on top unless a
+    // zip-only build was requested (see `zipOnly` above).
+    new MakerZIP({}, ['darwin', 'linux', 'win32']),
+    ...(zipOnly ? [] : installerMakers),
   ],
   plugins: [
     new VitePlugin({
