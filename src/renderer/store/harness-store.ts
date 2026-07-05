@@ -16,6 +16,8 @@ import type {
   ArenaRunOptions,
   ArenaProgressEvent,
   ArenaResult,
+  ModelPolicy,
+  RoutedModelEvidence,
 } from '@/types/ipc-events';
 import { collectDownstreamStepIds, compileFlowFromCanvas } from '../lib/harness-compiler';
 import { useDesktopStore } from './desktop-store';
@@ -91,6 +93,15 @@ const INITIAL_ARENA_STATE: ArenaState = {
   deployChosenModelId: null,
 };
 
+// ── Loop iteration state ─────────────────────────────────────────────────────
+
+/** Live loop-body progress for a single step, derived from `StepStatusChanged`. */
+export interface StepIterationState {
+  iteration: number;
+  total: number;
+  loopId: string;
+}
+
 // ── Full store interface ─────────────────────────────────────────────────────
 
 interface HarnessStore {
@@ -98,6 +109,22 @@ interface HarnessStore {
   executionStatus: AgenticExecutionStatus;
   currentStepId: string | null;
   stepStatuses: Record<string, AgenticExecutionStatus>;
+  /**
+   * Loop-body progress for steps currently (or most recently) inside a
+   * bounded loop, keyed by stepId. Populated only from `StepStatusChanged`
+   * events that carry `iteration` — a plain status log with no loop data
+   * leaves existing entries untouched, so an in-progress loop badge never
+   * flickers away between non-loop status ticks. Cleared only at the same
+   * reset sites that clear `stepStatuses` back to `{}`.
+   */
+  stepIterations: Record<string, StepIterationState>;
+  /**
+   * WS2 model-routing result per step, keyed by stepId. Populated only from
+   * `StepStatusChanged` events that carry `modelId` — never cleared on
+   * absence, same non-flickering contract as `stepIterations`. Cleared only
+   * at the same reset sites that clear `stepStatuses`/`stepIterations`.
+   */
+  stepModels: Record<string, { modelId: string; evidence?: RoutedModelEvidence }>;
   modStatuses: Record<string, AgenticExecutionStatus>;
   stepThinkings: Record<string, { kind: 'reasoning' | 'text' | 'tool'; text: string }[]>;
   executionLogs: string[];
@@ -230,7 +257,15 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
     }));
 
     try {
-      const result = await api.startHarness(flow);
+      // WS2: dispatch under the user's chosen routing policy (default fixed —
+      // today's behavior) plus whatever model the user picked via the Arena
+      // "Use for deploy" action, if any. The router (main process) outranks
+      // this flow-level modelId; any step's own manual override outranks both.
+      const settings = useDesktopStore.getState().settings;
+      const modelPolicy: ModelPolicy = settings.modelPolicy ?? { mode: 'fixed' };
+      const modelId = get().arena.deployChosenModelId ?? undefined;
+
+      const result = await api.startHarness(flow, { modelPolicy, modelId });
       if (!result.success) {
         set((state) => ({
           executionStatus: 'error',
@@ -250,6 +285,8 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
   executionStatus: 'idle',
   currentStepId: null,
   stepStatuses: {},
+  stepIterations: {},
+  stepModels: {},
   modStatuses: {},
   stepThinkings: {},
   executionLogs: [],
@@ -273,6 +310,8 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
         executionStatus: 'idle',
         currentStepId: null,
         stepStatuses: {},
+        stepIterations: {},
+        stepModels: {},
         modStatuses: {},
         stepThinkings: {},
         executionLogs: appendLog(state.executionLogs, `Compiled flow "${flow.name}" with ${stepCount} step(s).`),
@@ -327,6 +366,8 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
       activeFlow: flow,
       currentStepId: null,
       stepStatuses: {},
+      stepIterations: {},
+      stepModels: {},
       modStatuses: {},
       stepThinkings: {},
       executionLogs: appendLog(state.executionLogs, `Compiled single-step run for "${stepId}".`),
@@ -360,6 +401,8 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
       activeFlow: flow,
       currentStepId: null,
       stepStatuses: {},
+      stepIterations: {},
+      stepModels: {},
       modStatuses: {},
       stepThinkings: {},
       executionLogs: appendLog(
@@ -376,6 +419,8 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
       executionStatus: 'idle',
       currentStepId: null,
       stepStatuses: {},
+      stepIterations: {},
+      stepModels: {},
       modStatuses: {},
       stepThinkings: {},
       executionLogs: appendLog(state.executionLogs, 'Execution cursor stopped.'),
@@ -416,6 +461,30 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
             ...state.stepStatuses,
             [event.stepId]: event.status,
           },
+          // Only write when the event actually carries loop-iteration data —
+          // never clear on absence, so a plain status log doesn't wipe an
+          // already-shown iteration badge for that step.
+          stepIterations: event.iteration !== undefined
+            ? {
+                ...state.stepIterations,
+                [event.stepId]: {
+                  iteration: event.iteration,
+                  total: event.totalIterations ?? event.iteration,
+                  loopId: event.loopId ?? '',
+                },
+              }
+            : state.stepIterations,
+          // WS2: only write when the event actually carries a routed modelId —
+          // never clear on absence, same non-flickering contract as stepIterations.
+          stepModels: event.modelId !== undefined
+            ? {
+                ...state.stepModels,
+                [event.stepId]: {
+                  modelId: event.modelId,
+                  ...(event.modelEvidence !== undefined ? { evidence: event.modelEvidence } : {}),
+                },
+              }
+            : state.stepModels,
           executionLogs: event.logs ? appendLog(state.executionLogs, event.logs) : state.executionLogs,
         }));
         return;

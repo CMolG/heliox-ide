@@ -15,6 +15,7 @@ import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/co
 import { saveCheckpoint } from './checkpoints';
 import { retrieve, type EmbedFn } from './retriever';
 import type { VectorStore } from './knowledge/vector-store';
+import { buildExecutionPlan, type StepInstance } from './loop-plan';
 import {
   snapshotWorkspace,
   verifyStepContract,
@@ -22,6 +23,9 @@ import {
   mergeStepContracts,
   DEFAULT_GUARDRAIL_MAX_ATTEMPTS,
 } from './guardrails';
+import { createModelRouter, isSealed, loadDefaultLeaderboard, type ModelRouterDeps } from './model-router';
+import type { ArenaLeaderboardEntry } from '../performance-frontier/arena/arena-runner';
+import type { ConnectionResolver, ModelPolicy, RoutedModelEvidence } from '../../types/ipc-events';
 
 export interface HarnessStepRunnerInput extends RunLLMStepInput {
   flowId: string;
@@ -34,6 +38,17 @@ export interface ExecuteAgenticFlowOptions {
   telemetrySink?: LocalMcpOptions['telemetrySink'];
   onLLMStepTelemetry?: (event: LLMStepTelemetryEvent) => void;
   modelId?: string;
+  /** WS2 smart-routing policy for this run (default: none — no router is created, byte-identical to pre-Phase-3a behavior). */
+  modelPolicy?: ModelPolicy;
+  /**
+   * Test/advanced seam overriding the IO `createModelRouter` uses by default
+   * (Arena leaderboard file, market/inventory.json betterOn hints, the
+   * OPENROUTER_API_KEY env probe). Also backs this executor's own sealed-set
+   * re-check (manual step.model override sealing + external-router
+   * attribution) so a single injected `getLeaderboard` controls both.
+   * Production callers never set this.
+   */
+  modelRouterDeps?: ModelRouterDeps;
   timeoutMs?: number;
   runStep?: (input: HarnessStepRunnerInput) => Promise<LLMStepResult>;
   /**
@@ -62,6 +77,16 @@ export interface ExecuteAgenticFlowOptions {
    * (default: DEFAULT_GUARDRAIL_MAX_ATTEMPTS / HELIOX_GUARDRAIL_MAX_ATTEMPTS).
    */
   guardrailMaxAttempts?: number;
+  /**
+   * Injected lookup so a step's `conn:<connectionId>/<modelId>` modelId
+   * (Settings → Connections) can be resolved to an AI SDK client — see
+   * `llm-runner.ts#resolveHarnessModel`. The ipc/executor boundary
+   * (`heliox:start-harness`) builds this once per run from
+   * `provider-connections.ts`; production callers otherwise leave it
+   * undefined, in which case a `conn:` modelId fails with the same
+   * descriptive "unknown connection" error as an unresolvable id today.
+   */
+  resolveConnection?: ConnectionResolver;
 }
 
 function now(): number {
@@ -94,15 +119,31 @@ function validateFlow(flow: AgenticFlow): AgenticStep {
     }
   }
 
+  // Loop sanity checks: resolvable endpoints, no self-loop, a finite count.
+  // Reachability (target forward-reaches source) and disjointness of loop
+  // bodies are the single responsibility of `buildExecutionPlan` — this is
+  // just a fast, cheap-to-diagnose guard against malformed references.
+  for (const loop of flow.loops ?? []) {
+    getStep(flow, loop.sourceStepId);
+    getStep(flow, loop.targetStepId);
+    if (loop.sourceStepId === loop.targetStepId) {
+      throw new Error(`AgenticFlow "${flow.id}" loop "${loop.id}" source and target must be different steps ("${loop.sourceStepId}").`);
+    }
+    if (!Number.isFinite(loop.maxIterations)) {
+      throw new Error(`AgenticFlow "${flow.id}" loop "${loop.id}" has a non-finite maxIterations (${loop.maxIterations}).`);
+    }
+  }
+
   return flow.stepsRecord[flow.rootStepId];
 }
 
-function createDependencyCounters(flow: AgenticFlow): Map<string, number> {
-  const remainingDependencies = new Map<string, number>();
-  for (const step of Object.values(flow.stepsRecord)) {
-    remainingDependencies.set(step.id, step.prevStepIds.length);
-  }
-  return remainingDependencies;
+/** Loop-progress + WS2 model-routing metadata layered onto a StepStatusChanged event. */
+export interface StepStatusMeta {
+  iteration?: number;
+  totalIterations?: number;
+  loopId?: string;
+  modelId?: string;
+  modelEvidence?: RoutedModelEvidence;
 }
 
 function emitStepStatus(
@@ -110,6 +151,7 @@ function emitStepStatus(
   stepId: string,
   status: 'running' | 'completed' | 'error',
   logs?: string,
+  meta?: StepStatusMeta,
 ): void {
   harnessEventBus.emitHarnessEvent({
     type: 'StepStatusChanged',
@@ -118,6 +160,11 @@ function emitStepStatus(
     status,
     timestamp: now(),
     ...(logs ? { logs } : {}),
+    ...(meta?.iteration !== undefined ? { iteration: meta.iteration } : {}),
+    ...(meta?.totalIterations !== undefined ? { totalIterations: meta.totalIterations } : {}),
+    ...(meta?.loopId !== undefined ? { loopId: meta.loopId } : {}),
+    ...(meta?.modelId !== undefined ? { modelId: meta.modelId } : {}),
+    ...(meta?.modelEvidence !== undefined ? { modelEvidence: meta.modelEvidence } : {}),
   });
 }
 
@@ -219,12 +266,30 @@ function collectModRuntime(step: AgenticStep): ModRuntimeCollection {
   return { blockTools, attachToolsets, contracts, blockedBy, attachedBy };
 }
 
+/** Per-instance WS2 routing decision, computed by the scheduler and threaded into `executeStep`. */
+interface StepRouting {
+  modelId?: string;
+  evidence?: RoutedModelEvidence;
+}
+
 async function executeStep(
   flow: AgenticFlow,
   step: AgenticStep,
   options: ExecuteAgenticFlowOptions,
+  instance?: StepInstance,
+  routing?: StepRouting,
+  sealedIds?: Set<string>,
 ): Promise<LLMStepResult> {
-  emitStepStatus(flow.id, step.id, 'running', `Step "${step.id}" started.`);
+  // Loop-body progress, if this instance is a pass of a loop body. Kept as a
+  // plain object (not spread further here) so Phase 3 can layer modelId /
+  // modelEvidence onto the same `emit` calls without touching every call site.
+  const loopMeta: StepStatusMeta | undefined = instance?.loop
+    ? { iteration: instance.iteration, totalIterations: instance.loop.totalIterations, loopId: instance.loop.id }
+    : undefined;
+  const emit = (status: 'running' | 'completed' | 'error', logs?: string): void =>
+    emitStepStatus(flow.id, step.id, status, logs, loopMeta);
+
+  emit('running', `Step "${step.id}" started.`);
 
   // ---------------------------------------------------------------------------
   // Retriever branch — ADDITIVE: does NOT replace or break existing paths
@@ -248,7 +313,7 @@ async function executeStep(
     // Emit retrieved context as plain text output — downstream steps read it
     // from stepOutputs, and it is captured by the checkpoint below.
     const resultText = context.userPrompt;
-    emitStepStatus(flow.id, step.id, 'completed', resultText);
+    emit('completed', resultText);
     return { text: resultText, usage: null, toolCalls: [], toolResults: [] };
   }
 
@@ -293,7 +358,7 @@ async function executeStep(
   // step's status log — same visible surface as the guardrail warnings below —
   // instead of silently running with a degraded toolset.
   for (const blocked of mcpModToolSet?.blockedCommands ?? []) {
-    emitStepStatus(flow.id, step.id, 'running', `[mcp] ${blocked.message}`);
+    emit('running', `[mcp] ${blocked.message}`);
   }
 
   // Enforce each mod's `runtime.blockTools` by removing the named tool from
@@ -303,11 +368,17 @@ async function executeStep(
     if (toolName in tools) {
       delete tools[toolName];
       const modName = modRuntime.blockedBy.get(toolName) ?? 'unknown mod';
-      emitStepStatus(flow.id, step.id, 'running', `[mods] tool "${toolName}" blocked by mod "${modName}".`);
+      emit('running', `[mods] tool "${toolName}" blocked by mod "${modName}".`);
     }
   }
 
   const runStep = options.runStep ?? runLLMStep;
+  // WS2: the effective model for this step (precedence step manual > router >
+  // flow modelId/env default was already applied by the scheduler when it
+  // built `routing`) — recomputed here from the same inputs so this function
+  // stays a plain, explicit-args function rather than needing executeStep to
+  // return the value back out to the scheduler.
+  const effectiveModelId = routing?.modelId ?? options.modelId;
 
   // ── Model-agnostic guardrail: verify a step's completion contract and re-run
   // it with concrete corrective feedback until it passes or the budget is spent.
@@ -332,7 +403,8 @@ async function executeStep(
         systemPrompt: context.systemPrompt,
         userPrompt: corrective ? `${context.userPrompt}\n${corrective}` : context.userPrompt,
         tools,
-        modelId: options.modelId,
+        modelId: effectiveModelId,
+        resolveConnection: options.resolveConnection,
         timeoutMs: options.timeoutMs,
         onTelemetry: (event) => options.onLLMStepTelemetry?.({
           ...event,
@@ -355,7 +427,7 @@ async function executeStep(
       const findings = verifyStepContract(contract!, vfsBefore, vfsAfter);
       if (findings.length === 0) {
         if (attempt > 1) {
-          emitStepStatus(flow.id, step.id, 'running', `[guardrail] step "${step.id}" satisfied its contract on attempt ${attempt}/${maxAttempts}.`);
+          emit('running', `[guardrail] step "${step.id}" satisfied its contract on attempt ${attempt}/${maxAttempts}.`);
         }
         break;
       }
@@ -367,7 +439,7 @@ async function executeStep(
 
       if (attempt < maxAttempts && !stalled) {
         corrective = buildCorrectivePrompt(findings);
-        emitStepStatus(flow.id, step.id, 'running', `[guardrail] attempt ${attempt}/${maxAttempts} breached contract (${summary}); retrying with corrective feedback.`);
+        emit('running', `[guardrail] attempt ${attempt}/${maxAttempts} breached contract (${summary}); retrying with corrective feedback.`);
         console.warn(`[guardrail] step "${step.id}" attempt ${attempt}/${maxAttempts} unmet: ${summary}`);
         continue;
       }
@@ -377,12 +449,32 @@ async function executeStep(
       const reason = stalled && attempt < maxAttempts
         ? `no progress after attempt ${attempt}/${maxAttempts}`
         : `after ${maxAttempts} attempts`;
-      emitStepStatus(flow.id, step.id, 'running', `[guardrail] step "${step.id}" breached contract ${reason} (${summary}).`);
+      emit('running', `[guardrail] step "${step.id}" breached contract ${reason} (${summary}).`);
       console.warn(`[guardrail] step "${step.id}" BREACHED contract ${reason}: ${findings.map((finding) => finding.detail).join(' | ')}`);
       break;
     }
 
-    emitStepStatus(flow.id, step.id, 'completed', result.text);
+    // WS2: attach model routing evidence to the completed event. `evidence`
+    // is only ever defined when routing actually happened (manual override or
+    // a router decision) — an unrouted step (fixed policy, no override) keeps
+    // `evidence` undefined and so emits no model meta at all, byte-identical
+    // to the pre-Phase-3a engine.
+    const respondedModel = result.respondedModelId;
+    const finalModelId = respondedModel ?? effectiveModelId;
+    let evidence = routing?.evidence;
+    if (evidence?.source === 'external-router') {
+      // The auto-router's pick (`openrouter/auto`) isn't itself a real model —
+      // attribute + re-seal against whatever the provider actually served.
+      evidence = respondedModel
+        ? { ...evidence, reason: `OpenRouter auto-router served ${respondedModel}`, sealed: isSealed(respondedModel, sealedIds ?? new Set()) }
+        : { ...evidence, reason: 'OpenRouter auto-router served an unattributed model (no model metadata returned)' };
+    }
+
+    emitStepStatus(flow.id, step.id, 'completed', result.text, {
+      ...loopMeta,
+      ...(finalModelId ? { modelId: finalModelId } : {}),
+      ...(evidence ? { modelEvidence: evidence } : {}),
+    });
     return result;
   } finally {
     // Close MCP connections after every step (success or failure).
@@ -395,14 +487,23 @@ export async function executeAgenticFlow(
   options: ExecuteAgenticFlowOptions = {},
 ): Promise<void> {
   let activeStepId = flow.rootStepId;
+  let activeInstance: StepInstance | undefined;
 
   try {
-    const rootStep = validateFlow(flow);
-    const remainingDependencies = createDependencyCounters(flow);
-    const queuedStepIds = new Set<string>([rootStep.id]);
-    const completedStepIds = new Set<string>();
+    validateFlow(flow);
+    // The plan expands `flow` into one `StepInstance` per pass of every step
+    // (loop bodies get `maxIterations` passes; every other step gets exactly
+    // one) and pre-wires a Kahn-ready instance graph — see loop-plan.ts. A
+    // loop-free flow expands to exactly one instance per step with the same
+    // in-degrees the legacy counters produced, so this scheduler is a
+    // structural superset of the pre-loop implementation, not a fork of it.
+    const plan = buildExecutionPlan(flow);
+    const completedInstanceKeys = new Set<string>();
+    const queuedInstanceKeys = new Set<string>(plan.readyKeys);
+    const completedStepIds = new Set<string>(); // unique real ids — checkpoint/FlowCompleted payloads (unchanged shape)
     const stepOutputs: Record<string, string> = {};
-    const readyQueue = [rootStep.id];
+    const readyQueue = [...plan.readyKeys];
+    const remaining = new Map(plan.remainingDeps);
     const runId = options.runId ?? `${flow.id}_${now()}`;
 
     harnessEventBus.emitHarnessEvent({
@@ -411,43 +512,103 @@ export async function executeAgenticFlow(
       timestamp: now(),
     });
 
+    // ── WS2 smart routing setup (once per flow run) ────────────────────────
+    // `router` stays null under a fixed/no policy — every per-instance routing
+    // computation below then short-circuits to an empty `routing`, so behavior
+    // is byte-identical to the pre-Phase-3a engine. `sealedIds` is computed
+    // unconditionally (cheap, fail-open) because it backs two independent
+    // things regardless of policy: sealing a manual step.model override's
+    // evidence, and re-sealing whatever model OpenRouter's auto-router
+    // actually served.
+    const router = options.modelPolicy ? createModelRouter(options.modelPolicy, options.modelRouterDeps) : null;
+    const leaderboardLoader = options.modelRouterDeps?.getLeaderboard ?? loadDefaultLeaderboard;
+    let leaderboardEntries: ArenaLeaderboardEntry[];
+    try {
+      leaderboardEntries = await leaderboardLoader();
+    } catch {
+      leaderboardEntries = [];
+    }
+    const sealedIds = new Set(
+      leaderboardEntries.filter((entry) => entry.status === 'completed').map((entry) => entry.modelId),
+    );
+
     while (readyQueue.length > 0) {
-      const stepId = readyQueue.shift()!;
-      if (completedStepIds.has(stepId)) continue;
+      const key = readyQueue.shift()!;
+      if (completedInstanceKeys.has(key)) continue;
 
-      activeStepId = stepId;
-      const step = getStep(flow, stepId);
-      const result = await executeStep(flow, step, options);
-      stepOutputs[stepId] = result.text;
-      completedStepIds.add(stepId);
+      const instance = plan.instances.get(key)!;
+      activeInstance = instance;
+      activeStepId = instance.stepId;
+      const step = getStep(flow, instance.stepId);
 
-      // Persist an immutable checkpoint capturing state-so-far.
+      // ── WS2 per-instance routing (precedence: step manual override > router > flow modelId/env default) ──
+      let routing: StepRouting = {};
+      if (step.model) {
+        routing = {
+          modelId: step.model,
+          evidence: {
+            source: 'fallback',
+            reason: 'manual per-step model override',
+            sealed: isSealed(step.model, sealedIds),
+          },
+        };
+      } else if (router) {
+        const decision = await router.resolve(step, { flowModelId: options.modelId });
+        if (decision) routing = { modelId: decision.modelId, evidence: decision.evidence };
+      }
+      const effectiveModelId = routing.modelId ?? options.modelId;
+
+      const result = await executeStep(flow, step, options, instance, routing, sealedIds);
+      stepOutputs[instance.stepId] = result.text; // final pass wins
+      completedInstanceKeys.add(key);
+      completedStepIds.add(instance.stepId);
+
+      // Persist an immutable checkpoint capturing state-so-far — one per
+      // instance, i.e. one per iteration for a step inside a loop body.
+      // `iteration` is attached only when this instance is a pass of a loop
+      // body (same `instance.loop` truthiness check `loopMeta` above uses),
+      // so a loop's 3 checkpoints for the same real stepId carry 1, 2, 3 and
+      // the time-travel panel can tell them apart. Conditional spread keeps
+      // the field entirely absent — never `iteration: undefined` — for the
+      // first/only pass of a non-loop step.
       const checkpoint = saveCheckpoint({
         runId,
-        stepId,
+        stepId: instance.stepId,
+        ...(instance.loop ? { iteration: instance.iteration } : {}),
         inputContext: `${step.prompt ?? ''}`,
         output: result.text,
         completedStepIds: [...completedStepIds],
-        modelId: options.modelId,
+        modelId: effectiveModelId,
       });
       harnessEventBus.emitHarnessEvent({
         type: 'CheckpointCreated',
         flowId: flow.id,
         checkpointId: checkpoint.id,
-        stepId,
+        stepId: instance.stepId,
         completedStepIds: [...completedStepIds],
         timestamp: checkpoint.timestamp,
       });
 
-      for (const nextStepId of step.nextStepIds) {
-        const remaining = (remainingDependencies.get(nextStepId) ?? 0) - 1;
-        remainingDependencies.set(nextStepId, remaining);
+      const newlyReady: string[] = [];
+      for (const nextKey of plan.nextKeys.get(key) ?? []) {
+        const nextRemaining = (remaining.get(nextKey) ?? 0) - 1;
+        remaining.set(nextKey, nextRemaining);
 
-        if (remaining === 0 && !queuedStepIds.has(nextStepId)) {
-          queuedStepIds.add(nextStepId);
-          readyQueue.push(nextStepId);
+        if (nextRemaining === 0 && !queuedInstanceKeys.has(nextKey)) {
+          queuedInstanceKeys.add(nextKey);
+          newlyReady.push(nextKey);
         }
       }
+      // Determinism: newly-ready instances are pushed in (stepId, iteration)
+      // order, same tie-break the plan uses to seed `readyKeys`.
+      newlyReady.sort((a, b) => {
+        const instanceA = plan.instances.get(a)!;
+        const instanceB = plan.instances.get(b)!;
+        return instanceA.stepId === instanceB.stepId
+          ? instanceA.iteration - instanceB.iteration
+          : instanceA.stepId.localeCompare(instanceB.stepId);
+      });
+      readyQueue.push(...newlyReady);
     }
 
     harnessEventBus.emitHarnessEvent({
@@ -461,7 +622,10 @@ export async function executeAgenticFlow(
       },
     });
   } catch (error) {
-    emitStepStatus(flow.id, activeStepId, 'error', getErrorMessage(error));
+    const errorMeta: StepStatusMeta | undefined = activeInstance?.loop
+      ? { iteration: activeInstance.iteration, totalIterations: activeInstance.loop.totalIterations, loopId: activeInstance.loop.id }
+      : undefined;
+    emitStepStatus(flow.id, activeStepId, 'error', getErrorMessage(error), errorMeta);
     throw error;
   }
 }

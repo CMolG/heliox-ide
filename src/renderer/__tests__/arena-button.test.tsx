@@ -239,6 +239,38 @@ describe('ArenaButton — Use for deploy', () => {
     expect(screen.getByRole('status')).toBeInTheDocument();
     expect(screen.getByText(/heliox serve/i)).toBeInTheDocument();
   });
+
+  it('the deploy notice states the model runs this flow under a Fixed policy and is picked up by heliox serve --select (not the old "will be used by" claim)', () => {
+    render(<ArenaButton />);
+    const [deployBtn] = screen.getAllByRole('button', { name: /use.*model-a.*for deploy/i });
+    fireEvent.click(deployBtn!);
+
+    const notice = screen.getByRole('status');
+    expect(notice.textContent).toMatch(/provider\/model-a/);
+    expect(notice.textContent).toMatch(/will run this flow when its model policy is fixed/i);
+    expect(notice.textContent).toMatch(/heliox serve --select/i);
+    expect(notice.textContent).not.toMatch(/will be used by/i);
+  });
+});
+
+// ── "Benchmarked" seal (WS2 smart routing) ────────────────────────────────────
+
+describe('ArenaButton — Benchmarked seal on recommendation cards', () => {
+  beforeEach(() => {
+    injectResult();
+  });
+
+  it('renders a "Benchmarked" pill on every recommendation card (never "verified")', () => {
+    render(<ArenaButton />);
+    const recSection = screen.getByRole('tabpanel', { name: /model recommendations/i });
+    const pills = within(recSection).getAllByTestId('ab-benchmarked-pill');
+    // Four strategies (best-score / cheapest / fastest / best-value) -> four cards.
+    expect(pills.length).toBe(4);
+    for (const pill of pills) {
+      expect(pill).toHaveTextContent('Benchmarked');
+    }
+    expect(within(recSection).queryByText(/verified/i)).not.toBeInTheDocument();
+  });
 });
 
 // ── Leaderboard tab ───────────────────────────────────────────────────────────

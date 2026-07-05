@@ -4,8 +4,10 @@
  * Drives an actual PointerSensor drag gesture (pointerdown/move/up) through a
  * real (unmocked) @dnd-kit/core DndContext, with real StepNode + DesktopAttachable
  * components — no mocked dnd-kit — to prove that dropping a Mod/Role card onto a
- * StepNode correctly attaches it. @xyflow/react is not needed here: StepNode only
- * uses it as `import type`, erased at build time.
+ * StepNode correctly attaches it. @xyflow/react IS mocked (Handle/Position only):
+ * StepNode renders real `<Handle>` connection points, and the genuine xyflow
+ * Handle throws when rendered outside a <ReactFlowProvider>, which this file
+ * intentionally doesn't set up (dnd-kit collision math is the thing under test).
  *
  * jsdom has no layout engine, so `getBoundingClientRect` is stubbed with concrete
  * rects (keyed by the same data-testids StepNode/DesktopAttachable already
@@ -66,6 +68,16 @@ vi.mock('../../../store/harness-store', () => ({
 
 vi.mock('./StepThinkingPopover', () => ({ StepThinkingPopover: () => null }));
 vi.mock('../StepInfoModal', () => ({ StepInfoModal: () => null }));
+
+// Minimal @xyflow/react stand-in — only Handle/Position are used by StepNode
+// (ReactFlow/ReactFlowProvider aren't needed since this file never renders a
+// real flow instance). See the file-header comment for why this is required.
+vi.mock('@xyflow/react', () => ({
+  Position: { Top: 'top', Right: 'right', Bottom: 'bottom', Left: 'left' },
+  Handle: (p: { id: string; type: string }) => (
+    <div data-testid={`step-handle-${p.id}`} data-handletype={p.type} />
+  ),
+}));
 
 // ── Import after mocks ───────────────────────────────────────────────────────
 

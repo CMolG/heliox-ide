@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { PipelineAssembly } from '@/types/meta-agent';
+import { LOOP_DEFAULT_MAX_ITERATIONS, LOOP_MAX_ITERATIONS_CAP } from '@/types/harness';
 import { useDesktopStore, getStepMentalAttachments } from '../store/desktop-store';
 
 // Reset store to pristine state before each test
@@ -1207,6 +1208,278 @@ describe('Mental Graph nodes and directed edges', () => {
   });
 });
 
+// ─── updateFrameData (Frame node data patches — Phase 11) ──────────
+
+describe('updateFrameData', () => {
+  it('updateFrameData patches frame fields immutably', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({
+      position: { x: 0, y: 0 }, width: 300, height: 200, title: 'My Flow', childIds: [],
+    });
+
+    const beforeNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === frameId) as any;
+    const beforeData = beforeNode.data;
+
+    store.updateFrameData(frameId, { title: 'Renamed Flow', tags: ['alpha', 'beta'], author: 'Ada Lovelace', version: '2.0.0' });
+
+    const afterNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === frameId) as any;
+    expect(afterNode).not.toBe(beforeNode);
+    expect(afterNode.data).not.toBe(beforeData);
+    expect(afterNode.data.title).toBe('Renamed Flow');
+    expect(afterNode.data.tags).toEqual(['alpha', 'beta']);
+    expect(afterNode.data.author).toBe('Ada Lovelace');
+    expect(afterNode.data.version).toBe('2.0.0');
+    // Unrelated fields survive the patch untouched.
+    expect(afterNode.data.childIds).toEqual([]);
+
+    // "Reopening" (re-reading store state fresh) still sees the persisted edit.
+    expect(
+      (useDesktopStore.getState().mentalNodes.find((n: any) => n.id === frameId) as any).data.title,
+    ).toBe('Renamed Flow');
+  });
+
+  it('updateFrameData is a no-op for a frameId that does not exist', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({
+      position: { x: 0, y: 0 }, width: 300, height: 200, title: 'Untouched flow', childIds: [],
+    });
+    const beforeNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === frameId);
+
+    store.updateFrameData('no-such-frame', { title: 'unreachable' });
+
+    const afterNodes = useDesktopStore.getState().mentalNodes;
+    expect(afterNodes).toHaveLength(1);
+    // The real node's reference is untouched — the map left it alone rather
+    // than materializing a patch for an id that doesn't exist.
+    expect(afterNodes.find((n: any) => n.id === frameId)).toBe(beforeNode);
+  });
+
+  it('updateFrameData is a no-op when the id names a Step node instead of a Frame', () => {
+    const store = useDesktopStore.getState();
+    const stepId = store.addStepNode({ position: { x: 0, y: 0 }, title: 'A step' });
+    const beforeNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId);
+
+    store.updateFrameData(stepId, { title: 'should not apply' });
+
+    const afterNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId);
+    expect(afterNode).toBe(beforeNode);
+  });
+});
+
+// ─── Loop-back edges (bounded refinement) ──────────────────────────
+
+describe('Loop-back edges (bounded refinement)', () => {
+  it('addMentalEdge on a loop edge clamps an over-cap maxIterations to LOOP_MAX_ITERATIONS_CAP', () => {
+    const store = useDesktopStore.getState();
+    const a = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    const b = store.addMentalNode({ position: { x: 300, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+
+    const edgeId = store.addMentalEdge(a, b, 'loop', undefined, undefined, 99);
+    expect(edgeId).toBeTruthy();
+    const edge = useDesktopStore.getState().mentalEdges.find((e) => e.id === edgeId);
+    expect(edge?.type).toBe('loop');
+    expect(edge?.maxIterations).toBe(LOOP_MAX_ITERATIONS_CAP);
+  });
+
+  it('addMentalEdge on a loop edge defaults maxIterations to LOOP_DEFAULT_MAX_ITERATIONS when omitted', () => {
+    const store = useDesktopStore.getState();
+    const a = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    const b = store.addMentalNode({ position: { x: 300, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+
+    const edgeId = store.addMentalEdge(a, b, 'loop');
+    const edge = useDesktopStore.getState().mentalEdges.find((e) => e.id === edgeId);
+    expect(edge?.maxIterations).toBe(LOOP_DEFAULT_MAX_ITERATIONS);
+  });
+
+  it('addMentalEdge on a non-loop edge never sets maxIterations', () => {
+    const store = useDesktopStore.getState();
+    const a = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    const b = store.addMentalNode({ position: { x: 300, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+
+    const edgeId = store.addMentalEdge(a, b, 'link', undefined, undefined, 12);
+    const edge = useDesktopStore.getState().mentalEdges.find((e) => e.id === edgeId);
+    expect(edge?.maxIterations).toBeUndefined();
+  });
+
+  it('updateMentalEdgeData updates and clamps maxIterations', () => {
+    const store = useDesktopStore.getState();
+    const a = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    const b = store.addMentalNode({ position: { x: 300, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    const edgeId = store.addMentalEdge(a, b, 'loop')!;
+
+    store.updateMentalEdgeData(edgeId, { maxIterations: 7 });
+    expect(useDesktopStore.getState().mentalEdges.find((e) => e.id === edgeId)?.maxIterations).toBe(7);
+
+    store.updateMentalEdgeData(edgeId, { maxIterations: 1000 });
+    expect(useDesktopStore.getState().mentalEdges.find((e) => e.id === edgeId)?.maxIterations).toBe(LOOP_MAX_ITERATIONS_CAP);
+  });
+
+  it('updateMentalEdgeData leaves maxIterations untouched when the patch omits it', () => {
+    const store = useDesktopStore.getState();
+    const a = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    const b = store.addMentalNode({ position: { x: 300, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    const edgeId = store.addMentalEdge(a, b, 'loop', undefined, undefined, 5)!;
+
+    store.updateMentalEdgeData(edgeId, {});
+    expect(useDesktopStore.getState().mentalEdges.find((e) => e.id === edgeId)?.maxIterations).toBe(5);
+  });
+
+  it('updateMentalEdgeData no-ops for an unknown edge id', () => {
+    const store = useDesktopStore.getState();
+    const before = useDesktopStore.getState().mentalEdges;
+    store.updateMentalEdgeData('nonexistent-edge', { maxIterations: 10 });
+    expect(useDesktopStore.getState().mentalEdges).toEqual(before);
+  });
+
+  it('insertPipelineAssembly materializes a type:"loop" edge for a step carrying loopBackTo', () => {
+    const assembly: PipelineAssembly = {
+      frameTitle: 'Refine Loop Pipeline',
+      description: 'Draft, critique, redraft up to a cap.',
+      missingCapabilitiesRequested: [],
+      steps: [
+        { id: 'draft', prompt: 'Draft the initial document from the requirements.', roleId: 'confident-executor', modIds: [], prevStepIds: [] },
+        { id: 'critique', prompt: 'Critique the draft against acceptance criteria.', roleId: 'confident-executor', modIds: [], prevStepIds: ['draft'] },
+        { id: 'redraft', prompt: 'Apply the critique to produce an improved draft.', roleId: 'confident-executor', modIds: [], prevStepIds: ['critique'], loopBackTo: { stepId: 'draft', maxIterations: 4 } },
+      ],
+    };
+
+    const result = useDesktopStore.getState().insertPipelineAssembly({
+      assembly,
+      position: { x: 0, y: 0 },
+      frameWidth: 1200,
+      frameHeight: 420,
+    });
+
+    const state = useDesktopStore.getState();
+    const [draftId, , redraftId] = result.stepIds;
+    const loopEdge = state.mentalEdges.find((e) => e.type === 'loop');
+    expect(loopEdge).toBeDefined();
+    expect(loopEdge).toMatchObject({
+      sourceId: redraftId,
+      targetId: draftId,
+      type: 'loop',
+      maxIterations: 4,
+    });
+    // 2 forward edges (draft->critique, critique->redraft) + 1 loop edge
+    expect(state.mentalEdges).toHaveLength(3);
+  });
+
+  it('insertPipelineAssembly skips a loopBackTo target that is unknown or self-referencing', () => {
+    const assembly: PipelineAssembly = {
+      frameTitle: 'Broken Loop Pipeline',
+      description: 'loopBackTo targets are invalid.',
+      missingCapabilitiesRequested: [],
+      steps: [
+        { id: 'draft', prompt: 'Draft the initial document from the requirements.', roleId: 'confident-executor', modIds: [], prevStepIds: [] },
+        { id: 'unknown-target', prompt: 'Redraft pointing at a step id that does not exist.', roleId: 'confident-executor', modIds: [], prevStepIds: ['draft'], loopBackTo: { stepId: 'ghost-step', maxIterations: 3 } },
+        { id: 'self-loop', prompt: 'Redraft pointing at itself.', roleId: 'confident-executor', modIds: [], prevStepIds: ['unknown-target'], loopBackTo: { stepId: 'self-loop', maxIterations: 3 } },
+      ],
+    };
+
+    const result = useDesktopStore.getState().insertPipelineAssembly({
+      assembly,
+      position: { x: 0, y: 0 },
+      frameWidth: 900,
+      frameHeight: 420,
+    });
+
+    const state = useDesktopStore.getState();
+    expect(state.mentalEdges.some((e) => e.type === 'loop')).toBe(false);
+    // Only the 2 forward edges: draft->unknown-target, unknown-target->self-loop
+    expect(state.mentalEdges).toHaveLength(2);
+    expect(result.stepIds).toHaveLength(3);
+  });
+
+  it('insertPipelineAssembly is a no-op loop-wise when no step carries loopBackTo', () => {
+    const assembly: PipelineAssembly = {
+      frameTitle: 'Plain Pipeline',
+      description: 'No loop-backs here.',
+      missingCapabilitiesRequested: [],
+      steps: [
+        { id: 'a', prompt: 'Do A with explicit context.', roleId: 'confident-executor', modIds: [], prevStepIds: [] },
+        { id: 'b', prompt: 'Use A to do B with explicit output.', roleId: 'confident-executor', modIds: [], prevStepIds: ['a'] },
+      ],
+    };
+
+    useDesktopStore.getState().insertPipelineAssembly({
+      assembly,
+      position: { x: 0, y: 0 },
+      frameWidth: 900,
+      frameHeight: 420,
+    });
+
+    expect(useDesktopStore.getState().mentalEdges.some((e) => e.type === 'loop')).toBe(false);
+  });
+});
+
+// ─── invertMentalEdge (re-classifies link↔loop on reversal) ────────
+
+describe('invertMentalEdge', () => {
+  it('inverts a link edge: swaps sourceId/targetId and sourceHandle/targetHandle', () => {
+    const store = useDesktopStore.getState();
+    const a = store.addStepNode({ position: { x: 0, y: 0 }, title: 'A' });
+    const b = store.addStepNode({ position: { x: 300, y: 0 }, title: 'B' });
+    const edgeId = store.addMentalEdge(a, b, 'link', 'right', 'left')!;
+
+    store.invertMentalEdge(edgeId);
+
+    const edge = useDesktopStore.getState().mentalEdges.find((e) => e.id === edgeId);
+    expect(edge?.sourceId).toBe(b);
+    expect(edge?.targetId).toBe(a);
+    expect(edge?.sourceHandle).toBe('left');
+    expect(edge?.targetHandle).toBe('right');
+    expect(edge?.type).toBe('link');
+  });
+
+  it('re-types a link edge to loop when its reversal points to an upstream step', () => {
+    // A → B, B → C is the forward chain; A → C is a direct "shortcut" edge.
+    // Inverting the shortcut (A → C becomes C → A) must be re-classified as a
+    // loop: even with the shortcut itself excluded from the check, A still
+    // forward-reaches C via B, so C → A would close a cycle (A→B→C→A).
+    // (NB: inverting either edge of the plain 2-hop chain alone can never
+    // trigger this branch — removing the sole A→B or B→C edge from the
+    // "others" graph before the cycle check leaves no alternate path, so a
+    // shortcut/diamond topology is required to exercise this branch at all.)
+    const store = useDesktopStore.getState();
+    const a = store.addStepNode({ position: { x: 0, y: 0 }, title: 'A' });
+    const b = store.addStepNode({ position: { x: 300, y: 0 }, title: 'B' });
+    const c = store.addStepNode({ position: { x: 600, y: 0 }, title: 'C' });
+    store.addMentalEdge(a, b, 'link');
+    store.addMentalEdge(b, c, 'link');
+    const shortcutId = store.addMentalEdge(a, c, 'link')!;
+
+    store.invertMentalEdge(shortcutId);
+
+    const edge = useDesktopStore.getState().mentalEdges.find((e) => e.id === shortcutId);
+    expect(edge?.sourceId).toBe(c);
+    expect(edge?.targetId).toBe(a);
+    expect(edge?.type).toBe('loop');
+    expect(edge?.maxIterations).toBe(LOOP_DEFAULT_MAX_ITERATIONS);
+  });
+
+  it('re-types a loop edge to link and deletes maxIterations when its reversal no longer closes a cycle', () => {
+    const store = useDesktopStore.getState();
+    const a = store.addStepNode({ position: { x: 0, y: 0 }, title: 'A' });
+    const b = store.addStepNode({ position: { x: 300, y: 0 }, title: 'B' });
+    const edgeId = store.addMentalEdge(a, b, 'loop', undefined, undefined, 7)!;
+
+    store.invertMentalEdge(edgeId);
+
+    const edge = useDesktopStore.getState().mentalEdges.find((e) => e.id === edgeId);
+    expect(edge?.sourceId).toBe(b);
+    expect(edge?.targetId).toBe(a);
+    expect(edge?.type).toBe('link');
+    expect(edge?.maxIterations).toBeUndefined();
+  });
+
+  it('is a no-op for an unknown edge id', () => {
+    const store = useDesktopStore.getState();
+    const before = useDesktopStore.getState().mentalEdges;
+    store.invertMentalEdge('nonexistent-edge');
+    expect(useDesktopStore.getState().mentalEdges).toEqual(before);
+  });
+});
+
 // ─── Mental Map: rectangle-draw creates React Flow node ───────────
 
 describe('Mental map rectangle-draw creates React Flow nodes', () => {
@@ -1489,6 +1762,109 @@ describe('HUD Widgets slice', () => {
   });
 });
 
+// ─── HUD Widgets — resizeHudWidget (Phase 3: user-resizing + persisted size) ──
+
+describe('resizeHudWidget', () => {
+  it('stores width/height for the given type only', () => {
+    useDesktopStore.getState().resizeHudWidget('agent-sessions', { width: 400, height: 320 });
+    const sessions = useDesktopStore.getState().hudWidgets.find(w => w.type === 'agent-sessions');
+    expect(sessions?.size).toEqual({ width: 400, height: 320 });
+    // Others remain unaffected (no stray size key)
+    const notifs = useDesktopStore.getState().hudWidgets.find(w => w.type === 'notifications');
+    expect(notifs?.size).toBeUndefined();
+  });
+
+  it('leaves values already within [min, viewport] untouched', () => {
+    useDesktopStore.getState().resizeHudWidget('agent-sessions', { width: 500, height: 400 });
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'agent-sessions');
+    expect(widget?.size).toEqual({ width: 500, height: 400 });
+  });
+
+  it('clamps below the 216x144 minimum (grid-aligned — see hud-grid.ts MIN_WIDGET_WIDTH/HEIGHT)', () => {
+    useDesktopStore.getState().resizeHudWidget('notifications', { width: 50, height: 30 });
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'notifications');
+    expect(widget?.size).toEqual({ width: 216, height: 144 });
+  });
+
+  it('clamps above the current viewport bounds', () => {
+    const hugeWidth = window.innerWidth + 5000;
+    const hugeHeight = window.innerHeight + 5000;
+    useDesktopStore.getState().resizeHudWidget('text-to-flow', { width: hugeWidth, height: hugeHeight });
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'text-to-flow');
+    expect(widget?.size).toEqual({ width: window.innerWidth, height: window.innerHeight });
+  });
+});
+
+// ─── HUD Widgets — persistence merge carries size (Phase 3) ──────────────────
+
+describe('HUD widget persistence merge — size', () => {
+  it('carries a persisted size through merge for the matching widget type', () => {
+    const merge = useDesktopStore.persist.getOptions().merge;
+    expect(merge).toBeDefined();
+
+    const persistedState = {
+      hudWidgets: [
+        { type: 'agent-sessions', visible: true, position: { x: 10, y: 20 }, size: { width: 400, height: 320 } },
+      ],
+    };
+    const currentState = useDesktopStore.getInitialState();
+    const merged = (merge as (p: unknown, c: unknown) => any)(persistedState, currentState);
+
+    const sessions = merged.hudWidgets.find((w: { type: string }) => w.type === 'agent-sessions');
+    expect(sessions.size).toEqual({ width: 400, height: 320 });
+    expect(sessions.position).toEqual({ x: 10, y: 20 });
+
+    // A widget with no persisted entry keeps its default (no size — component falls back to WIDGET_META)
+    const pipeline = merged.hudWidgets.find((w: { type: string }) => w.type === 'text-to-flow');
+    expect(pipeline.size).toBeUndefined();
+  });
+
+  it('does not introduce a stray size key when the saved widget never had one', () => {
+    const merge = useDesktopStore.persist.getOptions().merge;
+    const persistedState = {
+      hudWidgets: [
+        { type: 'notifications', visible: true, position: { x: 5, y: 5 } },
+      ],
+    };
+    const currentState = useDesktopStore.getInitialState();
+    const merged = (merge as (p: unknown, c: unknown) => any)(persistedState, currentState);
+    const notifs = merged.hudWidgets.find((w: { type: string }) => w.type === 'notifications');
+    expect(notifs.size).toBeUndefined();
+    expect('size' in notifs).toBe(false);
+  });
+});
+
+// ─── Settings — modelPolicy (WS2 smart routing) ────────────────────
+
+describe('Settings — modelPolicy (WS2)', () => {
+  it('defaults to {mode: "fixed"} — today\'s behavior, unchanged', () => {
+    expect(useDesktopStore.getState().settings.modelPolicy).toEqual({ mode: 'fixed' });
+  });
+
+  it('setModelPolicy updates settings.modelPolicy to smart-local with a strategy', () => {
+    useDesktopStore.getState().setModelPolicy({ mode: 'smart-local', strategy: 'best-value' });
+    expect(useDesktopStore.getState().settings.modelPolicy).toEqual({ mode: 'smart-local', strategy: 'best-value' });
+  });
+
+  it('setModelPolicy updates settings.modelPolicy to smart-external', () => {
+    useDesktopStore.getState().setModelPolicy({ mode: 'smart-external' });
+    expect(useDesktopStore.getState().settings.modelPolicy).toEqual({ mode: 'smart-external' });
+  });
+
+  it('setModelPolicy leaves the rest of the settings slice untouched', () => {
+    useDesktopStore.getState().updateSettings({ tourCompleted: true });
+    useDesktopStore.getState().setModelPolicy({ mode: 'smart-local', strategy: 'fastest' });
+    const { settings } = useDesktopStore.getState();
+    expect(settings.tourCompleted).toBe(true);
+    expect(settings.modelPolicy).toEqual({ mode: 'smart-local', strategy: 'fastest' });
+  });
+
+  it('updateSettings can also set modelPolicy directly (generic patch path)', () => {
+    useDesktopStore.getState().updateSettings({ modelPolicy: { mode: 'smart-external' } });
+    expect(useDesktopStore.getState().settings.modelPolicy).toEqual({ mode: 'smart-external' });
+  });
+});
+
 // ─── getStepMentalAttachments ─────────────────────────────────────
 
 describe('getStepMentalAttachments', () => {
@@ -1696,5 +2072,262 @@ describe('v16 migration — new-step and new-flow dock injection', () => {
     const newFlowCount = actions.filter((a: string) => a === 'new-flow').length;
     expect(newStepCount).toBe(1);
     expect(newFlowCount).toBe(1);
+  });
+});
+
+// ─── Boards (Figma-like multiple canvases) ────────────────────────
+
+describe('Boards — defaults', () => {
+  it('starts with a single default board and activeBoardId pointing at it', () => {
+    const { boards, activeBoardId } = useDesktopStore.getState();
+    expect(boards).toHaveLength(1);
+    expect(boards[0]).toMatchObject({ id: 'board-1', name: 'Board 1', snapshot: null });
+    expect(activeBoardId).toBe('board-1');
+  });
+});
+
+describe('Boards — switch round-trip', () => {
+  it('createBoard empties the canvas (zoom 1, pan 0,0); switching back restores board-1 graph+pan+zoom, and board-2 keeps its edits', () => {
+    const store = useDesktopStore.getState();
+
+    // Seed board-1 (active by default) with a graph, pan, and zoom.
+    const a = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: 'A', color: '#EDE9FE', shape: 'square' });
+    const b = store.addMentalNode({ position: { x: 300, y: 0 }, width: 220, height: 120, text: 'B', color: '#EDE9FE', shape: 'square' });
+    store.addMentalEdge(a, b, 'link');
+    store.setCanvasPan({ x: 50, y: 75 });
+    store.setCanvasZoom(1.5);
+
+    const board2Id = store.createBoard('Board 2');
+
+    // createBoard switches into the new board immediately — canvas is empty.
+    let state = useDesktopStore.getState();
+    expect(state.activeBoardId).toBe(board2Id);
+    expect(state.mentalNodes).toEqual([]);
+    expect(state.mentalEdges).toEqual([]);
+    expect(state.canvasPan).toEqual({ x: 0, y: 0 });
+    expect(state.canvasZoom).toBe(1);
+
+    // Edit board-2's canvas.
+    const c = useDesktopStore.getState().addMentalNode({ position: { x: 10, y: 10 }, width: 220, height: 120, text: 'C', color: '#EDE9FE', shape: 'square' });
+    useDesktopStore.getState().setCanvasPan({ x: 999, y: 999 });
+    useDesktopStore.getState().setCanvasZoom(2);
+
+    // Switch back to board-1 — its graph/pan/zoom must be intact.
+    useDesktopStore.getState().switchBoard('board-1');
+    state = useDesktopStore.getState();
+    expect(state.activeBoardId).toBe('board-1');
+    expect(state.mentalNodes.map(n => n.id).sort()).toEqual([a, b].sort());
+    expect(state.mentalEdges).toHaveLength(1);
+    expect(state.canvasPan).toEqual({ x: 50, y: 75 });
+    expect(state.canvasZoom).toBe(1.5);
+
+    // board-2's snapshot preserves the edits made while it was active.
+    const board2 = state.boards.find(bd => bd.id === board2Id)!;
+    expect(board2.snapshot).not.toBeNull();
+    expect(board2.snapshot!.mentalNodes.map(n => n.id)).toEqual([c]);
+    expect(board2.snapshot!.canvasPan).toEqual({ x: 999, y: 999 });
+    expect(board2.snapshot!.canvasZoom).toBe(2);
+  });
+
+  it('switchBoard is a no-op for the currently-active board or an unknown id', () => {
+    const store = useDesktopStore.getState();
+    store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: 'keep', color: '#EDE9FE', shape: 'square' });
+
+    useDesktopStore.getState().switchBoard('board-1'); // already active
+    expect(useDesktopStore.getState().mentalNodes).toHaveLength(1);
+    expect(useDesktopStore.getState().activeBoardId).toBe('board-1');
+
+    useDesktopStore.getState().switchBoard('does-not-exist');
+    const state = useDesktopStore.getState();
+    expect(state.activeBoardId).toBe('board-1');
+    expect(state.mentalNodes).toHaveLength(1); // untouched — no snapshot swap happened
+    expect(state.boards).toHaveLength(1); // no phantom board created
+  });
+
+  it('createBoard and switchBoard reset selection, mentalZ, and editing id', () => {
+    const store = useDesktopStore.getState();
+    const nodeId = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    store.setSelectedMentalNodeIds([nodeId]);
+    store.setMentalEditingNodeId(nodeId);
+    store.bringMentalToFront(nodeId);
+    expect(useDesktopStore.getState().selectedMentalNodeIds).toEqual([nodeId]);
+    expect(useDesktopStore.getState().mentalEditingNodeId).toBe(nodeId);
+    expect(useDesktopStore.getState().mentalZ[nodeId]).toBeDefined();
+
+    store.createBoard();
+    let state = useDesktopStore.getState();
+    expect(state.selectedMentalNodeIds).toEqual([]);
+    expect(state.mentalEditingNodeId).toBeNull();
+    expect(state.mentalZ).toEqual({});
+
+    // Switching back to board-1 also resets, even though board-2 has its own selection.
+    const anotherNode = useDesktopStore.getState().addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square' });
+    useDesktopStore.getState().setSelectedMentalNodeIds([anotherNode]);
+    useDesktopStore.getState().setMentalEditingNodeId(anotherNode);
+    useDesktopStore.getState().switchBoard('board-1');
+    state = useDesktopStore.getState();
+    expect(state.selectedMentalNodeIds).toEqual([]);
+    expect(state.mentalEditingNodeId).toBeNull();
+    expect(state.mentalZ).toEqual({});
+  });
+});
+
+describe('Boards — deleteBoard', () => {
+  it('refuses to delete the last remaining board', () => {
+    const store = useDesktopStore.getState();
+    store.deleteBoard('board-1');
+    const state = useDesktopStore.getState();
+    expect(state.boards).toHaveLength(1);
+    expect(state.boards[0].id).toBe('board-1');
+    expect(state.activeBoardId).toBe('board-1');
+  });
+
+  it('deleting the active board switches to the previous neighbor and its data is gone', () => {
+    const store = useDesktopStore.getState();
+    const seededNodeId = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: 'board1', color: '#EDE9FE', shape: 'square' });
+    const board2Id = store.createBoard('Board 2'); // board-1 (inactive) now holds seededNodeId in its snapshot
+    useDesktopStore.getState().addMentalNode({ position: { x: 1, y: 1 }, width: 220, height: 120, text: 'board2-only', color: '#EDE9FE', shape: 'square' });
+
+    useDesktopStore.getState().deleteBoard(board2Id); // board2 is active — idx 1, prefers previous (board-1)
+    const state = useDesktopStore.getState();
+    expect(state.boards.find(b => b.id === board2Id)).toBeUndefined();
+    expect(state.activeBoardId).toBe('board-1');
+    // board-1's restored data is exactly what was seeded — board2's content is gone.
+    expect(state.mentalNodes.map(n => n.id)).toEqual([seededNodeId]);
+  });
+
+  it('deleting the first (index 0) active board prefers the next neighbor', () => {
+    const store = useDesktopStore.getState();
+    const board2Id = store.createBoard('Board 2');
+    useDesktopStore.getState().switchBoard('board-1'); // board-1 (index 0) is active again
+    expect(useDesktopStore.getState().activeBoardId).toBe('board-1');
+
+    useDesktopStore.getState().deleteBoard('board-1');
+    const state = useDesktopStore.getState();
+    expect(state.boards.find(b => b.id === 'board-1')).toBeUndefined();
+    expect(state.activeBoardId).toBe(board2Id);
+  });
+
+  it('deleting an inactive board leaves the active board untouched', () => {
+    const store = useDesktopStore.getState();
+    const board2Id = store.createBoard('Board 2');
+    const board3Id = useDesktopStore.getState().createBoard('Board 3'); // active is now board-3
+    useDesktopStore.getState().addMentalNode({ position: { x: 5, y: 5 }, width: 220, height: 120, text: 'board3', color: '#EDE9FE', shape: 'square' });
+
+    useDesktopStore.getState().deleteBoard(board2Id); // board2 is inactive
+    const state = useDesktopStore.getState();
+    expect(state.boards.find(b => b.id === board2Id)).toBeUndefined();
+    expect(state.activeBoardId).toBe(board3Id);
+    expect(state.mentalNodes).toHaveLength(1); // board-3's live content is untouched
+  });
+});
+
+describe('Boards — duplicateBoard', () => {
+  it('deep-copies an inactive board — mutating the copy does not affect the original, and does not switch to it', () => {
+    const store = useDesktopStore.getState();
+    const nodeId = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: 'orig', color: '#EDE9FE', shape: 'square' });
+    const board2Id = store.createBoard('Board 2'); // board-1 (inactive) now holds nodeId in its snapshot
+
+    const copyId = useDesktopStore.getState().duplicateBoard('board-1');
+    const state = useDesktopStore.getState();
+    const copy = state.boards.find(b => b.id === copyId)!;
+    expect(copy.name).toBe('Board 1 copy');
+    expect(copy.snapshot!.mentalNodes).toHaveLength(1);
+    expect(copy.snapshot!.mentalNodes[0].id).toBe(nodeId);
+    expect(state.activeBoardId).toBe(board2Id); // unaffected — duplicateBoard never switches
+
+    // Mutate the copy's node directly and confirm the original board-1 snapshot is unaffected (deep clone).
+    copy.snapshot!.mentalNodes[0].text = 'mutated';
+    const original = useDesktopStore.getState().boards.find(b => b.id === 'board-1')!;
+    expect(original.snapshot!.mentalNodes[0].text).toBe('orig');
+  });
+
+  it('duplicating the ACTIVE board captures its LIVE top-level graph', () => {
+    const store = useDesktopStore.getState();
+    const nodeId = store.addMentalNode({ position: { x: 0, y: 0 }, width: 220, height: 120, text: 'live', color: '#EDE9FE', shape: 'square' });
+    store.setCanvasPan({ x: 42, y: 24 });
+    store.setCanvasZoom(1.75);
+
+    const copyId = useDesktopStore.getState().duplicateBoard('board-1'); // board-1 is active
+    const state = useDesktopStore.getState();
+    const copy = state.boards.find(b => b.id === copyId)!;
+    expect(copy.snapshot!.mentalNodes.map(n => n.id)).toEqual([nodeId]);
+    expect(copy.snapshot!.canvasPan).toEqual({ x: 42, y: 24 });
+    expect(copy.snapshot!.canvasZoom).toBe(1.75);
+    // The live board is untouched — still active with the same data.
+    expect(state.activeBoardId).toBe('board-1');
+    expect(state.mentalNodes.map(n => n.id)).toEqual([nodeId]);
+  });
+
+  it('returns an empty string and does nothing for an unknown board id', () => {
+    const boardsBefore = useDesktopStore.getState().boards.length;
+    const result = useDesktopStore.getState().duplicateBoard('does-not-exist');
+    expect(result).toBe('');
+    expect(useDesktopStore.getState().boards).toHaveLength(boardsBefore);
+  });
+});
+
+describe('Boards — renameBoard', () => {
+  it('trims and applies the new name', () => {
+    const store = useDesktopStore.getState();
+    store.renameBoard('board-1', '  My Board  ');
+    expect(useDesktopStore.getState().boards[0].name).toBe('My Board');
+  });
+
+  it('ignores an empty (or whitespace-only) name', () => {
+    const store = useDesktopStore.getState();
+    store.renameBoard('board-1', '   ');
+    expect(useDesktopStore.getState().boards[0].name).toBe('Board 1');
+  });
+});
+
+describe('Boards — v18 migration (boards + persisted canvasZoom)', () => {
+  it('bootstraps board-1/activeBoardId and defaults canvasZoom while preserving prior fields', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    expect(migrate).toBeDefined();
+
+    const persisted = {
+      windows: [{ id: 'win-1', type: 'chat', title: 'Chat', position: { x: 0, y: 0 }, size: { width: 480, height: 500 } }],
+      mentalNodes: [{ id: 'mn-1', type: 'mental', position: { x: 0, y: 0 }, width: 220, height: 120, text: 'legacy', color: '#EDE9FE', shape: 'square', createdAt: 1 }],
+      mentalEdges: [],
+      canvasPan: { x: 10, y: 20 },
+      dockItems: [],
+      grids: [],
+    };
+
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 17);
+
+    expect(migrated.boards).toEqual([
+      expect.objectContaining({ id: 'board-1', name: 'Board 1', snapshot: null }),
+    ]);
+    expect(migrated.activeBoardId).toBe('board-1');
+    expect(migrated.canvasZoom).toBe(1);
+    // Prior fields survive untouched — the v17 canvas becomes Board 1's live
+    // top-level slices losslessly (active-slice pattern; snapshot: null).
+    expect(migrated.windows).toEqual(persisted.windows);
+    expect(migrated.mentalNodes).toEqual(persisted.mentalNodes);
+    expect(migrated.canvasPan).toEqual({ x: 10, y: 20 });
+  });
+
+  it('does not override an already-numeric canvasZoom', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    const persisted = { canvasZoom: 2.5, dockItems: [], grids: [] };
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 17);
+    expect(migrated.canvasZoom).toBe(2.5);
+  });
+
+  it('chain-safe: a stale (<v14) persisted zoom is deleted by v14, then defaulted to 1 by v18 in the same pass', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    const persisted = {
+      canvasZoom: 3, // stale zoom from a very old session
+      dockItems: [
+        { id: 'dock-new-chat', type: 'action', label: 'New Chat', iconName: 'MessageSquare', action: 'new-chat' },
+      ],
+      grids: [],
+    };
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 10);
+    expect(migrated.canvasZoom).toBe(1);
+    expect(migrated.boards).toEqual([expect.objectContaining({ id: 'board-1' })]);
+    expect(migrated.activeBoardId).toBe('board-1');
   });
 });

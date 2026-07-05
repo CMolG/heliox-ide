@@ -99,6 +99,36 @@ describe('saveCheckpoint', () => {
     });
     expect(saved.modelId).toBeUndefined();
   });
+
+  it('includes iteration when provided (loop-body pass)', () => {
+    useInMemoryStore();
+    const saved = saveCheckpoint({
+      runId: 'run-iter',
+      stepId: 'step-loop',
+      iteration: 2,
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+    });
+    expect(saved.iteration).toBe(2);
+  });
+
+  it('omits the iteration key entirely when not provided, rather than storing it as undefined', () => {
+    useInMemoryStore();
+    const saved = saveCheckpoint({
+      runId: 'run-no-iter',
+      stepId: 'step-plain',
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+    });
+    // Strict key-absence check: a previous implementation could pass this by
+    // storing `iteration: undefined`, which the `!== undefined` check below
+    // would miss but `in` would catch (structured-clone IPC preserves keys
+    // with an undefined value, unlike JSON.stringify).
+    expect('iteration' in saved).toBe(false);
+    expect(saved.iteration).toBeUndefined();
+  });
 });
 
 describe('listCheckpoints', () => {
@@ -219,11 +249,15 @@ describe('SqliteCheckpointStore (mock database)', () => {
         run: (...args: unknown[]) => {
           const trimmed = sql.trim().toLowerCase();
           if (trimmed.startsWith('insert')) {
-            const [id, runId, stepId, inputContext, output, completedStepIds, modelId, timestamp] = args;
+            // Column order must mirror the real INSERT in checkpoints.ts:
+            // (id, run_id, step_id, iteration, input_context, output,
+            //  completed_step_ids, model_id, timestamp).
+            const [id, runId, stepId, iteration, inputContext, output, completedStepIds, modelId, timestamp] = args;
             rows.set(String(id), {
               id,
               run_id: runId,
               step_id: stepId,
+              iteration,
               input_context: inputContext,
               output,
               completed_step_ids: completedStepIds,
@@ -297,5 +331,43 @@ describe('SqliteCheckpointStore (mock database)', () => {
 
     const found = store.get('ckpt_run-sql2_step-a_0');
     expect(found?.modelId).toBeUndefined();
+  });
+
+  it('round-trips iteration through the mock database', () => {
+    const store = new SqliteCheckpointStore(buildMockDb() as any);
+
+    store.save({
+      id: 'ckpt_run-sql3_step-loop_0',
+      runId: 'run-sql3',
+      stepId: 'step-loop',
+      iteration: 2,
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+      modelId: undefined,
+      timestamp: 0,
+    });
+
+    const found = store.get('ckpt_run-sql3_step-loop_0');
+    expect(found?.iteration).toBe(2);
+  });
+
+  it('omits iteration (rather than null) when the db column is null', () => {
+    const store = new SqliteCheckpointStore(buildMockDb() as any);
+
+    store.save({
+      id: 'ckpt_run-sql4_step-plain_0',
+      runId: 'run-sql4',
+      stepId: 'step-plain',
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+      modelId: undefined,
+      timestamp: 0,
+    });
+
+    const found = store.get('ckpt_run-sql4_step-plain_0');
+    expect(found).toBeDefined();
+    expect('iteration' in found!).toBe(false);
   });
 });

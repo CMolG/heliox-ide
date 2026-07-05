@@ -7,13 +7,15 @@
  *
  * Boundaries:
  * - Owns: edge visual treatment (stroke, halo)
- * - Does NOT own: edge creation/deletion logic, store persistence
+ * - Does NOT own: edge creation/deletion logic, store persistence, or the
+ *   shared hover/hit-area/context-menu/color-editor chrome (see EdgeChrome,
+ *   which this and LoopEdge both render for that scaffolding).
  */
-import React, { useCallback, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { BaseEdge, getSmoothStepPath, EdgeLabelRenderer } from '@xyflow/react';
+import React, { useState } from 'react';
+import { BaseEdge, getSmoothStepPath } from '@xyflow/react';
 import type { EdgeProps } from '@xyflow/react';
 import { useDesktopStore } from '../../../store/desktop-store';
+import { EdgeChrome } from '../edges/EdgeChrome';
 
 export interface MentalEdgeData {
   edgeColor: string;
@@ -22,7 +24,13 @@ export interface MentalEdgeData {
   [key: string]: unknown;
 }
 
-export function MentalEdge(props: EdgeProps) {
+// No raw store-array/map subscription to narrow here — everything below
+// already resolves to a primitive or an action reference. Wrapped in
+// React.memo anyway for the same win as LoopEdge/FlowEdge (perf fix,
+// 2026-07-05 canvas/inspector plan Phase 3): `rfEdges` in MentalGraphCanvas
+// doesn't rebuild on selection changes, but it does on every edge/node/z
+// patch, so this still bails re-renders for untouched edges on those ticks.
+export const MentalEdge = React.memo(function MentalEdge(props: EdgeProps) {
   const {
     id,
     sourceX,
@@ -42,8 +50,6 @@ export function MentalEdge(props: EdgeProps) {
   const updateMentalEdgeColor = useDesktopStore((s) => s.updateMentalEdgeColor);
 
   const [hovered, setHovered] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [colorEditor, setColorEditor] = useState(false);
 
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -57,28 +63,22 @@ export function MentalEdge(props: EdgeProps) {
 
   const strokeColor = hovered || selected ? '#7FC1FF' : edgeColor;
   const strokeWidth = hovered || selected ? 3 : 2;
-  const haloColor = 'rgba(0, 0, 0, 0.25)';
-
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY });
-  }, []);
 
   return (
-    <>
-      {/* Halo underlay for readability across card fills */}
-      <BaseEdge
-        id={`${id}-halo`}
-        path={edgePath}
-        style={{
-          stroke: haloColor,
-          strokeWidth: strokeWidth + 4,
-          strokeLinecap: 'round',
-          fill: 'none',
-        }}
-      />
-
+    <EdgeChrome
+      id={id}
+      edgePath={edgePath}
+      strokeWidth={strokeWidth}
+      edgeColor={edgeColor}
+      onColorChange={(color) => updateMentalEdgeColor(id, color)}
+      labelX={labelX}
+      colorModalTop={labelY + 12}
+      onHoverChange={setHovered}
+      menuTestId={`mental-edge-ctx-menu-${id}`}
+      colorMenuItemTestId={`mental-edge-color-${id}`}
+      deleteMenuItemTestId={`mental-edge-delete-${id}`}
+      onDelete={() => removeMentalEdge(id)}
+    >
       {/* Primary edge stroke — plain line, no arrowhead.
           Attachment edges (mental↔step) render dashed to visually distinguish
           them from mental→mental hierarchy edges. */}
@@ -93,89 +93,6 @@ export function MentalEdge(props: EdgeProps) {
           fill: 'none',
         }}
       />
-
-      {/* Wider invisible hit-area for hover/click detection */}
-      <path
-        d={edgePath}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={20}
-        style={{ cursor: 'pointer' }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onContextMenu={handleContextMenu}
-      />
-
-      {/* Color editor via EdgeLabelRenderer (portal within React Flow) */}
-      <EdgeLabelRenderer>
-        {colorEditor && (
-          <div
-            className="mental-line-color-modal"
-            style={{
-              position: 'absolute',
-              left: labelX,
-              top: labelY + 12,
-              pointerEvents: 'all',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <input
-              className="mental-line-color-input"
-              type="color"
-              value={edgeColor}
-              onChange={(e) => updateMentalEdgeColor(id, e.target.value)}
-            />
-            <button
-              className="mental-line-menu-item"
-              onClick={() => setColorEditor(false)}
-            >
-              Done
-            </button>
-          </div>
-        )}
-      </EdgeLabelRenderer>
-
-      {/* Context menu — portaled to body to escape React Flow transform */}
-      {contextMenu && createPortal(
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 10002, pointerEvents: 'all' }}
-          onClick={() => setContextMenu(null)}
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
-        >
-          <div
-            className="mental-line-menu"
-            data-testid={`mental-edge-ctx-menu-${id}`}
-            style={{
-              position: 'absolute',
-              left: contextMenu.x,
-              top: contextMenu.y,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="mental-line-menu-item"
-              data-testid={`mental-edge-color-${id}`}
-              onClick={() => {
-                setColorEditor(true);
-                setContextMenu(null);
-              }}
-            >
-              Change color
-            </button>
-            <button
-              className="mental-line-menu-item"
-              data-testid={`mental-edge-delete-${id}`}
-              onClick={() => {
-                removeMentalEdge(id);
-                setContextMenu(null);
-              }}
-            >
-              Delete edge
-            </button>
-          </div>
-        </div>,
-        document.body
-      )}
-    </>
+    </EdgeChrome>
   );
-}
+});

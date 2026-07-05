@@ -65,16 +65,24 @@ interface CheckpointBadgeProps {
 }
 
 function CheckpointBadge({ checkpoint, index, isActive, onClick }: CheckpointBadgeProps) {
+  // A loop body re-visits the same real stepId on every pass, so without a
+  // pass marker a 3-iteration loop renders 3 identical badges. `iteration`
+  // (1-based) disambiguates them — both visually (compact "×N" suffix) and
+  // for screen readers (spelled-out "pass N" in the aria-label).
+  const hasIteration = checkpoint.iteration !== undefined;
   return (
     <button
       type="button"
       className={`ttp-badge${isActive ? ' ttp-badge--active' : ''}`}
-      aria-label={`Checkpoint ${index + 1}: step ${checkpoint.stepId}, ${formatTimestamp(checkpoint.timestamp)}`}
+      aria-label={`Checkpoint ${index + 1}: step ${checkpoint.stepId}${hasIteration ? `, pass ${checkpoint.iteration}` : ''}, ${formatTimestamp(checkpoint.timestamp)}`}
       onClick={onClick}
       tabIndex={-1} /* keyboard nav is on the slider track, not individual badges */
     >
       <div className="ttp-badge-pip" />
-      <span className="ttp-badge-label">{checkpoint.stepId}</span>
+      <span className="ttp-badge-label">
+        {checkpoint.stepId}
+        {hasIteration && <span className="ttp-badge-iteration">{` ×${checkpoint.iteration}`}</span>}
+      </span>
     </button>
   );
 }
@@ -118,6 +126,12 @@ function StateInspector({
           <LucideIcon name="GitCommitVertical" size={11} />
           {checkpoint.stepId}
         </span>
+        {checkpoint.iteration !== undefined && (
+          <span className="ttp-inspector-meta-item ttp-inspector-meta-item--iteration">
+            <LucideIcon name="Repeat" size={11} />
+            Iteration {checkpoint.iteration}
+          </span>
+        )}
       </div>
 
       {/* Input context */}
@@ -342,7 +356,7 @@ export function TimeTravelPanel({ runId, flow, onClose }: TimeTravelPanelProps) 
               aria-valuemax={checkpoints.length}
               aria-valuetext={
                 activeCheckpoint
-                  ? `Step ${activeCheckpoint.stepId}, ${formatTimestamp(activeCheckpoint.timestamp)}`
+                  ? `Step ${activeCheckpoint.stepId}${activeCheckpoint.iteration !== undefined ? `, pass ${activeCheckpoint.iteration}` : ''}, ${formatTimestamp(activeCheckpoint.timestamp)}`
                   : undefined
               }
               onKeyDown={handleSliderKeyDown}

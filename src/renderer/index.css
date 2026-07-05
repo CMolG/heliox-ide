@@ -124,11 +124,15 @@ body {
   background: rgba(255, 255, 255, 0.03) !important;
 }
 
-/* Root IDE layout — 2 column desktop grid with top bar and status bar */
+/* Root IDE layout — 3 column desktop grid (explorer / main / inspector) with
+   top bar and status bar. The inspector column's width is CSS-variable
+   driven (`var(--panel-inspector-width, 300px)`) rather than a second
+   hardcoded [data-sidebar="false"]-style override, so its collapsed state
+   is a single variable flip — see [data-inspector="false"] below. */
 .heliox-layout {
   --panel-explorer-width: 280px;
   display: grid;
-  grid-template-columns: var(--panel-explorer-width) 1fr;
+  grid-template-columns: var(--panel-explorer-width) 1fr var(--panel-inspector-width, 300px);
   grid-template-rows: auto 1fr;
   height: 100vh;
   width: 100vw;
@@ -139,7 +143,11 @@ body {
 }
 
 .heliox-layout[data-sidebar="false"] {
-  grid-template-columns: 0 1fr;
+  grid-template-columns: 0 1fr var(--panel-inspector-width, 300px);
+}
+
+.heliox-layout[data-inspector="false"] {
+  --panel-inspector-width: 0px;
 }
 
 /* Collapsible panel wrapper — used by sidebar and chat panels */
@@ -158,7 +166,8 @@ body {
   pointer-events: none;
 }
 
-/* Top bar spans full width */
+/* Top bar spans full width (all 3 columns — `-1` resolves to the last grid
+   line regardless of column count, so this didn't need to change). */
 .heliox-topbar {
   grid-column: 1 / -1;
   grid-row: 1;
@@ -168,6 +177,15 @@ body {
 .heliox-explorer {
   grid-column: 1;
   grid-row: 2;
+}
+
+/* Right-side inspector panel (Figma-like), bound to canvas selection —
+   width/opacity collapse transition is applied inline in App.tsx (same
+   convention .heliox-explorer's sibling div above already uses). */
+.heliox-inspector {
+  grid-column: 3;
+  grid-row: 2;
+  overflow: hidden;
 }
 
 /* Main content area — direct grid child that holds the desktop.
@@ -519,6 +537,205 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* ─── Board Switcher (TopBar, Phase 12) ──────────────────────────
+   Compact pill trigger + portalled dropdown for switching between the
+   Figma-like independent canvases ("boards" — desktop-store.ts's `boards`/
+   `activeBoardId` + createBoard/switchBoard/renameBoard/deleteBoard/
+   duplicateBoard). The menu reuses the same dark-glass vocabulary as the
+   ctx-menus and .step-quick-add: rgba(20,20,20,0.96) bg, 1px
+   rgba(255,255,255,0.12) border, radius 8, soft shadow. */
+
+.board-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #a1a1aa;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.board-switcher:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #d6d3d1;
+}
+
+.board-switcher[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(77, 168, 255, 0.35);
+  color: #d6d3d1;
+}
+
+.board-switcher-label {
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-switcher-chevron {
+  display: flex;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.board-switcher[aria-expanded="true"] .board-switcher-chevron {
+  transform: rotate(180deg);
+}
+
+.board-switcher-menu {
+  min-width: 220px;
+  max-width: 300px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 8px;
+  background: rgba(20, 20, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.board-switcher-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+}
+
+.board-switcher-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.board-switcher-row[data-active="true"] {
+  background: rgba(77, 168, 255, 0.1);
+}
+
+.board-switcher-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #e4e4e7;
+  font-size: 12px;
+  text-align: left;
+}
+
+.board-switcher-switch:disabled {
+  opacity: 0.45;
+}
+
+.board-switcher-check {
+  flex-shrink: 0;
+  color: #4DA8FF;
+}
+
+.board-switcher-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-switcher-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  padding-right: 2px;
+}
+
+.board-switcher-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #808080;
+  flex-shrink: 0;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.board-switcher-icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e4e4e7;
+}
+
+.board-switcher-icon-btn:disabled {
+  opacity: 0.35;
+}
+
+.board-switcher-icon-btn--danger:hover:not(:disabled) {
+  background: rgba(240, 37, 37, 0.1);
+  color: #F02525;
+}
+
+.board-switcher-confirm {
+  font-size: 9px;
+  font-weight: 700;
+  color: #F02525;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.board-switcher-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid #4DA8FF;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e4e4e7;
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+
+.board-switcher-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px 8px;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: #808080;
+  font-size: 12px;
+  transition: color 0.1s ease, background 0.1s ease;
+}
+
+.board-switcher-footer:hover {
+  color: #e4e4e7;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-switcher,
+  .board-switcher-chevron,
+  .board-switcher-icon-btn,
+  .board-switcher-footer {
+    transition: none !important;
+  }
+}
+
 /* Skip links — visible only on focus for keyboard navigation */
 .skip-link {
   position: absolute;
@@ -691,7 +908,21 @@ body {
   position: absolute;
   pointer-events: none;
   /* overflow visible by default — attachments extend outside */
-  transition: left 300ms ease-out, top 300ms ease-out, width 300ms ease-out, height 300ms ease-out;
+  /* The selection/interaction ring is carried HERE, not on the inner
+     .desktop-window below — role/mod/flow attachments render as shell
+     children (siblings of .desktop-window) and were overlapping/cutting an
+     outline drawn on the inner window. The shell's own box is identical to
+     the window's (100% width/height, no padding — see .desktop-window
+     below), so an outline here traces the exact same rect, just from an
+     ancestor of the attachments instead of a sibling. border-radius must
+     mirror the window's so the ring follows the same rounded corners; see
+     the consolidated `.desktop-window-shell[data-...]` color states below
+     .desktop-window's box-shadow rules, which still live on the inner
+     window where they read correctly against its rounded content box. */
+  border-radius: 12px;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  transition: left 300ms ease-out, top 300ms ease-out, width 300ms ease-out, height 300ms ease-out, outline-color 0.15s ease;
   will-change: transform;
 }
 .desktop-window-shell[data-interacting="true"] {
@@ -723,11 +954,13 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* Interaction ring — outline (not border) so it never shifts the box model
-     or the absolutely-positioned .resize-handle children keyed off this edge. */
-  outline: 2px solid transparent;
-  outline-offset: -2px;
-  transition: box-shadow 0.15s ease, filter 0.15s ease, outline-color 0.15s ease;
+  /* The interaction/selection ring itself moved to .desktop-window-shell
+     (this element's outer wrapper, see above) so role/mod/flow attachments
+     — rendered as shell children alongside this window — can never overlap
+     or cut it. This inner window keeps its box-shadow "glow" states below
+     (they still read correctly clipped to the rounded content box) but no
+     longer draws its own outline. */
+  transition: box-shadow 0.15s ease, filter 0.15s ease;
   pointer-events: auto;
   will-change: transform;
 }
@@ -742,9 +975,28 @@ body {
 }
 
 /* Hover / keyboard-focus — consistent electric-blue ring on every window,
-   independent of role/active/highlighted so those box-shadow cues stay intact. */
-.desktop-window:hover,
-.desktop-window:focus-within {
+   independent of role/active/highlighted so those box-shadow cues stay intact.
+   Targets the shell (see .desktop-window-shell above), not this inner
+   element — :hover/:focus-within still bubble up correctly from the inner
+   .desktop-window below, which is the actual pointer-events:auto hit target
+   and focusable-descendant host. */
+.desktop-window-shell:hover,
+.desktop-window-shell:focus-within {
+  outline-color: #4285F4;
+}
+
+/* Ring color for every selection state — consolidated here instead of
+   repeated per state below, since active/highlighted/selected/hover/focus
+   all resolve to the exact same color. Each state's own box-shadow "glow"
+   (which DOES vary by state/role) stays on .desktop-window down where those
+   rules already live. Keep this list in sync with the .desktop-window
+   box-shadow rules below (same conditions) if a new state is ever added. */
+.desktop-window-shell[data-has-role="true"][data-active="true"],
+.desktop-window-shell[data-has-role="true"][data-highlighted="true"],
+.desktop-window-shell[data-has-role="true"][data-selected="true"],
+.desktop-window-shell:not([data-has-role="true"])[data-active="true"],
+.desktop-window-shell:not([data-has-role="true"])[data-highlighted="true"],
+.desktop-window-shell:not([data-has-role="true"])[data-selected="true"] {
   outline-color: #4285F4;
 }
 /* ─── Role Color Integration ─────────────────────────────────────── */
@@ -755,7 +1007,6 @@ body {
     0 0 20px color-mix(in srgb, var(--role-color) 10%, transparent);
 }
 .desktop-window[data-has-role="true"][data-active="true"] {
-  outline-color: #4285F4;
   box-shadow:
     0 14px 40px rgba(0,0,0,0.54),
     0 4px 16px rgba(0,0,0,0.42),
@@ -763,7 +1014,6 @@ body {
   filter: saturate(1.06);
 }
 .desktop-window[data-has-role="true"][data-highlighted="true"] {
-  outline-color: #4285F4;
   box-shadow:
     0 12px 36px rgba(0,0,0,0.5),
     0 3px 12px rgba(0,0,0,0.4),
@@ -804,7 +1054,6 @@ body {
 
 /* Default active/highlight for windows WITHOUT a role */
 .desktop-window:not([data-has-role="true"])[data-active="true"] {
-  outline-color: #4285F4;
   box-shadow:
     0 14px 40px rgba(0,0,0,0.54),
     0 4px 16px rgba(0,0,0,0.42),
@@ -812,21 +1061,18 @@ body {
   filter: saturate(1.06);
 }
 .desktop-window:not([data-has-role="true"])[data-highlighted="true"] {
-  outline-color: #4285F4;
   box-shadow:
     0 12px 36px rgba(0,0,0,0.5),
     0 3px 12px rgba(0,0,0,0.4),
     0 0 18px rgba(66,133,244,0.4);
 }
 .desktop-window[data-has-role="true"][data-selected="true"] {
-  outline-color: #4285F4;
   box-shadow:
     0 11px 34px rgba(0,0,0,0.48),
     0 3px 12px rgba(0,0,0,0.36),
     0 0 16px color-mix(in srgb, var(--role-color) 30%, transparent);
 }
 .desktop-window:not([data-has-role="true"])[data-selected="true"] {
-  outline-color: #4285F4;
   box-shadow:
     0 11px 34px rgba(0,0,0,0.48),
     0 3px 12px rgba(0,0,0,0.36),
@@ -1863,6 +2109,27 @@ body {
   opacity: 1;
 }
 
+/* Step node handles — same treatment as .mental-node-handle above, but
+   tinted with each step's own accent color instead of the fixed mental-node
+   blue. `--step-accent` is set inline on `.step-node-shell` (StepNode.tsx)
+   and inherits down to these handles since they're rendered as its direct
+   children. Pointer events are already enabled globally by the
+   `.mental-graph-canvas .react-flow__handle` rule above. */
+.step-node-handle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--step-accent, #4DA8FF);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+  z-index: 5;
+}
+
+.react-flow__node:hover .step-node-handle {
+  opacity: 1;
+}
+
 .mental-node-handle-source {
   bottom: -5px;
 }
@@ -2005,11 +2272,50 @@ body {
   border: 1px solid rgba(250, 204, 21, 0.22);
 }
 
-/* Run control in the Flow header (replaces the old harness dock) */
-.pipeline-frame-run {
+/* Header action cluster — anchors Export + Run together at the exact
+   position the Run control used to occupy alone, so both flow with the
+   Run label's variable width (Run/Compiling/Running/Completed/Failed/
+   Paused) instead of relying on a second hardcoded absolute offset. */
+.pipeline-frame-actions {
   position: absolute;
   top: 14px;
   right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 4;
+}
+
+/* Export control — small, unobtrusive icon-only sibling of Run. Violet
+   accent matches .pipeline-frame-workflow-icon's flow-identity hue rather
+   than Run's green "go" signal, so the two stay visually distinct. */
+.pipeline-frame-export {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid rgba(167, 139, 250, 0.28);
+  background: rgba(10, 10, 10, 0.72);
+  color: rgba(216, 202, 253, 0.85);
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.pipeline-frame-export:hover {
+  background: rgba(167, 139, 250, 0.16);
+  border-color: rgba(167, 139, 250, 0.5);
+}
+
+.pipeline-frame-export:active {
+  transform: translateY(1px);
+}
+
+/* Run control in the Flow header (replaces the old harness dock) */
+.pipeline-frame-run {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2027,7 +2333,6 @@ body {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
-  z-index: 4;
 }
 
 .pipeline-frame-run:hover:not(:disabled) {
@@ -2215,8 +2520,25 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(14px) saturate(150%);
   -webkit-backdrop-filter: blur(14px) saturate(150%);
-  overflow: hidden;
+  /* Visible, not hidden: the 4 connector <Handle>s are direct children that
+     protrude ~5px past this box on every edge. Hidden overflow here used to
+     clip them to semicircles. Rounded-corner clipping for the actual header/
+     description/drop-zone CONTENT now happens one layer down, on the
+     `.step-node-clip` wrapper below, which the handles (and the accent bar,
+     and the execution-status ring) deliberately sit OUTSIDE of. */
+  overflow: visible;
   color: #e4e4e7;
+}
+
+/* Inner clip: wraps StepNode's header/description/drop-zone (StepNode.tsx)
+   so rounded corners still crop that content, while the shell above stays
+   `overflow: visible` for the handles. `inset: 0` + `border-radius: inherit`
+   reproduce the exact box the shell used to clip at, just one layer in. */
+.step-node-clip {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
 }
 
 .step-node-shell.is-over {
@@ -2241,7 +2563,9 @@ body {
 
 .step-node-shell.is-execution-running {
   border-color: rgba(77, 168, 255, 0.78);
-  overflow: visible;
+  /* overflow: visible was here as a running-state-only workaround for the
+     handle-clipping bug; the shell is unconditionally overflow: visible now
+     (see its rule above), so this no longer needs to override anything. */
   animation: step-node-running-pulse 1.15s ease-in-out infinite;
 }
 
@@ -2544,6 +2868,54 @@ body {
   background: rgba(255, 255, 255, 0.025);
 }
 
+/* ─── Step Node: quick-add affordances (StepQuickAddPopover.tsx) ────
+   `.step-node-empty--action` promotes the dashed empty-state placeholder
+   into a real button (native Tab/Enter; `cursor: pointer` already comes
+   from the global `button { cursor: pointer }` rule above) without altering
+   its at-rest look — only the hover treatment signals it's interactive.
+   `.step-node-add-atom` is the compact "+" shown instead once the step
+   already has atoms — deliberately quiet (low opacity) so it doesn't
+   compete with the Role/Mod chips it sits above. */
+
+.step-node-empty--action {
+  width: 100%;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.step-node-empty--action:hover {
+  border-color: var(--step-accent, #A78BFA);
+  color: rgba(228, 228, 231, 0.92);
+}
+
+.step-node-add-atom {
+  align-self: flex-end;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(161, 161, 170, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(228, 228, 231, 0.75);
+  opacity: 0.6;
+  transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.step-node-add-atom:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--step-accent, #A78BFA);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-node-empty--action,
+  .step-node-add-atom {
+    transition: none;
+  }
+}
+
 /* ─── Step Node: type-accent bar (top hairline) ────────────────── */
 
 .step-node-accent-bar {
@@ -2674,6 +3046,140 @@ body {
   font-family: var(--font-mono);
   font-size: 10px;
   color: color-mix(in srgb, var(--step-accent, #A78BFA) 90%, #ffffff);
+}
+
+/* ─── Step Node: quick-add popover (StepQuickAddPopover.tsx) ────────
+   One-click Role/Mod search-and-attach, opened from the node's empty-state
+   button or its compact "+" once atoms exist. Same dark-glass chrome as the
+   node's own context menu (StepNode.tsx's portaled ctx-menu, styled inline
+   a few rules up) so it reads as part of the same interaction family rather
+   than a new visual language. */
+
+.step-quick-add {
+  position: fixed;
+  min-width: 240px;
+  max-width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(20, 20, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  color: #e4e4e7;
+}
+
+.step-quick-add-search {
+  width: 100%;
+  min-height: 32px;
+  margin-bottom: 8px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(63, 63, 70, 0.3);
+  background: #111111;
+  color: #e4e4e7;
+  font-size: 12px;
+  font-family: var(--font-inter);
+}
+
+.step-quick-add-search::placeholder {
+  color: #a8a8b0;
+  opacity: 1; /* override Firefox's default placeholder dimming, same fix as .step-config-textarea::placeholder */
+}
+
+.step-quick-add-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.step-quick-add-section:last-child {
+  margin-bottom: 0;
+}
+
+.step-quick-add-section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(161, 161, 170, 0.68);
+  padding: 4px 6px 2px;
+}
+
+.step-quick-add-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.step-quick-add-row {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #e4e4e7;
+  font-size: 12px;
+  font-family: var(--font-manrope);
+  transition: background 0.12s ease;
+}
+
+.step-quick-add-row:hover,
+.step-quick-add-row:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.step-quick-add-row-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: rgba(228, 228, 231, 0.7);
+}
+
+.step-quick-add-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-quick-add-empty {
+  margin: 2px 6px 4px;
+  font-size: 11px;
+  color: #a8a8b0;
+}
+
+.step-quick-add-error {
+  margin: 4px 6px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fca5a5;
+}
+
+/* Non-blocking domain-mismatch hint — same amber-never-red vocabulary as
+   .step-config-domain-hint (the attach already succeeded; this is purely
+   informational, see the `MarketDomain` doc comment in types/market.ts). */
+.step-quick-add-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 6px 6px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: color-mix(in srgb, #f59e0b 82%, white);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-quick-add-row {
+    transition: none;
+  }
 }
 
 .step-harness-dock {
@@ -3295,6 +3801,175 @@ body {
   }
 }
 
+/* ─── Inspector Panel (Figma-like right column) ──────────────────
+   Reuses the Step Config Panel's visual vocabulary above directly wherever
+   it fits verbatim (`.step-config-title`, `.step-config-section-label`,
+   `.step-config-connections` + its card/label/value trio, `.step-config-hint`,
+   `.step-config-run-from-btn`) — those classes are all standalone (no
+   ancestor dependency on `.step-config-panel`), so reusing them here keeps
+   the Inspector visually identical to the evidence panel with zero new CSS
+   for the parts that are already covered. Only the genuinely new surfaces
+   (header/chrome, the editable title input, the description textarea, and
+   the destructive multi-select delete button) get dedicated classes below. */
+
+.inspector-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #0f0f0f;
+  overflow: hidden;
+}
+
+.inspector-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(63, 63, 70, 0.15);
+  color: #a1a1aa;
+  flex-shrink: 0;
+}
+
+.inspector-header-label {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.inspector-collapse-btn {
+  background: none;
+  border: none;
+  color: #525252;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.inspector-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e4e4e7;
+}
+
+.inspector-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ── Step identity (title/description) — sits above the embedded
+   StepConfigCore inside StepInspector.tsx ── */
+
+.inspector-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.inspector-step-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--step-accent, #A78BFA) 14%, rgba(20, 20, 20, 0.7));
+  border: 1.5px solid color-mix(in srgb, var(--step-accent, #A78BFA) 40%, transparent);
+  color: var(--step-accent, #A78BFA);
+}
+
+.inspector-title-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: #f4f4f5;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 6px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.inspector-title-input:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.inspector-title-input:focus {
+  outline: none;
+  background: #111111;
+  border-color: rgba(77, 168, 255, 0.4);
+}
+
+.inspector-description-textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  border-radius: 8px;
+  border: 1px solid rgba(63, 63, 70, 0.3);
+  background: #111111;
+  color: #e4e4e7;
+  font-family: var(--font-inter);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+}
+
+.inspector-description-textarea::placeholder {
+  color: #a8a8b0;
+  opacity: 1; /* override Firefox's default placeholder dimming, same as .step-config-textarea */
+}
+
+/* ── "Run evidence" button row (opens the trimmed StepInfoModal) ── */
+
+.inspector-evidence-row {
+  margin-top: 14px;
+}
+
+/* ── Multi-select delete-all (destructive — mirrors StepNode's context-menu
+   "Delete Step" red) ── */
+
+.inspector-delete-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 14px;
+  margin-top: 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(240, 37, 37, 0.3);
+  background: rgba(240, 37, 37, 0.1);
+  color: #f87171;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: var(--font-manrope);
+  transition: background 0.15s ease;
+}
+
+.inspector-delete-all-btn:hover {
+  background: rgba(240, 37, 37, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inspector-collapse-btn,
+  .inspector-title-input,
+  .inspector-delete-all-btn {
+    transition: none;
+  }
+}
+
 /* ─── Step Node: inline Run button (header cluster) ────────────── */
 
 .step-node-run-btn {
@@ -3547,11 +4222,20 @@ body {
 }
 .notification-bell:hover { background: #222; }
 
-/* ─── Expand Sidebar Button (bottom-left, mirrors notification bell) ─ */
-.expand-sidebar-btn {
+/* ─── Expand Sidebar / Inspector Buttons (corner FABs) ────────────────────
+   Task 9 (2026-07-05 canvas/inspector plan, Phase 3): these two used to
+   mirror each other bottom-left/bottom-right. The inspector one moved to
+   top-right — it was overlapping the HUD widget field at the bottom edge,
+   and top-right is now a protected 72x72 SAFE_ZONE reserved specifically
+   for it (see `logic/hud-grid.ts`'s `SAFE_ZONE`, Phase 4). Sidebar stays
+   bottom-left, unchanged. Position (bottom/left vs. top/right) no longer
+   shared, so the recipe below only keeps the geometry-independent parts;
+   .notification-bell (above) looks similar but is still NOT grouped in — it
+   omits the color transition/hover (background-only change), so folding it
+   into this rule would alter its computed style. */
+.expand-sidebar-btn,
+.expand-inspector-btn {
   position: fixed;
-  bottom: 36px;
-  left: 20px;
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -3565,7 +4249,23 @@ body {
   z-index: 300;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.expand-sidebar-btn:hover { background: #222; color: #e4e4e7; }
+.expand-sidebar-btn { bottom: 36px; left: 20px; }
+/* TopBar's rendered height is ~53px (header border-bottom 1px + inner
+   `.py-3` 12px/12px padding + its tallest content row, the 22px logo next
+   to `text-xl`/`leading-7` brand text = 28px line-height) — there's no
+   explicit height rule to read it from directly (grepped "top-bar|topbar";
+   `.heliox-topbar` only sets grid placement), so this is computed from
+   TopBar.tsx's Tailwind utility classes, not measured live. 53px + 12px
+   margin = 65px. The button's footprint (right: 20px, 36×36 → x:[w-56,w-20],
+   y:[65,101]) is fully contained by hud-grid.ts's SAFE_ZONE, which is sized
+   72×120 precisely to reserve this corner from HUD widgets — keep this
+   button's position and SAFE_ZONE's dimensions in sync. */
+.expand-inspector-btn { top: 65px; right: 20px; }
+.expand-sidebar-btn:hover,
+.expand-inspector-btn:hover {
+  background: #222;
+  color: #e4e4e7;
+}
 
 .notification-pulse {
   position: absolute;
@@ -4753,6 +5453,212 @@ body {
   font-family: var(--font-grotesk);
 }
 .settings-done-btn:hover { background: #333; }
+
+/* ─── Connections (DBeaver-style provider connections, Phase 6) ─────────────
+   Lives inside SettingsModal (white/light theme, see `.settings-*` above) —
+   reuses `.settings-input` / `.settings-outline-btn` / `.settings-section-label`
+   for form controls and buttons; these `.conn-*` rules only cover the bento
+   grid of saved connections, the inline new/edit form panel, and the
+   expandable per-connection model list that those shared classes don't. ─── */
+
+.conn-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Inline new/edit form panel — not a nested modal, SettingsModal already is one */
+.conn-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+}
+.conn-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.conn-form-row--split {
+  flex-direction: row;
+  gap: 10px;
+}
+.conn-form-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  font-family: var(--font-inter);
+}
+.conn-test-result {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+}
+.conn-test-result--ok {
+  color: #1b8a5a;
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.25);
+}
+.conn-test-result--error {
+  color: #c0392b;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+.conn-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* Bento grid of saved connections */
+.conn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.conn-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #fff;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.conn-card:hover {
+  border-color: rgba(0, 0, 0, 0.16);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+.conn-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.conn-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #bbb; /* 'never' tested */
+}
+.conn-status-dot[data-status="ok"] { background: #34d399; box-shadow: 0 0 6px rgba(52, 211, 153, 0.5); }
+.conn-status-dot[data-status="fail"] { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.4); }
+.conn-card-title {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.conn-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #222;
+  font-family: var(--font-grotesk);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-card-host {
+  font-size: 10px;
+  color: #999;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-protocol-chip {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.conn-card-meta {
+  font-size: 11px;
+  color: #999;
+  font-family: var(--font-inter);
+}
+.conn-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.conn-card-actions .settings-outline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+}
+.conn-delete-btn:hover {
+  background: rgba(239, 68, 68, 0.08) !important;
+}
+
+/* Expandable per-connection model list */
+.conn-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+.conn-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.conn-model-select {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #444;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-model-select:hover { background: rgba(0, 0, 0, 0.04); }
+.conn-model-select[data-active="true"] {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.08);
+  font-weight: 600;
+}
+.conn-model-select--disabled {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 4px 8px;
+  color: #bbb;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ─── Brutalist Tutorial Card ────────────────────────────────── */
 

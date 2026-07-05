@@ -72,9 +72,31 @@ describe('useHarnessStore', () => {
 
     await useHarnessStore.getState().startExecution();
 
-    expect(startHarness).toHaveBeenCalledWith(flow);
+    // Default dispatch (no policy/deploy choice set): fixed policy, no modelId.
+    expect(startHarness).toHaveBeenCalledWith(flow, { modelPolicy: { mode: 'fixed' }, modelId: undefined });
     expect(useHarnessStore.getState().executionStatus).toBe('running');
     expect(useHarnessStore.getState().currentStepId).toBe('step-root');
+  });
+
+  it('executeFlow passes the desktop store\'s modelPolicy and the Arena deploy-chosen model to startHarness', async () => {
+    const desktop = useDesktopStore.getState();
+    desktop.addStepNode({ id: 'step-root', title: 'Root' });
+    desktop.setModelPolicy({ mode: 'smart-local', strategy: 'best-value' });
+    useHarnessStore.getState().setArenaDeployModel('z-ai/glm-5.2');
+    const flow = useHarnessStore.getState().compileCurrentCanvas();
+
+    const startHarness = vi.fn().mockResolvedValue({ success: true });
+    window.helioxAPI = {
+      startHarness,
+      onHarnessEvent: vi.fn(() => vi.fn()),
+    } as any;
+
+    await useHarnessStore.getState().startExecution();
+
+    expect(startHarness).toHaveBeenCalledWith(flow, {
+      modelPolicy: { mode: 'smart-local', strategy: 'best-value' },
+      modelId: 'z-ai/glm-5.2',
+    });
   });
 
   it('runStep executes a single step in isolation, ignoring its real canvas neighbors', async () => {
@@ -214,6 +236,246 @@ describe('useHarnessStore', () => {
 
     useHarnessStore.getState().unsubscribeFromHarnessEvents();
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  describe('stepIterations', () => {
+    function subscribeAndCapture(): Array<(event: HarnessEventPayload) => void> {
+      const callbacks: Array<(event: HarnessEventPayload) => void> = [];
+      window.helioxAPI = {
+        onHarnessEvent: vi.fn((callback: (event: HarnessEventPayload) => void) => {
+          callbacks.push(callback);
+          return vi.fn();
+        }),
+      } as any;
+      useHarnessStore.getState().subscribeToHarnessEvents();
+      return callbacks;
+    }
+
+    it('a StepStatusChanged event carrying iteration/totalIterations/loopId populates stepIterations', () => {
+      const callbacks = subscribeAndCapture();
+
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-loop',
+        status: 'running',
+        iteration: 2,
+        totalIterations: 5,
+        loopId: 'loop-1',
+      });
+
+      expect(useHarnessStore.getState().stepIterations['step-loop']).toEqual({
+        iteration: 2,
+        total: 5,
+        loopId: 'loop-1',
+      });
+    });
+
+    it('defaults total to iteration and loopId to "" when the event omits them', () => {
+      const callbacks = subscribeAndCapture();
+
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-loop',
+        status: 'running',
+        iteration: 1,
+      });
+
+      expect(useHarnessStore.getState().stepIterations['step-loop']).toEqual({
+        iteration: 1,
+        total: 1,
+        loopId: '',
+      });
+    });
+
+    it('a plain StepStatusChanged (no iteration) leaves existing stepIterations untouched', () => {
+      const callbacks = subscribeAndCapture();
+
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-loop',
+        status: 'running',
+        iteration: 2,
+        totalIterations: 5,
+        loopId: 'loop-1',
+      });
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 2,
+        stepId: 'step-loop',
+        status: 'running',
+        logs: 'still working',
+      });
+
+      expect(useHarnessStore.getState().stepIterations['step-loop']).toEqual({
+        iteration: 2,
+        total: 5,
+        loopId: 'loop-1',
+      });
+    });
+
+    it('a reset (stopExecution) empties stepIterations', () => {
+      const callbacks = subscribeAndCapture();
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-loop',
+        status: 'running',
+        iteration: 1,
+        totalIterations: 3,
+        loopId: 'loop-1',
+      });
+      expect(useHarnessStore.getState().stepIterations).not.toEqual({});
+
+      useHarnessStore.getState().stopExecution();
+
+      expect(useHarnessStore.getState().stepIterations).toEqual({});
+    });
+
+    it('a reset (compileCurrentCanvas) empties stepIterations', () => {
+      const desktop = useDesktopStore.getState();
+      desktop.addStepNode({ id: 'step-root', title: 'Root' });
+      const callbacks = subscribeAndCapture();
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-root',
+        status: 'running',
+        iteration: 1,
+        totalIterations: 3,
+        loopId: 'loop-1',
+      });
+      expect(useHarnessStore.getState().stepIterations).not.toEqual({});
+
+      useHarnessStore.getState().compileCurrentCanvas();
+
+      expect(useHarnessStore.getState().stepIterations).toEqual({});
+    });
+  });
+
+  describe('stepModels', () => {
+    function subscribeAndCapture(): Array<(event: HarnessEventPayload) => void> {
+      const callbacks: Array<(event: HarnessEventPayload) => void> = [];
+      window.helioxAPI = {
+        onHarnessEvent: vi.fn((callback: (event: HarnessEventPayload) => void) => {
+          callbacks.push(callback);
+          return vi.fn();
+        }),
+      } as any;
+      useHarnessStore.getState().subscribeToHarnessEvents();
+      return callbacks;
+    }
+
+    it('a StepStatusChanged event carrying modelId + modelEvidence populates stepModels', () => {
+      const callbacks = subscribeAndCapture();
+
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-routed',
+        status: 'completed',
+        modelId: 'z-ai/glm-5.2',
+        modelEvidence: {
+          source: 'arena-leaderboard',
+          strategy: 'best-score',
+          reason: 'best-score winner: score 90 at $0.01/run',
+          sealed: true,
+        },
+      });
+
+      expect(useHarnessStore.getState().stepModels['step-routed']).toEqual({
+        modelId: 'z-ai/glm-5.2',
+        evidence: {
+          source: 'arena-leaderboard',
+          strategy: 'best-score',
+          reason: 'best-score winner: score 90 at $0.01/run',
+          sealed: true,
+        },
+      });
+    });
+
+    it('a StepStatusChanged event carrying modelId but no modelEvidence still populates stepModels, with evidence omitted', () => {
+      const callbacks = subscribeAndCapture();
+
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-plain',
+        status: 'completed',
+        modelId: 'openai/gpt-4o-mini',
+      });
+
+      expect(useHarnessStore.getState().stepModels['step-plain']).toEqual({ modelId: 'openai/gpt-4o-mini' });
+    });
+
+    it('a plain StepStatusChanged (no modelId) leaves existing stepModels untouched', () => {
+      const callbacks = subscribeAndCapture();
+
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-routed',
+        status: 'running',
+        modelId: 'z-ai/glm-5.2',
+      });
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 2,
+        stepId: 'step-routed',
+        status: 'completed',
+        logs: 'done',
+      });
+
+      expect(useHarnessStore.getState().stepModels['step-routed']).toEqual({ modelId: 'z-ai/glm-5.2' });
+    });
+
+    it('a reset (stopExecution) empties stepModels', () => {
+      const callbacks = subscribeAndCapture();
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-routed',
+        status: 'completed',
+        modelId: 'z-ai/glm-5.2',
+      });
+      expect(useHarnessStore.getState().stepModels).not.toEqual({});
+
+      useHarnessStore.getState().stopExecution();
+
+      expect(useHarnessStore.getState().stepModels).toEqual({});
+    });
+
+    it('a reset (compileCurrentCanvas) empties stepModels', () => {
+      const desktop = useDesktopStore.getState();
+      desktop.addStepNode({ id: 'step-root', title: 'Root' });
+      const callbacks = subscribeAndCapture();
+      callbacks[0]({
+        type: 'StepStatusChanged',
+        flowId: 'flow-1',
+        timestamp: 1,
+        stepId: 'step-root',
+        status: 'completed',
+        modelId: 'z-ai/glm-5.2',
+      });
+      expect(useHarnessStore.getState().stepModels).not.toEqual({});
+
+      useHarnessStore.getState().compileCurrentCanvas();
+
+      expect(useHarnessStore.getState().stepModels).toEqual({});
+    });
   });
 
   describe('lastLogMessage', () => {

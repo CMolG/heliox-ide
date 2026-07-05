@@ -7,7 +7,7 @@
  */
 // src/types/index.ts — Heliox IDE shared types
 import type { AgenticFlow } from './harness';
-import type { HarnessEventPayload } from './ipc-events';
+import type { HarnessEventPayload, ModelPolicy } from './ipc-events';
 import type { PipelineAssembly } from './meta-agent';
 
 export interface PerformanceMetrics {
@@ -337,7 +337,15 @@ export interface GitStatusInfo {
 export interface HelioxAPI {
   initBaselines: (flows: Flow[]) => Promise<IpcResult>;
   runAgent: (params: RunAgentParams) => Promise<IpcResult>;
-  startHarness: (flow: AgenticFlow) => Promise<IpcResult>;
+  /**
+   * Dispatch an `AgenticFlow` for execution. `options.modelPolicy` opts the run
+   * into WS2 smart routing (`smart-local` / `smart-external`); omitted or
+   * `{mode:'fixed'}` keeps today's behavior. `options.modelId` is the flow's
+   * own already-resolved model (e.g. the Arena "deploy" choice) — the router
+   * outranks it, which itself is outranked by any step's own manual override.
+   */
+  startHarness: (flow: AgenticFlow, options?: { modelPolicy?: ModelPolicy; modelId?: string }) => Promise<IpcResult>;
+  exportFlow: (flow: AgenticFlow) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>;
   assemblePipeline: (userIntent: string) => Promise<{ success: boolean; data?: PipelineAssembly; error?: string }>;
   readMarketInventory: (projectPath: string) => Promise<import('./market').MarketInventory | null>;
   readMarketPrompt: (projectPath: string, category: string, name: string) => Promise<string | null>;
@@ -401,6 +409,27 @@ export interface HelioxAPI {
   opencodeSaveCredential: (providerId: string, key: string) => Promise<{ success: boolean; error?: string }>;
   opencodeRemoveCredential: (providerId: string) => Promise<{ success: boolean; error?: string }>;
   opencodeStatus: () => Promise<{ installed: boolean; version: string | null; path: string | null }>;
+
+  // ── Provider Connections (DBeaver-style, Phase 6) ───────────────
+  // Replaces the old opencode-backed provider-picker UI (see ConnectionsSection.tsx).
+  providerConnectionsList: () => Promise<{ success: boolean; data?: import('./ipc-events').ProviderConnection[]; error?: string }>;
+  providerConnectionsCreate: (
+    input: import('./ipc-events').ProviderConnectionInput,
+  ) => Promise<{ success: boolean; data?: import('./ipc-events').ProviderConnection; error?: string }>;
+  providerConnectionsUpdate: (
+    id: string,
+    patch: import('./ipc-events').ProviderConnectionUpdate,
+  ) => Promise<{ success: boolean; data?: import('./ipc-events').ProviderConnection; error?: string }>;
+  providerConnectionsDelete: (id: string) => Promise<{ success: boolean; error?: string }>;
+  providerConnectionsSetModelEnabled: (
+    id: string,
+    modelId: string,
+    enabled: boolean,
+  ) => Promise<{ success: boolean; data?: import('./ipc-events').ProviderConnection; error?: string }>;
+  providerConnectionsTest: (
+    request: import('./ipc-events').ConnectionTestRequest,
+  ) => Promise<import('./ipc-events').ConnectionTestResponse>;
+
   getConfigDir: (projectPath: string) => Promise<string>;
   listProjectFiles: (projectPath: string) => Promise<string[]>;
   saveFile: (defaultPath: string, content: string) => Promise<boolean>;

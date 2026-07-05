@@ -9,6 +9,7 @@ import { CODE_MODS } from '../market/code-mods';
 import { CODE_ROLES } from '../market/code-roles';
 import { getMarketMods, getMarketRoleCatalog } from '../market/market-loader';
 import { resolveHarnessModel } from '../harness-engine/llm-runner';
+import { clampLoopIterations } from '../../types/harness';
 
 export const pipelineAssemblyStepSchema = z.object({
   id: z.string().min(1).describe('Stable kebab-case step id. Must be unique inside steps.'),
@@ -16,6 +17,10 @@ export const pipelineAssemblyStepSchema = z.object({
   roleId: z.string().min(1).describe('Role id selected from the discovered role catalog.'),
   modIds: z.array(z.string().min(1)).describe('Mod ids selected from the discovered mod catalog.'),
   prevStepIds: z.array(z.string().min(1)).describe('Ids of prerequisite steps. Empty for root/source steps.'),
+  loopBackTo: z.object({
+    stepId: z.string().min(1).describe('Id of an EARLIER step in this pipeline to loop back to.'),
+    maxIterations: z.number().int().min(1).max(50).describe('Total passes of the loop body (1-50; prefer 2-4).'),
+  }).optional().describe('Set on the LATER step to create a bounded refinement loop back to an earlier step.'),
 }).strict();
 
 export const pipelineAssemblySchema = z.object({
@@ -222,6 +227,7 @@ function buildAssemblerPrompt(userIntent: string, discoveredCatalog: PipelineDis
     'Use only roleId values and modIds present in the discovered catalog.',
     'Each step prompt must delegate a bounded job to that step; do not solve the user intent inside the prompt.',
     'Represent dependencies only with prevStepIds. Root/source steps use an empty prevStepIds array.',
+    'For an iterative refine/critique loop, set loopBackTo:{stepId,maxIterations} on the later step (never via prevStepIds).',
     'Prefer 2-5 steps unless the intent is genuinely atomic.',
     'Step ids must be stable, unique, lowercase kebab-case identifiers.',
   ].join('\n');
@@ -243,7 +249,8 @@ function buildRawJsonFallbackPrompt(userIntent: string, discoveredCatalog: Pipel
     '      "prompt": "bounded delegation prompt for this step",',
     '      "roleId": "id from discovered roles",',
     '      "modIds": ["ids from discovered mods"],',
-    '      "prevStepIds": ["ids of prerequisite steps"]',
+    '      "prevStepIds": ["ids of prerequisite steps"],',
+    '      "loopBackTo": { "stepId": "an-earlier-step-id", "maxIterations": 3 }  // OPTIONAL — omit unless an iterative loop is genuinely needed',
     '    }',
     '  ]',
     '}',
@@ -278,6 +285,46 @@ function reportMissingCapabilities(
   }).catch(() => undefined);
 }
 
+/**
+ * Drops any `loopBackTo` whose target is not a genuine earlier step in the
+ * SAME assembly — unknown id, self-reference, or a forward descendant (which
+ * would encode an unbounded/duplicate cycle on top of prevStepIds) — and
+ * clamps a surviving `maxIterations` into the format-normative [1, cap]
+ * range. Mutates the freshly-parsed `assembly` in place and returns it.
+ */
+export function sanitizeLoopBacks(assembly: PipelineAssembly): PipelineAssembly {
+  const ids = new Set(assembly.steps.map((step) => step.id));
+  // Forward-ancestor lookup derived from prevStepIds: loopBackTo.stepId must be
+  // reachable by walking prevStepIds backward from the declaring step, i.e. it
+  // must be a genuine earlier step, never a sibling/descendant/unknown id.
+  const prevById = new Map(assembly.steps.map((step) => [step.id, step.prevStepIds] as const));
+  const isAncestor = (from: string, target: string): boolean => {
+    const visited = new Set<string>();
+    const queue: string[] = [...(prevById.get(from) ?? [])];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current === target) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      queue.push(...(prevById.get(current) ?? []));
+    }
+    return false;
+  };
+
+  for (const step of assembly.steps) {
+    if (!step.loopBackTo) continue;
+    const targetId = step.loopBackTo.stepId;
+    if (!ids.has(targetId) || targetId === step.id || !isAncestor(step.id, targetId)) {
+      console.warn(`[meta-agent] dropping invalid loopBackTo on step "${step.id}" → "${targetId}" (unknown/self/not-an-ancestor).`);
+      delete step.loopBackTo;
+    } else {
+      step.loopBackTo.maxIterations = clampLoopIterations(step.loopBackTo.maxIterations);
+    }
+  }
+
+  return assembly;
+}
+
 export async function assemblePipeline(
   userIntent: string,
   options: AssemblePipelineOptions = {},
@@ -294,7 +341,8 @@ export async function assemblePipeline(
     'You convert a natural-language user intent into a DAG of delegated agent steps.',
     'You must first respect the discovered catalog: never invent roles, mods, or component ids.',
     'The output is an AST for the visual canvas, not prose and not a solution to the task.',
-    'A mathematically valid DAG has unique step ids and prevStepIds that point only to earlier/existing steps without cycles.',
+    'A valid flow graph has unique step ids and prevStepIds that point only to earlier/existing steps; forward dependencies (prevStepIds) must never form a cycle.',
+    'To express a bounded refinement loop (e.g. "draft, then critique, then redraft"), set loopBackTo on the LATER step pointing to the earlier step: the steps between loopBackTo.stepId and this step re-run until maxIterations total passes complete (1-50; prefer 2-4). NEVER encode a loop through prevStepIds.',
     'Unbreakable instructionQuality rule: every step prompt must be rich in context, explicit about inputs from previous steps, and precise about the expected output, constraints, and quality bar.',
     'Never write generic prompts such as "Write the code" or "Write the tests". Write prompts like: "Utiliza los requerimientos extraídos en el paso anterior para implementar la función en TypeScript, asegurando un manejo estricto de errores y siguiendo los principios SOLID".',
     'If the user asks for tools, integrations, roles, mods, or capabilities that are absent from the discovered catalog, list them in missingCapabilitiesRequested instead of inventing components.',
@@ -321,7 +369,7 @@ export async function assemblePipeline(
 
     const assembly = pipelineAssemblySchema.parse(result.object);
     reportMissingCapabilities(userIntent, assembly, telemetryFetch);
-    return assembly;
+    return sanitizeLoopBacks(assembly);
   } catch (error) {
     const repaired = NoObjectGeneratedError.isInstance(error)
       ? parsePipelineAssemblyText(error.text)
@@ -333,7 +381,7 @@ export async function assemblePipeline(
         latencyMs: performance.now() - startedAt,
       });
       reportMissingCapabilities(userIntent, repaired, telemetryFetch);
-      return repaired;
+      return sanitizeLoopBacks(repaired);
     }
 
     const fallback = await generateText({
@@ -353,6 +401,6 @@ export async function assemblePipeline(
     });
 
     reportMissingCapabilities(userIntent, fallbackObject, telemetryFetch);
-    return fallbackObject;
+    return sanitizeLoopBacks(fallbackObject);
   }
 }

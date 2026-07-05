@@ -14,9 +14,11 @@
  */
 import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
+import { useHarnessStore } from '@/renderer/store/harness-store';
 import { LucideIcon } from './desktop/LucideIcon';
 import { theme } from '@/renderer/logic/theme';
-import type { AttachableType } from '@/types/desktop';
+import type { AttachableType, FrameGraphNode, MentalGraphNode, StepGraphNode } from '@/types/desktop';
+import type { AgenticExecutionStatus } from '@/types/harness';
 
 const ELECTRIC_BLUE = '#4285F4';
 
@@ -38,6 +40,103 @@ const WINDOW_KIND_LABEL: Record<string, string> = {
   'prompt-dev-zone': 'Prompt Dev Zone',
 };
 
+// Flow (FrameGraphNode) aggregate status dot — "worst-of" its child steps'
+// AgenticExecutionStatus, ranked by how urgently a developer would want to
+// notice it: an error anywhere outranks an in-progress run, which outranks a
+// paused run, which outranks a clean completion. 'compiling' shares the
+// 'running' bucket — StepNode's own `isBusy` check treats them the same way.
+const STATUS_SEVERITY: Record<AgenticExecutionStatus, number> = {
+  error: 4,
+  running: 3,
+  compiling: 3,
+  paused: 2,
+  completed: 1,
+  idle: 0,
+};
+
+// Reuses the same token vocabulary StepNode/FrameNode already use for status
+// (theme.danger/warning/success) plus theme.accentBlue for the running/busy
+// state, so the Flows group reads consistently with the canvas nodes it mirrors.
+const STATUS_DOT_COLOR: Record<AgenticExecutionStatus, string> = {
+  error: theme.danger,
+  running: theme.accentBlue,
+  compiling: theme.accentBlue,
+  paused: theme.warning,
+  completed: theme.success,
+  idle: theme.textGhost,
+};
+
+function worstStepStatus(
+  childIds: string[],
+  stepStatuses: Record<string, AgenticExecutionStatus>,
+): AgenticExecutionStatus {
+  let worst: AgenticExecutionStatus = 'idle';
+  for (const childId of childIds) {
+    const status = stepStatuses[childId] ?? 'idle';
+    if (STATUS_SEVERITY[status] > STATUS_SEVERITY[worst]) worst = status;
+  }
+  return worst;
+}
+
+/**
+ * A single step row inside the Flows/Steps section — shared by a frame's
+ * child steps AND by orphan steps (steps that exist on the canvas but aren't
+ * referenced by any frame's `childIds`, rendered in their own "Steps" group).
+ * Both call sites pass a distinct `testIdPrefix` so their existing/new test
+ * ids stay stable and distinguishable (`nav-flow-child-*` vs `nav-step-*`).
+ *
+ * Carries the same onContextMenu wiring the old (buggy) Mental Cards row
+ * used to give every step — that row disappears now that Mental Cards is
+ * restricted to `type === 'mental'` (see below), so without this, right-click
+ * → Locate/Delete on a step would silently vanish instead of just relocating.
+ */
+function StepRow({
+  step,
+  status,
+  onNavigate,
+  onContextMenuAction,
+  testIdPrefix,
+}: {
+  step: StepGraphNode;
+  status: AgenticExecutionStatus;
+  onNavigate: () => void;
+  onContextMenuAction: (e: React.MouseEvent) => void;
+  testIdPrefix: string;
+}) {
+  return (
+    <div
+      className="nav-child-item"
+      data-testid={`${testIdPrefix}-${step.id}`}
+      onClick={onNavigate}
+      onContextMenu={onContextMenuAction}
+      style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 6,
+        padding: '4px 12px 4px 32px',
+        cursor: 'pointer',
+        color: theme.textDim,
+        fontSize: 11,
+        transition: 'background 0.1s ease',
+        borderLeft: '2px solid transparent',
+      }}
+    >
+      <span
+        aria-label={`status: ${status}`}
+        title={`status: ${status}`}
+        data-testid={`${testIdPrefix}-status-${step.id}`}
+        style={{
+          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+          background: STATUS_DOT_COLOR[status],
+        }}
+      />
+      <span style={{
+        flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {step.data.title}
+      </span>
+    </div>
+  );
+}
+
 function kebabToTitle(str: string): string {
   return str.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
@@ -50,6 +149,30 @@ function activateOnKey(handler: () => void) {
       e.preventDefault();
       handler();
     }
+  };
+}
+
+/**
+ * Computes the canvasPan {x, y} that centers a canvas item (window, grid, or
+ * mental/flow/step node) inside the visible viewport. This is the single
+ * source of truth for that math — every "locate on canvas" action (row
+ * click, keyboard activation, right-click → Locate) must call this instead
+ * of re-deriving the formula, so they all agree on what "centered" means.
+ *
+ * The -280/-60 offsets subtract this panel's width and the top chrome height
+ * from the raw window size, since the visible canvas viewport is narrower
+ * than window.innerWidth/innerHeight by exactly that much.
+ */
+function centerViewportOn(
+  position: { x: number; y: number },
+  size: { width: number; height: number },
+  zoom: number,
+): { x: number; y: number } {
+  const viewportW = window.innerWidth - 280;
+  const viewportH = window.innerHeight - 60;
+  return {
+    x: -(position.x * zoom) + viewportW / 2 - (size.width * zoom) / 2,
+    y: -(position.y * zoom) + viewportH / 2 - (size.height * zoom) / 2,
   };
 }
 
@@ -71,6 +194,7 @@ export function NodeTree() {
   const mentalNodes = useDesktopStore(s => s.mentalNodes);
   const mentalEdges = useDesktopStore(s => s.mentalEdges);
   const removeMentalNode = useDesktopStore(s => s.removeMentalNode);
+  const setSelectedMentalNodeIds = useDesktopStore(s => s.setSelectedMentalNodeIds);
   const mentalMode = useDesktopStore(s => s.mentalMode);
   const setMentalMode = useDesktopStore(s => s.setMentalMode);
   const marketInventory = useDesktopStore(s => s.marketInventory);
@@ -79,6 +203,7 @@ export function NodeTree() {
   const updateWindowTitle = useDesktopStore(s => s.updateWindowTitle);
   const updateMentalNode = useDesktopStore(s => s.updateMentalNode);
   const updateGridTitle = useDesktopStore(s => s.updateGridTitle);
+  const stepStatuses = useHarnessStore(s => s.stepStatuses);
 
   type CtxTarget =
     | { kind: 'window'; id: string }
@@ -101,11 +226,7 @@ export function NodeTree() {
     const win = useDesktopStore.getState().windows.find(w => w.id === windowId);
     if (!win) return;
     focusWindow(windowId);
-    const viewportW = window.innerWidth - 280;
-    const viewportH = window.innerHeight - 60;
-    const centerX = -(win.position.x * canvasZoom) + (viewportW / 2) - (win.size.width * canvasZoom / 2);
-    const centerY = -(win.position.y * canvasZoom) + (viewportH / 2) - (win.size.height * canvasZoom / 2);
-    setCanvasPan({ x: centerX, y: centerY });
+    setCanvasPan(centerViewportOn(win.position, win.size, canvasZoom));
   }, [focusWindow, setCanvasPan, canvasZoom]);
 
   const navigateToGrid = useCallback((gridId: string) => {
@@ -113,12 +234,19 @@ export function NodeTree() {
     if (!grid) return;
     const focusGrid = useDesktopStore.getState().focusGrid;
     focusGrid(gridId);
-    const viewportW = window.innerWidth - 280;
-    const viewportH = window.innerHeight - 60;
-    const centerX = -(grid.position.x * canvasZoom) + (viewportW / 2) - (grid.size.width * canvasZoom / 2);
-    const centerY = -(grid.position.y * canvasZoom) + (viewportH / 2) - (grid.size.height * canvasZoom / 2);
-    setCanvasPan({ x: centerX, y: centerY });
+    setCanvasPan(centerViewportOn(grid.position, grid.size, canvasZoom));
   }, [setCanvasPan, canvasZoom]);
+
+  // Shared by Flow rows and their child Step rows — both are `mentalNodes`
+  // entries with the same position/width/height shape, so one lookup +
+  // centerViewportOn() call (single source of truth, see helper above) covers
+  // "select + center" for either, plus syncing canvas selection to the row.
+  const navigateToMentalNode = useCallback((nodeId: string) => {
+    const node = useDesktopStore.getState().mentalNodes.find(n => n.id === nodeId);
+    if (!node) return;
+    setSelectedMentalNodeIds([nodeId]);
+    setCanvasPan(centerViewportOn(node.position, { width: node.width, height: node.height }, canvasZoom));
+  }, [setSelectedMentalNodeIds, setCanvasPan, canvasZoom]);
 
   const openContextMenu = useCallback((e: React.MouseEvent, target: CtxTarget) => {
     e.preventDefault();
@@ -146,17 +274,14 @@ export function NodeTree() {
       }
       case 'locate':
         if (target.kind === 'window') navigateToWindow(target.id);
-        else if (target.kind === 'mental') {
-          const node = useDesktopStore.getState().mentalNodes.find(n => n.id === target.id);
-          if (node) {
-            const vpW = window.innerWidth - 280;
-            const vpH = window.innerHeight - 60;
-            setCanvasPan({
-              x: -(node.position.x * canvasZoom) + vpW / 2 - (node.width / 2) * canvasZoom,
-              y: -(node.position.y * canvasZoom) + vpH / 2 - (node.height / 2) * canvasZoom,
-            });
-          }
-        } else if (target.kind === 'grid') navigateToGrid(target.id);
+        // Deliberate behavior change: this branch used to re-derive the
+        // centering math inline and only re-center, so right-click → Locate
+        // and clicking the node's own row disagreed on whether selection
+        // followed. Delegating to navigateToMentalNode means Locate now also
+        // selects the node, matching row-click behavior (the old split was a
+        // duplication artifact, not an intentional difference).
+        else if (target.kind === 'mental') navigateToMentalNode(target.id);
+        else if (target.kind === 'grid') navigateToGrid(target.id);
         break;
       case 'minimize':
         if (target.kind === 'window') {
@@ -171,7 +296,7 @@ export function NodeTree() {
         break;
     }
     setContextMenu(null);
-  }, [contextMenu, navigateToWindow, navigateToGrid, setCanvasPan, canvasZoom, setWindowState, removeWindow, removeMentalNode, removeGrid]);
+  }, [contextMenu, navigateToWindow, navigateToGrid, navigateToMentalNode, setWindowState, removeWindow, removeMentalNode, removeGrid]);
 
   const commitRename = useCallback(() => {
     if (renamingItem && renameValue.trim()) {
@@ -218,6 +343,20 @@ export function NodeTree() {
   const pluginWindows = sortedWindows.filter(w => w.type === 'plugin');
   const backlogWindows = sortedWindows.filter(w => w.type === 'backlog');
   const promptDevWindows = sortedWindows.filter(w => w.type === 'prompt-dev-zone');
+
+  // Flows on the canvas — FrameGraphNodes among mentalNodes (pipeline frames).
+  const frames = mentalNodes.filter((n): n is FrameGraphNode => n.type === 'frame');
+  // Steps that exist on the canvas but aren't referenced by any frame's
+  // childIds — previously these rendered nowhere (Flows only showed frames'
+  // OWN children; Mental Cards leaked them in as "Untitled card" instead of
+  // giving them a real home). They get a "Steps" group inside Flows/Steps.
+  const orphanSteps = mentalNodes.filter(
+    (n): n is StepGraphNode => n.type === 'step' && !frames.some(f => f.data.childIds.includes(n.id)),
+  );
+  // Mental Cards proper — plain MentalGraphNodes only. Frames and steps
+  // (frame-children AND orphans) get their own section above instead of
+  // leaking in here as a spurious "Untitled card".
+  const cards = mentalNodes.filter((n): n is MentalGraphNode => n.type === 'mental');
 
   const getAttachedItems = (win: typeof windows[0]) => {
     const items: Array<{ type: AttachableType; name: string }> = [];
@@ -435,7 +574,7 @@ export function NodeTree() {
 
   return (
     <div data-testid="node-tree" style={{ flex: 1, overflow: 'auto', padding: '4px 0' }}>
-      {windows.length === 0 && attachables.length === 0 && grids.length === 0 ? (
+      {windows.length === 0 && attachables.length === 0 && grids.length === 0 && frames.length === 0 && orphanSteps.length === 0 ? (
         <div style={{
           padding: '24px 16px', textAlign: 'center', color: theme.textGhost, fontSize: 12,
         }}>
@@ -549,6 +688,119 @@ export function NodeTree() {
           {renderGroup('Backlog', backlogWindows)}
           {renderGroup('Plugins', pluginWindows)}
           {renderGroup('Prompt Dev Zone', promptDevWindows)}
+
+          {/* Flows — FrameGraphNodes on the canvas, with per-flow step children,
+              plus a "Steps" group (below) for steps outside any frame. */}
+          {(frames.length > 0 || orphanSteps.length > 0) && (
+            <div>
+              <div style={{
+                padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
+                textTransform: 'uppercase', letterSpacing: '0.05em',
+                color: theme.textGhost,
+              }}>
+                {orphanSteps.length > 0
+                  ? `Flows / Steps (${frames.length + orphanSteps.length})`
+                  : `Flows (${frames.length})`}
+              </div>
+              {frames.map(frame => {
+                const childSteps = frame.data.childIds
+                  .map(childId => mentalNodes.find(n => n.id === childId))
+                  .filter((n): n is StepGraphNode => n?.type === 'step');
+                const aggregateStatus = worstStepStatus(frame.data.childIds, stepStatuses);
+                return (
+                  <div key={frame.id}>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => navigateToMentalNode(frame.id)}
+                      onKeyDown={activateOnKey(() => navigateToMentalNode(frame.id))}
+                      aria-label={`Flow: ${frame.data.title}`}
+                      data-testid={`nav-flow-${frame.id}`}
+                      className="nav-window-item"
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '6px 12px', border: 'none', textAlign: 'left', cursor: 'pointer',
+                        background: 'transparent',
+                        borderLeft: '2px solid transparent',
+                        color: theme.textSecondary,
+                        fontSize: 12, transition: 'background 0.1s ease, border-color 0.1s ease',
+                      }}
+                    >
+                      <LucideIcon name="Workflow" size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {frame.data.title}
+                      </span>
+                      <span style={{
+                        fontSize: 9, padding: '1px 5px', borderRadius: 8,
+                        background: 'rgba(167,139,250,0.1)',
+                        color: '#A78BFA', flexShrink: 0,
+                      }}>
+                        {frame.data.childIds.length}
+                      </span>
+                      <span
+                        aria-label={`status: ${aggregateStatus}`}
+                        title={`status: ${aggregateStatus}`}
+                        data-testid={`nav-flow-status-${frame.id}`}
+                        style={{
+                          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                          background: STATUS_DOT_COLOR[aggregateStatus],
+                        }}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeMentalNode(frame.id); }}
+                        title="Remove flow"
+                        aria-label={`Remove flow ${frame.data.title}`}
+                        data-testid={`nav-flow-close-${frame.id}`}
+                        style={{
+                          background: 'none', border: 'none', color: theme.textGhost,
+                          cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
+                          display: 'flex', alignItems: 'center',
+                        }}
+                      >
+                        <LucideIcon name="X" size={10} />
+                      </button>
+                    </div>
+                    {/* Step children of this flow */}
+                    {childSteps.map(step => (
+                      <StepRow
+                        key={step.id}
+                        step={step}
+                        status={stepStatuses[step.id] ?? 'idle'}
+                        onNavigate={() => navigateToMentalNode(step.id)}
+                        onContextMenuAction={(e) => openContextMenu(e, { kind: 'mental', id: step.id })}
+                        testIdPrefix="nav-flow-child"
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+              {/* Steps group — steps that exist on the canvas but aren't in
+                  any frame's childIds (dragged out, or created standalone).
+                  Previously these rendered nowhere; now they get a home here,
+                  with the exact same row/behavior as a frame's child steps. */}
+              {orphanSteps.length > 0 && (
+                <div>
+                  <div style={{
+                    padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
+                    textTransform: 'uppercase', letterSpacing: '0.05em',
+                    color: theme.textGhost,
+                  }}>
+                    Steps ({orphanSteps.length})
+                  </div>
+                  {orphanSteps.map(step => (
+                    <StepRow
+                      key={step.id}
+                      step={step}
+                      status={stepStatuses[step.id] ?? 'idle'}
+                      onNavigate={() => navigateToMentalNode(step.id)}
+                      onContextMenuAction={(e) => openContextMenu(e, { kind: 'mental', id: step.id })}
+                      testIdPrefix="nav-step"
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Grid layouts */}
           {grids.length > 0 && (
@@ -751,8 +1003,10 @@ export function NodeTree() {
             </div>
           )}
 
-          {/* Mental Graph Nodes — always visible regardless of mentalMode */}
-          {mentalNodes.length > 0 && (
+          {/* Mental Cards — plain MentalGraphNodes only (type === 'mental');
+              always visible regardless of mentalMode. Frames/steps get their
+              own Flows/Steps section above instead of leaking in here. */}
+          {cards.length > 0 && (
             <div>
               <div style={{
                 padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
@@ -760,7 +1014,7 @@ export function NodeTree() {
                 color: theme.textGhost,
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               }}>
-                <span>Mental Cards ({mentalNodes.length})</span>
+                <span>Mental Cards ({cards.length})</span>
                 {mentalMode === 'off' && (
                   <button
                     onClick={() => setMentalMode('square')}
@@ -775,7 +1029,7 @@ export function NodeTree() {
                   </button>
                 )}
               </div>
-              {mentalNodes.map(node => {
+              {cards.map(node => {
                 const nodeLabel = node.text.trim() || 'Untitled card';
                 const edgeCount = mentalEdges.filter(e => e.sourceId === node.id || e.targetId === node.id).length;
                 return (

@@ -34,6 +34,7 @@ import {
   ARENA_SUITES,
 } from './arena/arena-runner';
 import type { ArenaLeaderboardEntry } from './arena/arena-runner';
+import { completedEntries, selectByStrategy, toEvidence } from './arena/selection-strategies';
 import { fetchArenaModels, buildArenaModelList, ARENA_FORCED_MODEL_IDS } from './arena/model-fetcher';
 import type {
   ScorecardRunOptions,
@@ -44,61 +45,10 @@ import type {
   ArenaResult,
   ArenaLeaderboardEntryResult,
   ArenaRecommendation,
+  SelectionStrategy,
 } from '../../types/ipc-events';
 
-// ── Inline strategy helpers (mirrors model-selector.ts logic without fs I/O) ──
-
-type SelectionStrategy = 'best-score' | 'cheapest' | 'fastest' | 'best-value';
-
-function completedEntries(ledger: ArenaLeaderboardEntry[]): ArenaLeaderboardEntry[] {
-  return ledger.filter((e) => e.status === 'completed');
-}
-
-function toBestScore(entries: ArenaLeaderboardEntry[]): ArenaLeaderboardEntry | undefined {
-  return entries.reduce<ArenaLeaderboardEntry | undefined>((best, e) => {
-    if (!best) return e;
-    if (e.finalArenaScore > best.finalArenaScore) return e;
-    if (e.finalArenaScore === best.finalArenaScore && e.executionCostUsd < best.executionCostUsd) return e;
-    return best;
-  }, undefined);
-}
-
-function toCheapest(entries: ArenaLeaderboardEntry[]): ArenaLeaderboardEntry | undefined {
-  return entries.reduce<ArenaLeaderboardEntry | undefined>((best, e) => {
-    if (!best) return e;
-    if (e.executionCostUsd < best.executionCostUsd) return e;
-    if (e.executionCostUsd === best.executionCostUsd && e.finalArenaScore > best.finalArenaScore) return e;
-    return best;
-  }, undefined);
-}
-
-function toFastest(entries: ArenaLeaderboardEntry[]): ArenaLeaderboardEntry | undefined {
-  const withLatency = entries.filter(
-    (e): e is ArenaLeaderboardEntry & { avgLatencyMs: number } => e.avgLatencyMs !== undefined,
-  );
-  return withLatency.reduce<ArenaLeaderboardEntry | undefined>((best, e) => {
-    if (!best) return e;
-    if (e.avgLatencyMs! < (best.avgLatencyMs ?? Infinity)) return e;
-    if (e.avgLatencyMs === best.avgLatencyMs && e.finalArenaScore > best.finalArenaScore) return e;
-    return best;
-  }, undefined);
-}
-
-function valueScore(e: ArenaLeaderboardEntry): number {
-  if (e.executionCostUsd === 0) return Number.MAX_SAFE_INTEGER;
-  return e.finalArenaScore / e.executionCostUsd;
-}
-
-function toBestValue(entries: ArenaLeaderboardEntry[]): ArenaLeaderboardEntry | undefined {
-  return entries.reduce<ArenaLeaderboardEntry | undefined>((best, e) => {
-    if (!best) return e;
-    const eVal = valueScore(e);
-    const bestVal = valueScore(best);
-    if (eVal > bestVal) return e;
-    if (eVal === bestVal && e.finalArenaScore > best.finalArenaScore) return e;
-    return best;
-  }, undefined);
-}
+// ── Recommendation builder (strategy math lives in ./arena/selection-strategies) ──
 
 function buildRecommendations(leaderboard: ArenaLeaderboardEntry[]): ArenaRecommendation[] {
   const candidates = completedEntries(leaderboard);
@@ -108,22 +58,12 @@ function buildRecommendations(leaderboard: ArenaLeaderboardEntry[]): ArenaRecomm
   const recommendations: ArenaRecommendation[] = [];
 
   for (const strategy of strategies) {
-    let winner: ArenaLeaderboardEntry | undefined;
-    switch (strategy) {
-      case 'best-score': winner = toBestScore(candidates); break;
-      case 'cheapest': winner = toCheapest(candidates); break;
-      case 'fastest': winner = toFastest(candidates); break;
-      case 'best-value': winner = toBestValue(candidates); break;
-    }
+    const winner = selectByStrategy(candidates, strategy);
     if (winner) {
       recommendations.push({
         strategy,
         modelId: winner.modelId,
-        evidence: {
-          score: winner.finalArenaScore,
-          costPerRun: winner.executionCostUsd,
-          latencyMs: winner.avgLatencyMs,
-        },
+        evidence: toEvidence(winner),
       });
     }
   }

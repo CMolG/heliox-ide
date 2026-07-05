@@ -7,20 +7,26 @@
  */
 // src/renderer/store/desktop-store.ts — Zustand store for seamless desktop state
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { getConnectedComponent } from '../logic/mental-graph';
+import { debouncedLocalStorage } from '../logic/debounced-storage';
+import { MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT } from '../logic/hud-grid';
+import { normalizeEdgeTypes } from '../logic/normalize-edge-types';
 import { CLI_THEME_COLORS } from '@/types/desktop';
 import type {
   DesktopWindow, WindowPosition, WindowSize, WindowConnection,
   DockItem, Plugin, PluginCategory, SnapGuide, CliProvider, ConnectionPort, CanvasPan,
   DesktopAttachable, AttachableType, DesktopGrid, MentalMode, MentalShape,
   MentalTool, MentalGraphNode, MentalGraphEdge, StepGraphNode, CanvasGraphNode, FrameGraphNode,
-  StepNodeData,
+  StepNodeData, FrameNodeData, Board, BoardSnapshot,
 } from '@/types/desktop';
 import type { MarketInventory, MarketMod, MarketRole, BacklogCard } from '@/types/market';
 import type { TutorialScenarioId, TutorialProgress } from '@/types/tutorial';
 import type { PipelineAssembly } from '@/types/meta-agent';
+import { clampLoopIterations, LOOP_DEFAULT_MAX_ITERATIONS } from '@/types/harness';
 import type { AgenticStepType } from '@/types/harness';
+import type { ModelPolicy } from '@/types/ipc-events';
+import { wouldCreateStepCycle } from '../lib/harness-compiler';
 
 
 // ─── Unified z-stack helper ───────────────────────────────────────
@@ -208,6 +214,7 @@ export interface HudWidget {
   type: HudWidgetType;
   visible: boolean;
   position: { x: number; y: number };
+  size?: { width: number; height: number };
 }
 
 // Default positions (fixed px, not window-relative so they work before mount)
@@ -343,6 +350,35 @@ interface DesktopStore {
   mentalMode: MentalMode;
   setMentalMode: (mode: MentalMode) => void;
 
+  // ─── Boards (Figma-like multiple canvases) ──────────────────────
+  // See the ACTIVE-SLICE PATTERN section comment above the `boards` field in
+  // this store's implementation (below) for how board data relates to the
+  // top-level canvas slices (mentalNodes/mentalEdges/canvasPan/canvasZoom).
+  boards: Board[];
+  activeBoardId: string;
+  /**
+   * Creates a new empty board, switches to it (see switchBoard), and returns its id.
+   * Callers that change the active board are responsible for clearing harness execution state
+   * (see BoardSwitcher) — this store cannot import harness-store (circular).
+   */
+  createBoard: (name?: string) => string;
+  /**
+   * No-op if `targetId` is already active or unknown.
+   * Callers that change the active board are responsible for clearing harness execution state
+   * (see BoardSwitcher) — this store cannot import harness-store (circular).
+   */
+  switchBoard: (targetId: string) => void;
+  /** Trims `name`; ignores empty. */
+  renameBoard: (id: string, name: string) => void;
+  /**
+   * Refuses (no-op) when `id` names the only remaining board.
+   * Callers that change the active board are responsible for clearing harness execution state
+   * (see BoardSwitcher) — this store cannot import harness-store (circular).
+   */
+  deleteBoard: (id: string) => void;
+  /** Deep-copies a board (capturing LIVE canvas state if `id` is the active board) as "<name> copy". Does not switch to the copy. */
+  duplicateBoard: (id: string) => string;
+
   // ─── Mental Graph (xyflow source of truth) ─────────────
   mentalNodes: CanvasGraphNode[];
   mentalEdges: MentalGraphEdge[];
@@ -366,10 +402,29 @@ interface DesktopStore {
    * No-ops (does not mutate) if `stepId` doesn't name a Step node.
    */
   updateStepData: (stepId: string, patch: Partial<StepNodeData>) => void;
+  /**
+   * Patch arbitrary fields on a Frame node's `data` (e.g. `title`,
+   * `description`, `tags`, `author`, `version`). Powers the Inspector's Flow
+   * tools editor (FlowInspector) — `compileFlowFromCanvas`'s owning-frame
+   * lookup reads these fields directly (see harness-compiler.ts), so edits
+   * made here feed the compiled AgenticFlow's matching fields on the next
+   * compile. No-ops (does not mutate) if `frameId` doesn't name a Frame node.
+   */
+  updateFrameData: (frameId: string, patch: Partial<FrameNodeData>) => void;
   removeMentalNode: (nodeId: string) => void;
-  addMentalEdge: (sourceId: string, targetId: string, edgeType?: MentalGraphEdge['type'], sourceHandle?: string, targetHandle?: string) => string | null;
+  addMentalEdge: (sourceId: string, targetId: string, edgeType?: MentalGraphEdge['type'], sourceHandle?: string, targetHandle?: string, maxIterations?: number) => string | null;
   removeMentalEdge: (edgeId: string) => void;
   updateMentalEdgeColor: (edgeId: string, color: string) => void;
+  /** Patch loop-edge data (currently `maxIterations`, clamped to [1, cap]). No-ops if `edgeId` doesn't exist. */
+  updateMentalEdgeData: (edgeId: string, patch: { maxIterations?: number }) => void;
+  /**
+   * Swaps an edge's sourceId/targetId (and sourceHandle/targetHandle), then
+   * re-classifies it against the rest of the graph (minus itself):
+   * reversal closes a cycle → 'loop' (gains/keeps `maxIterations`); otherwise
+   * → 'link' (drops `maxIterations`), except 'ramification' edges which keep
+   * their type. No-ops if `edgeId` doesn't exist.
+   */
+  invertMentalEdge: (edgeId: string) => void;
   createRamificationFromDrop: (sourceId: string, flowPosition: { x: number; y: number }) => { nodeId: string; edgeId: string } | null;
 
   // ─── Mental Graph selection (mirrors xyflow's selected nodes) ─
@@ -417,8 +472,21 @@ interface DesktopStore {
     canvasClickAnimation: boolean;
     tourCompleted: boolean;
     tutorialCompleted: TutorialProgress;
+    /** WS2 smart model-routing policy (default: `{mode:'fixed'}` — today's behavior, unchanged). */
+    modelPolicy?: ModelPolicy;
+    /**
+     * Figma-like right-side Inspector column visibility (Phase 8). Optional
+     * + defaulted to `true` below rather than a required field bumping the
+     * persist `version` — `settings` is persisted whole (see `partialize`),
+     * so pre-Phase-8 persisted blobs simply lack this key; every call site
+     * treats absence as "shown" via `settings.showInspector !== false`
+     * rather than truthiness, so old and new state both render the same way.
+     */
+    showInspector?: boolean;
   };
   updateSettings: (patch: Partial<DesktopStore['settings']>) => void;
+  /** Set the WS2 smart-routing policy applied to every subsequent harness dispatch. */
+  setModelPolicy: (policy: ModelPolicy) => void;
 
   // Tutorial engine state (not persisted — active scenario lives in-memory)
   activeTutorial: TutorialScenarioId | null;
@@ -450,7 +518,10 @@ interface DesktopStore {
   // ─── HUD Widgets ───────────────────────────────────────────────
   hudWidgets: HudWidget[];
   setHudWidgetVisible: (type: HudWidgetType, visible: boolean) => void;
+  /** Persists verbatim — caller must pass resolveHudWidgetPlacement's output (logic/hud-grid.ts). */
   moveHudWidget: (type: HudWidgetType, position: { x: number; y: number }) => void;
+  /** Clamps SIZE only; does not reposition — see the implementation-site comment below. */
+  resizeHudWidget: (type: HudWidgetType, size: { width: number; height: number }) => void;
   toggleHudWidget: (type: HudWidgetType) => void;
 }
 
@@ -480,6 +551,13 @@ function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
 
 function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
   return node.type === 'frame';
+}
+
+/** The empty graph + default viewport used to seed a brand-new board, and as
+ *  the fallback when a board's `snapshot` is null (shouldn't happen for an
+ *  inactive board in practice, but keeps switchBoard/deleteBoard total). */
+function emptyBoardSnapshot(): BoardSnapshot {
+  return { mentalNodes: [], mentalEdges: [], canvasPan: { x: 0, y: 0 }, canvasZoom: 1 };
 }
 
 function marketEntityId(entity: MarketMod | MarketRole): string {
@@ -1380,6 +1458,145 @@ export const useDesktopStore = create<DesktopStore>()(
       mentalMode: 'off',
       setMentalMode: (mode) => set({ mentalMode: mode }),
 
+      // ─── Boards (Figma-like multiple canvases) ──────────────────
+      //
+      // ACTIVE-SLICE PATTERN: the active board's graph/viewport ALWAYS lives
+      // in the existing top-level mentalNodes/mentalEdges/canvasPan/canvasZoom
+      // slices — every existing consumer (MentalGraphCanvas, NodeTree,
+      // harness-store's compileCurrentCanvas, SeamlessCanvas) keeps reading
+      // those slices untouched. boards[i].snapshot is written ONLY at switch
+      // time. Windows/widgets/dock stay global — a board owns ONLY its graph
+      // + viewport, never windows/attachables/grids.
+      //
+      // CRITICAL: this store must NOT import harness-store — harness-store
+      // already imports desktop-store, so the reverse would be circular. The
+      // "don't switch boards while a flow is running" guard is UI-level (a
+      // later phase), not enforced here.
+      //
+      boards: [{ id: 'board-1', name: 'Board 1', createdAt: Date.now(), updatedAt: Date.now(), snapshot: null }],
+      activeBoardId: 'board-1',
+
+      createBoard: (name) => {
+        const state = get();
+        const id = `board-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const trimmed = name?.trim();
+        const board: Board = {
+          id,
+          name: trimmed || `Board ${state.boards.length + 1}`,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          snapshot: emptyBoardSnapshot(),
+        };
+        set((s) => ({ boards: [...s.boards, board] }));
+        // Switch into the new (empty) board — captures the outgoing active
+        // board's live canvas into its snapshot in the same motion.
+        get().switchBoard(id);
+        return id;
+      },
+
+      switchBoard: (targetId) => {
+        const state = get();
+        if (targetId === state.activeBoardId) return;
+        if (!state.boards.some((b) => b.id === targetId)) return;
+        set((s) => {
+          const currentSnapshot: BoardSnapshot = {
+            mentalNodes: s.mentalNodes,
+            mentalEdges: s.mentalEdges,
+            canvasPan: s.canvasPan,
+            canvasZoom: s.canvasZoom,
+          };
+          const now = Date.now();
+          const boards = s.boards.map((b) =>
+            b.id === s.activeBoardId ? { ...b, snapshot: currentSnapshot, updatedAt: now } : b
+          );
+          const target = boards.find((b) => b.id === targetId)!;
+          const nextSnapshot = target.snapshot ?? emptyBoardSnapshot();
+          // Heal any link/loop misclassification the incoming board's edges
+          // may carry from persisted data predating the orient-connection fix.
+          const nextMentalEdges = normalizeEdgeTypes(nextSnapshot.mentalNodes, nextSnapshot.mentalEdges);
+          return {
+            boards,
+            activeBoardId: targetId,
+            mentalNodes: nextSnapshot.mentalNodes,
+            mentalEdges: nextMentalEdges,
+            canvasPan: nextSnapshot.canvasPan,
+            canvasZoom: nextSnapshot.canvasZoom,
+            selectedMentalNodeIds: [],
+            mentalEditingNodeId: null,
+            mentalZ: {},
+          };
+        });
+      },
+
+      renameBoard: (id, name) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        set((s) => ({
+          boards: s.boards.map((b) => b.id === id ? { ...b, name: trimmed, updatedAt: Date.now() } : b),
+        }));
+      },
+
+      deleteBoard: (id) => {
+        const state = get();
+        if (state.boards.length <= 1) return;
+        if (!state.boards.some((b) => b.id === id)) return;
+
+        if (id !== state.activeBoardId) {
+          set((s) => ({ boards: s.boards.filter((b) => b.id !== id) }));
+          return;
+        }
+
+        // Deleting the ACTIVE board: switch to a neighbor (prefer the
+        // previous index, else the next one) and remove the deleted board,
+        // all inside this one set() — mirrors switchBoard's mechanics above,
+        // but skips writing a snapshot for the board that's being discarded.
+        set((s) => {
+          const deleteIdx = s.boards.findIndex((b) => b.id === id);
+          const neighbor = s.boards[deleteIdx > 0 ? deleteIdx - 1 : deleteIdx + 1];
+          const nextSnapshot = neighbor.snapshot ?? emptyBoardSnapshot();
+          // Heal any link/loop misclassification the neighbor board's edges
+          // may carry from persisted data predating the orient-connection fix.
+          const nextMentalEdges = normalizeEdgeTypes(nextSnapshot.mentalNodes, nextSnapshot.mentalEdges);
+          return {
+            boards: s.boards.filter((b) => b.id !== id),
+            activeBoardId: neighbor.id,
+            mentalNodes: nextSnapshot.mentalNodes,
+            mentalEdges: nextMentalEdges,
+            canvasPan: nextSnapshot.canvasPan,
+            canvasZoom: nextSnapshot.canvasZoom,
+            selectedMentalNodeIds: [],
+            mentalEditingNodeId: null,
+            mentalZ: {},
+          };
+        });
+      },
+
+      duplicateBoard: (id) => {
+        const state = get();
+        const orig = state.boards.find((b) => b.id === id);
+        if (!orig) return '';
+
+        // The ACTIVE board's snapshot is stale — its live graph/viewport
+        // lives in the top-level slices (active-slice pattern above).
+        // Inactive boards already hold their authoritative data in `snapshot`.
+        const sourceSnapshot: BoardSnapshot = id === state.activeBoardId
+          ? { mentalNodes: state.mentalNodes, mentalEdges: state.mentalEdges, canvasPan: state.canvasPan, canvasZoom: state.canvasZoom }
+          : (orig.snapshot ?? emptyBoardSnapshot());
+
+        const newId = `board-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const board: Board = {
+          id: newId,
+          name: `${orig.name} copy`,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          // Deep clone: node ids are kept as-is (safe — only one board is
+          // ever live at a time, and switchBoard resets mentalZ/selection).
+          snapshot: structuredClone(sourceSnapshot),
+        };
+        set((s) => ({ boards: [...s.boards, board] }));
+        return newId;
+      },
+
       // ─── Mental Graph (xyflow source of truth) ─────────────
       mentalNodes: [],
       mentalEdges: [],
@@ -1568,6 +1785,28 @@ export const useDesktopStore = create<DesktopStore>()(
             }];
           })
         ));
+        // Bounded refinement loop-backs: source = the LATER step (the one
+        // carrying loopBackTo), target = the earlier step it re-runs from —
+        // same direction convention the harness compiler expects. Silently
+        // skips a loopBackTo whose target didn't survive assembly (unknown
+        // id) or resolves to the step itself.
+        const loopEdges: MentalGraphEdge[] = assembly.steps.flatMap((step) => {
+          if (!step.loopBackTo) return [];
+          const sourceId = stepIdMap.get(step.id);
+          const targetId = stepIdMap.get(step.loopBackTo.stepId);
+          if (!sourceId || !targetId || sourceId === targetId) return [];
+          return [{
+            id: `me-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            sourceId,
+            targetId,
+            sourceHandle: 'bottom',
+            targetHandle: 'top',
+            type: 'loop',
+            maxIterations: clampLoopIterations(step.loopBackTo.maxIterations),
+            color: DEFAULT_MENTAL_EDGE_COLOR,
+            createdAt: Date.now(),
+          }];
+        });
 
         set((s) => {
           const z = globalTopZ(s);
@@ -1575,7 +1814,7 @@ export const useDesktopStore = create<DesktopStore>()(
           for (const sid of stepIds) newMentalZ[sid] = z;
           return {
             mentalNodes: [...s.mentalNodes, frameNode, ...stepNodes],
-            mentalEdges: [...s.mentalEdges, ...edges],
+            mentalEdges: [...s.mentalEdges, ...edges, ...loopEdges],
             selectedMentalNodeIds: [frameId],
             mentalEditingNodeId: null,
             mentalZ: newMentalZ,
@@ -1691,6 +1930,19 @@ export const useDesktopStore = create<DesktopStore>()(
         }),
       })),
 
+      updateFrameData: (frameId, patch) => set((s) => ({
+        mentalNodes: s.mentalNodes.map((node) => {
+          if (node.id !== frameId || !isFrameGraphNode(node)) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              ...patch,
+            },
+          };
+        }),
+      })),
+
       removeMentalNode: (nodeId) => set((s) => {
         const target = s.mentalNodes.find((n) => n.id === nodeId);
         const idsToRemove = new Set<string>([nodeId]);
@@ -1717,7 +1969,7 @@ export const useDesktopStore = create<DesktopStore>()(
         };
       }),
 
-      addMentalEdge: (sourceId, targetId, edgeType = 'link', sourceHandle, targetHandle) => {
+      addMentalEdge: (sourceId, targetId, edgeType = 'link', sourceHandle, targetHandle, maxIterations) => {
         if (!sourceId || !targetId || sourceId === targetId) return null;
         const state = get();
         const sourceExists = state.mentalNodes.some((n) => n.id === sourceId);
@@ -1737,6 +1989,7 @@ export const useDesktopStore = create<DesktopStore>()(
             sourceHandle: sourceHandle || 'bottom',
             targetHandle: targetHandle || 'top',
             type: edgeType,
+            ...(edgeType === 'loop' ? { maxIterations: clampLoopIterations(maxIterations) } : {}),
             color: DEFAULT_MENTAL_EDGE_COLOR,
             createdAt: Date.now(),
           }],
@@ -1750,6 +2003,34 @@ export const useDesktopStore = create<DesktopStore>()(
 
       updateMentalEdgeColor: (edgeId, color) => set((s) => ({
         mentalEdges: s.mentalEdges.map((e) => e.id === edgeId ? { ...e, color } : e),
+      })),
+
+      updateMentalEdgeData: (edgeId, patch) => set((s) => ({
+        mentalEdges: s.mentalEdges.map((e) => e.id === edgeId
+          ? { ...e, ...(patch.maxIterations !== undefined ? { maxIterations: clampLoopIterations(patch.maxIterations) } : {}) }
+          : e),
+      })),
+
+      invertMentalEdge: (edgeId) => set((s) => ({
+        mentalEdges: s.mentalEdges.map((e) => {
+          if (e.id !== edgeId) return e;
+          const inverted = {
+            ...e,
+            sourceId: e.targetId,
+            targetId: e.sourceId,
+            sourceHandle: e.targetHandle,
+            targetHandle: e.sourceHandle,
+          };
+          // Re-classify against the graph MINUS this edge (an edge must not
+          // count itself when deciding whether its reversal closes a cycle).
+          const others = s.mentalEdges.filter((x) => x.id !== edgeId);
+          const isLoop = wouldCreateStepCycle(inverted.sourceId, inverted.targetId, s.mentalNodes, others);
+          if (isLoop) {
+            return { ...inverted, type: 'loop' as const, maxIterations: clampLoopIterations(inverted.maxIterations ?? LOOP_DEFAULT_MAX_ITERATIONS) };
+          }
+          const { maxIterations: _drop, ...rest } = inverted;
+          return { ...rest, type: inverted.type === 'ramification' ? inverted.type : 'link' as const };
+        }),
       })),
 
       createRamificationFromDrop: (sourceId, flowPosition) => {
@@ -1878,8 +2159,11 @@ export const useDesktopStore = create<DesktopStore>()(
         canvasClickAnimation: true,
         tourCompleted: false,
         tutorialCompleted: {},
+        modelPolicy: { mode: 'fixed' },
+        showInspector: true,
       },
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+      setModelPolicy: (policy) => set((s) => ({ settings: { ...s.settings, modelPolicy: policy } })),
 
       // Tutorial engine
       activeTutorial: null,
@@ -1919,7 +2203,13 @@ export const useDesktopStore = create<DesktopStore>()(
       }),
 
       // ─── HUD Widgets ───────────────────────────────────────────────
-      // Positions are stored already-snapped (callers must call snapToHudGrid before moveHudWidget).
+      // Positions are stored already-resolved (Phase 4: callers must call
+      // resolveHudWidgetPlacement — logic/hud-grid.ts, which itself snaps +
+      // clamps + dodges the top-right safe zone and other widgets — before
+      // moveHudWidget; this setter persists verbatim and does no snapping,
+      // clamping, or collision avoidance of its own). HudWidgetLayer is the
+      // one caller and resolves on drag-release, resize-release, and
+      // widget spawn/reopen — see its DraggableWidget mount effect.
       hudWidgets: DEFAULT_HUD_WIDGETS,
 
       setHudWidgetVisible: (type, visible) => set((s) => ({
@@ -1930,13 +2220,40 @@ export const useDesktopStore = create<DesktopStore>()(
         hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, position } : w),
       })),
 
+      // Clamp to a sane minimum (readable content) and the current viewport
+      // (a widget can never be resized larger than the screen that hosts it).
+      // Note: this only clamps SIZE, never position — if growing a widget in
+      // place now overlaps a neighbour or the safe zone, the caller
+      // (HudWidgetLayer) re-resolves position via resolveHudWidgetPlacement
+      // and calls moveHudWidget separately; resizeHudWidget never touches it.
+      resizeHudWidget: (type, size) => set((s) => {
+        const maxWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+        const maxHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+        const clamped = {
+          width: Math.min(Math.max(size.width, MIN_WIDGET_WIDTH), maxWidth),
+          height: Math.min(Math.max(size.height, MIN_WIDGET_HEIGHT), maxHeight),
+        };
+        return {
+          hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, size: clamped } : w),
+        };
+      }),
+
       toggleHudWidget: (type) => set((s) => ({
         hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, visible: !w.visible } : w),
       })),
     }),
     {
       name: 'heliox-desktop',
-      version: 17,
+      version: 18,
+      // Debounce localStorage writes: `partialize` below now includes
+      // `boards[]` (the full mental graph of EVERY board, not just the one
+      // on screen), so persist's default synchronous stringify-and-write on
+      // every single set() — including per-frame drag (updateMentalNode) and
+      // pan/zoom ticks — scales with the whole multi-board session instead
+      // of just what's visible. DebouncedStorage (src/renderer/logic/
+      // debounced-storage.ts) collapses bursts of writes into one trailing
+      // write per key every ~500ms while still flushing on unload/hide.
+      storage: createJSONStorage(() => debouncedLocalStorage),
       partialize: (state) => ({
         windows: state.windows,
         connections: state.connections,
@@ -1946,7 +2263,7 @@ export const useDesktopStore = create<DesktopStore>()(
         attachables: state.attachables,
         cliProvider: state.cliProvider,
         canvasPan: state.canvasPan,
-        // canvasZoom intentionally NOT persisted — always boots at 100% (Req1)
+        canvasZoom: state.canvasZoom,
         // mentalMode intentionally NOT persisted — always boots as 'off'
         mentalNodes: state.mentalNodes,
         mentalEdges: state.mentalEdges,
@@ -1954,6 +2271,8 @@ export const useDesktopStore = create<DesktopStore>()(
         settings: state.settings,
         fileExplorerStates: state.fileExplorerStates,
         hudWidgets: state.hudWidgets,
+        boards: state.boards,
+        activeBoardId: state.activeBoardId,
       }),
       // Migrate old persisted data (v1 had icon: emoji, v2 has iconName)
       migrate: (persisted: any, version: number) => {
@@ -2245,6 +2564,24 @@ export const useDesktopStore = create<DesktopStore>()(
           );
         }
 
+        // v17 → v18: introduce multi-board canvases ("pizarras"). The pre-v18
+        // single canvas becomes Board 1 losslessly via the active-slice
+        // pattern — its snapshot stays null, meaning its data keeps living in
+        // the top-level mentalNodes/mentalEdges/canvasPan/canvasZoom slices
+        // exactly as before (see the ACTIVE-SLICE PATTERN comment on the
+        // `boards` field above). canvasZoom is now persisted (see
+        // partialize) — default it to 1 for sessions that never had one.
+        // Note: v14's `delete persisted.canvasZoom` above only fires for
+        // version < 14, so for a very old session both blocks run in this
+        // same migration pass (in file order) and this default still applies.
+        if (version < 18 && persisted) {
+          persisted.boards = [
+            { id: 'board-1', name: 'Board 1', createdAt: Date.now(), updatedAt: Date.now(), snapshot: null },
+          ];
+          persisted.activeBoardId = 'board-1';
+          if (typeof persisted.canvasZoom !== 'number') persisted.canvasZoom = 1;
+        }
+
         return persisted ?? {};
       },
       merge: (persistedState, currentState) => {
@@ -2259,10 +2596,19 @@ export const useDesktopStore = create<DesktopStore>()(
             w?.type === def.type || (def.type === 'text-to-flow' && (w?.type as string) === 'text-to-pipeline'),
           );
           return saved
-            ? { ...def, visible: saved.visible ?? def.visible, position: saved.position ?? def.position }
+            ? {
+                ...def,
+                visible: saved.visible ?? def.visible,
+                position: saved.position ?? def.position,
+                ...(saved.size ? { size: saved.size } : {}),
+              }
             : def;
         });
         const merged = { ...currentState, ...persisted, hudWidgets };
+        // Heal any link/loop misclassification the active board's edges may
+        // carry from persisted data predating the orient-connection fix (see
+        // normalize-edge-types.ts). Reference-stable when nothing changed.
+        merged.mentalEdges = normalizeEdgeTypes(merged.mentalNodes, merged.mentalEdges);
         // Re-seed the (un-persisted) z-index counter above the highest persisted z
         // so newly-focused/created windows always stack on top across sessions.
         const persistedZ = [

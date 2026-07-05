@@ -28,6 +28,14 @@ export interface Checkpoint {
   runId: string;
   /** The step whose completion triggered this checkpoint. */
   stepId: string;
+  /**
+   * 1-based loop-pass number, present only when `stepId` belongs to a loop
+   * body (see `StepInstance.iteration` in loop-plan.ts). Omitted entirely —
+   * never `undefined`-valued — for steps outside any loop, so this field
+   * stays optional and previously-persisted checkpoints remain valid without
+   * a migration.
+   */
+  iteration?: number;
   /** Serialised system+user prompts fed to the step (size-capped). */
   inputContext: string;
   /** LLM output produced by the step (size-capped). */
@@ -115,6 +123,7 @@ export class SqliteCheckpointStore implements CheckpointStore {
         id               TEXT PRIMARY KEY,
         run_id           TEXT NOT NULL,
         step_id          TEXT NOT NULL,
+        iteration        INTEGER,
         input_context    TEXT NOT NULL,
         output           TEXT NOT NULL,
         completed_step_ids TEXT NOT NULL,
@@ -129,12 +138,13 @@ export class SqliteCheckpointStore implements CheckpointStore {
   save(checkpoint: Checkpoint): void {
     this.db.prepare(`
       INSERT INTO harness_checkpoints
-        (id, run_id, step_id, input_context, output, completed_step_ids, model_id, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (id, run_id, step_id, iteration, input_context, output, completed_step_ids, model_id, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       checkpoint.id,
       checkpoint.runId,
       checkpoint.stepId,
+      checkpoint.iteration ?? null,
       checkpoint.inputContext,
       checkpoint.output,
       JSON.stringify(checkpoint.completedStepIds),
@@ -164,6 +174,7 @@ export class SqliteCheckpointStore implements CheckpointStore {
       id: String(row.id),
       runId: String(row.run_id),
       stepId: String(row.step_id),
+      ...(row.iteration != null ? { iteration: Number(row.iteration) } : {}),
       inputContext: String(row.input_context),
       output: String(row.output),
       completedStepIds: JSON.parse(String(row.completed_step_ids)) as string[],
@@ -201,14 +212,27 @@ export function setCheckpointStore(store: CheckpointStore): void {
 /**
  * Build a unique checkpoint id.
  * Format: `ckpt_<runId>_<stepId>_<timestamp>` — readable in logs.
+ *
+ * When `iteration` is given, it is folded in as `ckpt_<runId>_<stepId>_<iteration>_<timestamp>`.
+ * This is not just cosmetic: every store keys records by id (`Map.set` /
+ * `INSERT ... PRIMARY KEY`), and a loop body can complete two passes of the
+ * same real stepId within the same millisecond (trivially so with a fast or
+ * mocked `runStep`, and via `replay.ts`'s instantly-resolving seeded runner
+ * for already-completed steps) — without the iteration folded in, the second
+ * pass's save would silently overwrite the first pass's checkpoint under an
+ * identical id instead of merely mislabeling it.
  */
-function buildCheckpointId(runId: string, stepId: string, timestamp: number): string {
-  return `ckpt_${runId}_${stepId}_${timestamp}`;
+function buildCheckpointId(runId: string, stepId: string, timestamp: number, iteration?: number): string {
+  return iteration !== undefined
+    ? `ckpt_${runId}_${stepId}_${iteration}_${timestamp}`
+    : `ckpt_${runId}_${stepId}_${timestamp}`;
 }
 
 export interface SaveCheckpointInput {
   runId: string;
   stepId: string;
+  /** 1-based loop-pass number; omit entirely for steps outside a loop body. */
+  iteration?: number;
   inputContext: string;
   output: string;
   completedStepIds: string[];
@@ -227,9 +251,14 @@ export interface SaveCheckpointInput {
 export function saveCheckpoint(input: SaveCheckpointInput): Checkpoint {
   const timestamp = Date.now();
   const checkpoint: Checkpoint = {
-    id: buildCheckpointId(input.runId, input.stepId, timestamp),
+    id: buildCheckpointId(input.runId, input.stepId, timestamp, input.iteration),
     runId: input.runId,
     stepId: input.stepId,
+    // Conditional spread — an omitted `input.iteration` must yield NO
+    // `iteration` key at all, never `iteration: undefined` (the two are
+    // observably different: `'iteration' in checkpoint` and structured-clone
+    // IPC transport both preserve keys with an `undefined` value).
+    ...(input.iteration !== undefined ? { iteration: input.iteration } : {}),
     inputContext: truncate(input.inputContext, INPUT_CONTEXT_MAX_CHARS),
     output: truncate(input.output, OUTPUT_MAX_CHARS),
     completedStepIds: input.completedStepIds,

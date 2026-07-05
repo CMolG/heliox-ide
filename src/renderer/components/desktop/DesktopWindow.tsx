@@ -543,6 +543,15 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
       data-state={win.state}
       data-interacting={interacting}
       data-has-role={!!roleColor}
+      // Mirrored from the inner .desktop-window below (data-active/
+      // data-highlighted/data-selected there too): the selection ring now
+      // lives on THIS element (index.css's `.desktop-window-shell[data-...]`
+      // rules) so role/mod/flow attachments — rendered as shell children,
+      // siblings of the inner window — can't overlap/cut it. --role-color
+      // already reaches this element via `style` below.
+      data-active={isActive}
+      data-highlighted={isHighlighted}
+      data-selected={isSelected}
       style={style}
     >
       {/* ── External Attachments (outside window bounds) ──────────── */}

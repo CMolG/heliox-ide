@@ -248,6 +248,12 @@ export interface StepNodeData {
 export interface FrameNodeData {
   title: string;
   description?: string;
+  /** Optional free-form labels for search/organization; flows through to AgenticFlow.tags. */
+  tags?: string[];
+  /** Optional flow author; flows through to AgenticFlow.author. */
+  author?: string;
+  /** Optional user-defined flow version; flows through to AgenticFlow.version. */
+  version?: string;
   childIds: string[];
   missingCapabilitiesRequested?: string[];
   [key: string]: unknown;
@@ -292,9 +298,41 @@ export interface MentalGraphEdge {
   targetId: string;
   sourceHandle?: string;
   targetHandle?: string;
-  type: 'ramification' | 'link';
+  type: 'ramification' | 'link' | 'loop';
+  /** Loop-back edges only: total passes of the loop body (clamped 1..50 by the compiler). */
+  maxIterations?: number;
   color: string;
   createdAt: number;
+}
+
+// ─── Boards (Figma-like multiple canvases) ────────────────────────
+//
+// Each Board is an independent "pizarra": its own mental graph + viewport.
+// Windows, attachables, grids, and the dock are NOT board-scoped — they stay
+// global across every board. See the "ACTIVE-SLICE PATTERN" section comment
+// above the `boards` field in desktop-store.ts for how `snapshot` relates to
+// the store's top-level mentalNodes/mentalEdges/canvasPan/canvasZoom slices.
+
+/** The graph + viewport state owned by one board. */
+export interface BoardSnapshot {
+  mentalNodes: CanvasGraphNode[];
+  mentalEdges: MentalGraphEdge[];
+  canvasPan: CanvasPan;
+  canvasZoom: number;
+}
+
+export interface Board {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  /**
+   * Authoritative ONLY while this board is inactive; null/stale for the
+   * active board (see active-slice pattern). Written only at switch time
+   * (createBoard/switchBoard/deleteBoard), from the live top-level slices
+   * of the board being deactivated.
+   */
+  snapshot: BoardSnapshot | null;
 }
 
 export interface DesktopAttachable {

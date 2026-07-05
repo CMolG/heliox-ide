@@ -21,10 +21,13 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgenticExecutionStatus } from '@/types/harness';
+import type { ModelPolicy } from '@/types/ipc-events';
 
 const mockDesktop = vi.hoisted(() => ({
   mentalNodes: [] as unknown[],
   bringMentalToFront: vi.fn(),
+  settings: { modelPolicy: { mode: 'fixed' } as ModelPolicy },
+  setModelPolicy: vi.fn(),
 }));
 
 vi.mock('../../../store/desktop-store', () => ({
@@ -37,13 +40,22 @@ const mockHarness = vi.hoisted(() => ({
   startExecution: vi.fn(),
 }));
 
-vi.mock('../../../store/harness-store', () => ({
-  useHarnessStore: (selector: (s: typeof mockHarness) => unknown) => selector(mockHarness),
-}));
+// `useHarnessStore` is mocked as a callable selector (matching every other
+// spot in this file) PLUS a `getState()` static, because `logic/flow-actions.ts`
+// (which `handleExport` now delegates to — Phase 11) is a plain async
+// function, not a hook, so it reads the store via `useHarnessStore.getState()`
+// the same way any zustand store exposes that method outside of React.
+vi.mock('../../../store/harness-store', () => {
+  const useHarnessStore = Object.assign(
+    (selector: (s: typeof mockHarness) => unknown) => selector(mockHarness),
+    { getState: () => mockHarness },
+  );
+  return { useHarnessStore };
+});
 
 // ── Import after mocks ───────────────────────────────────────────────────────
 
-import { FrameNode } from './FrameNode';
+import { FrameNode, policyToValue, valueToPolicy } from './FrameNode';
 import type { NodeProps } from '@xyflow/react';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -70,11 +82,24 @@ beforeEach(() => {
   document.body.innerHTML = '';
   mockDesktop.mentalNodes = [];
   mockDesktop.bringMentalToFront.mockClear();
+  mockDesktop.settings = { modelPolicy: { mode: 'fixed' } };
+  mockDesktop.setModelPolicy.mockClear();
   mockHarness.executionStatus = 'idle';
   mockHarness.compileCurrentCanvas.mockClear();
   mockHarness.compileCurrentCanvas.mockReturnValue({ rootStepId: 'root' });
   mockHarness.startExecution.mockClear();
 });
+
+// ── window.helioxAPI stub (Export button — real useHelioxStore, real IPC bridge) ──
+
+function stubExportFlow(impl: (...args: unknown[]) => unknown) {
+  Object.defineProperty(window, 'helioxAPI', {
+    value: { exportFlow: vi.fn(impl) },
+    writable: true,
+    configurable: true,
+  });
+  return (window.helioxAPI as unknown as { exportFlow: ReturnType<typeof vi.fn> }).exportFlow;
+}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -159,5 +184,184 @@ describe('FrameNode — run/status treatment per executionStatus', () => {
     // this pins the behavior explicitly rather than relying on that default.
     expect(mockHarness.compileCurrentCanvas).not.toHaveBeenCalled();
     expect(mockHarness.startExecution).not.toHaveBeenCalled();
+  });
+});
+
+// ── Export control (Phase 4a — canvas → portable heliox-flow.json export) ──────
+
+describe('FrameNode — Export control', () => {
+  it('renders an Export button next to Run with a descriptive aria-label', () => {
+    render(<FrameNode {...makeProps('f-export', { title: 'ETL Pipeline' })} />);
+    const button = screen.getByTestId('pipeline-frame-export-f-export');
+    expect(button).toHaveAttribute('aria-label', 'Export "ETL Pipeline" as a portable flow file');
+  });
+
+  it('compiles the canvas and calls window.helioxAPI.exportFlow with the compiled flow on click', () => {
+    const compiledFlow = { id: 'flow-1', name: 'My Flow', rootStepId: 'root', stepsRecord: {} };
+    mockHarness.compileCurrentCanvas.mockReturnValue(compiledFlow);
+    const exportFlow = stubExportFlow(() => Promise.resolve({ success: true, path: '/tmp/flow-1.flow.json' }));
+
+    render(<FrameNode {...makeProps('f-export-click')} />);
+    fireEvent.click(screen.getByTestId('pipeline-frame-export-f-export-click'));
+
+    expect(mockHarness.compileCurrentCanvas).toHaveBeenCalledTimes(1);
+    expect(exportFlow).toHaveBeenCalledWith(compiledFlow);
+  });
+
+  it('does not call window.helioxAPI.exportFlow when compileCurrentCanvas returns null (e.g. an empty/invalid canvas)', () => {
+    mockHarness.compileCurrentCanvas.mockReturnValue(null);
+    const exportFlow = stubExportFlow(() => Promise.resolve({ success: true }));
+
+    render(<FrameNode {...makeProps('f-export-empty')} />);
+    fireEvent.click(screen.getByTestId('pipeline-frame-export-f-export-empty'));
+
+    expect(mockHarness.compileCurrentCanvas).toHaveBeenCalledTimes(1);
+    expect(exportFlow).not.toHaveBeenCalled();
+  });
+
+  it('does not start execution when Export is clicked (independent of the Run control)', () => {
+    const compiledFlow = { id: 'flow-1', name: 'My Flow', rootStepId: 'root', stepsRecord: {} };
+    mockHarness.compileCurrentCanvas.mockReturnValue(compiledFlow);
+    stubExportFlow(() => Promise.resolve({ success: true }));
+
+    render(<FrameNode {...makeProps('f-export-independent')} />);
+    fireEvent.click(screen.getByTestId('pipeline-frame-export-f-export-independent'));
+
+    expect(mockHarness.startExecution).not.toHaveBeenCalled();
+  });
+});
+
+// ── Model-policy select (Phase 3b — WS2 smart-routing UI) ──────────────────
+
+describe('FrameNode — model-policy select', () => {
+  it('renders the current mode, defaulting to Fixed', () => {
+    render(<FrameNode {...makeProps('f-policy-default')} />);
+    const select = screen.getByTestId('pipeline-frame-policy-f-policy-default');
+    expect(select).toHaveValue('fixed');
+    expect(select).toHaveAttribute('aria-label', 'Model policy for this flow');
+  });
+
+  it('reflects a smart-local policy already in the store', () => {
+    mockDesktop.settings = { modelPolicy: { mode: 'smart-local', strategy: 'fastest' } };
+    render(<FrameNode {...makeProps('f-policy-smart')} />);
+    expect(screen.getByTestId('pipeline-frame-policy-f-policy-smart')).toHaveValue('smart-local:fastest');
+  });
+
+  it('reflects a smart-external policy already in the store', () => {
+    mockDesktop.settings = { modelPolicy: { mode: 'smart-external' } };
+    render(<FrameNode {...makeProps('f-policy-external')} />);
+    expect(screen.getByTestId('pipeline-frame-policy-f-policy-external')).toHaveValue('smart-external');
+  });
+
+  it('offers all six policy options in order', () => {
+    render(<FrameNode {...makeProps('f-policy-options')} />);
+    const select = screen.getByTestId('pipeline-frame-policy-f-policy-options');
+    const labels = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
+    expect(labels).toEqual([
+      'Fixed',
+      'Smart · best score',
+      'Smart · cheapest',
+      'Smart · fastest',
+      'Smart · best value',
+      'Smart · External (OpenRouter)',
+    ]);
+  });
+
+  it('selecting "Smart · cheapest" calls setModelPolicy({mode:"smart-local",strategy:"cheapest"})', () => {
+    render(<FrameNode {...makeProps('f-policy-cheapest')} />);
+    fireEvent.change(screen.getByTestId('pipeline-frame-policy-f-policy-cheapest'), {
+      target: { value: 'smart-local:cheapest' },
+    });
+    expect(mockDesktop.setModelPolicy).toHaveBeenCalledWith({ mode: 'smart-local', strategy: 'cheapest' });
+  });
+
+  it('selecting "Smart · External (OpenRouter)" calls setModelPolicy({mode:"smart-external"})', () => {
+    render(<FrameNode {...makeProps('f-policy-ext-select')} />);
+    fireEvent.change(screen.getByTestId('pipeline-frame-policy-f-policy-ext-select'), {
+      target: { value: 'smart-external' },
+    });
+    expect(mockDesktop.setModelPolicy).toHaveBeenCalledWith({ mode: 'smart-external' });
+  });
+
+  it('selecting "Fixed" calls setModelPolicy({mode:"fixed"})', () => {
+    mockDesktop.settings = { modelPolicy: { mode: 'smart-local', strategy: 'best-score' } };
+    render(<FrameNode {...makeProps('f-policy-fixed')} />);
+    fireEvent.change(screen.getByTestId('pipeline-frame-policy-f-policy-fixed'), {
+      target: { value: 'fixed' },
+    });
+    expect(mockDesktop.setModelPolicy).toHaveBeenCalledWith({ mode: 'fixed' });
+  });
+
+  it('sits inside a "nodrag" zone like the sibling Export/Run controls, so opening it never drags the frame', () => {
+    render(<FrameNode {...makeProps('f-policy-nodrag')} />);
+    const select = screen.getByTestId('pipeline-frame-policy-f-policy-nodrag');
+    // xyflow's drag-init check is `event.target.closest('.nodrag')` — this
+    // holds whether the class sits on the select itself or an ancestor.
+    expect(select.closest('.nodrag')).not.toBeNull();
+  });
+
+  it('does not throw when pointerdown/click are dispatched on the select (stopPropagation wiring present)', () => {
+    render(<FrameNode {...makeProps('f-policy-events')} />);
+    const select = screen.getByTestId('pipeline-frame-policy-f-policy-events');
+    expect(() => {
+      fireEvent.pointerDown(select);
+      fireEvent.click(select);
+    }).not.toThrow();
+  });
+});
+
+// ── Pure helpers: policyToValue / valueToPolicy ─────────────────────────────
+
+describe('FrameNode — policyToValue / valueToPolicy (pure)', () => {
+  it('policyToValue maps fixed -> "fixed"', () => {
+    expect(policyToValue({ mode: 'fixed' })).toBe('fixed');
+  });
+
+  it('policyToValue maps smart-external -> "smart-external"', () => {
+    expect(policyToValue({ mode: 'smart-external' })).toBe('smart-external');
+  });
+
+  it('policyToValue maps smart-local -> "smart-local:<strategy>"', () => {
+    expect(policyToValue({ mode: 'smart-local', strategy: 'best-value' })).toBe('smart-local:best-value');
+  });
+
+  it('policyToValue defaults undefined -> "fixed"', () => {
+    expect(policyToValue(undefined)).toBe('fixed');
+  });
+
+  it('valueToPolicy is the exact inverse of policyToValue for every option', () => {
+    const policies: ModelPolicy[] = [
+      { mode: 'fixed' },
+      { mode: 'smart-local', strategy: 'best-score' },
+      { mode: 'smart-local', strategy: 'cheapest' },
+      { mode: 'smart-local', strategy: 'fastest' },
+      { mode: 'smart-local', strategy: 'best-value' },
+      { mode: 'smart-external' },
+    ];
+    for (const policy of policies) {
+      expect(valueToPolicy(policyToValue(policy))).toEqual(policy);
+    }
+  });
+
+  it('valueToPolicy falls back to fixed for an unrecognized value', () => {
+    expect(valueToPolicy('nonsense')).toEqual({ mode: 'fixed' });
+  });
+});
+
+// ── No connection handles (frame edges have no compile semantics) ──────────
+//
+// Regression guard for the intentional omission documented above the root
+// JSX in FrameNode.tsx: unlike StepNode/MentalNode, a pipeline frame must
+// never render an xyflow <Handle> — compileFlowFromCanvas only wires
+// step↔step, so a frame-originated edge would just be a dashed "attachment"
+// MentalEdge the compiler silently drops.
+describe('FrameNode — no connection handles', () => {
+  it('renders no element with a class or testid containing "handle"', () => {
+    const { container } = render(<FrameNode {...makeProps('f-connections')} />);
+    const elements = Array.from(container.querySelectorAll('*'));
+    for (const el of elements) {
+      expect(el.getAttribute('class') ?? '').not.toMatch(/handle/i);
+      expect(el.getAttribute('data-testid') ?? '').not.toMatch(/handle/i);
+    }
   });
 });

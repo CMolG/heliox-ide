@@ -17,7 +17,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useHelioxStore } from '../../store';
 import { useDesktopStore } from '../../store/desktop-store';
 import { ToggleSetting } from './ToggleSetting';
-import { ProvidersSection } from './ProvidersSection';
+import { ConnectionsSection } from './ConnectionsSection';
 import type { TutorialScenarioId } from '@/types/tutorial';
 import { TUTORIAL_SCENARIOS } from '../desktop/tutorial/TutorialScenarios';
 
@@ -220,13 +220,13 @@ export function SettingsModal() {
           </button>
         </div>
 
-        {/* Provider Picker — runs through OpenCode */}
-        <ProvidersSection
-          selectedProvider={appSettings.selectedProvider ?? 'opencode'}
-          selectedModel={appSettings.selectedModel ?? 'opencode/claude-sonnet-4-6'}
-          onSelect={(providerId, model) => {
-            updateAppSettings({ selectedProvider: providerId, selectedModel: model });
-            useDesktopStore.getState().setCliProvider(providerId);
+        {/* Connections — DBeaver-style user-defined provider endpoints (replaces the old opencode-backed provider picker) */}
+        <ConnectionsSection
+          selectedProvider={appSettings.selectedProvider ?? ''}
+          selectedModel={appSettings.selectedModel ?? ''}
+          onSelect={(connectionId, model) => {
+            updateAppSettings({ selectedProvider: connectionId, selectedModel: model });
+            useDesktopStore.getState().setCliProvider(connectionId);
           }}
         />
 

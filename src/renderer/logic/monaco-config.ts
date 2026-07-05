@@ -9,6 +9,44 @@
 import { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 
+// ─── Self-hosted Monaco workers (startup warning fix) ────────────
+// Without a `MonacoEnvironment.getWorker`, Monaco tries to spin up its
+// language-service web workers from a same-origin relative URL it constructs
+// itself, which fails under Vite/Electron packaging ("Could not create web
+// worker(s). Falling back to loading web worker code in main thread...").
+// The `?worker` suffix is a Vite convention: it bundles the target module as
+// a worker script and gives us back a constructor instead of the module's
+// normal exports. Registering those constructors here — before any editor
+// mounts — lets Monaco spawn real workers instead of degrading to (slower,
+// main-thread) language services. `worker-src 'self' blob:` is already
+// present in the packaged CSP (src/main/index.ts) to allow this.
+import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
+import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
+import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
+import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
+
+// monaco-editor's own .d.ts declares `MonacoEnvironment` as a module-scoped
+// `declare var` (see monaco-editor/esm/vs/editor/editor.api.d.ts), which does
+// NOT merge onto the `Window`/`self` type on its own. Re-declare it as a
+// `Window` member (the same shape, `monaco.Environment`) so the assignment
+// below type-checks under `tsc --noEmit`.
+declare global {
+  interface Window {
+    MonacoEnvironment?: monaco.Environment;
+  }
+}
+
+self.MonacoEnvironment = {
+  getWorker(_id: string, label: string) {
+    if (label === 'json') return new jsonWorker();
+    if (label === 'css' || label === 'scss' || label === 'less') return new cssWorker();
+    if (label === 'html' || label === 'handlebars' || label === 'razor') return new htmlWorker();
+    if (label === 'typescript' || label === 'javascript') return new tsWorker();
+    return new editorWorker();
+  },
+};
+
 // ─── Self-hosted Monaco (audit 1.3 / CSP) ────────────────────────
 // `@monaco-editor/react` defaults to fetching its AMD loader + workers from the
 // jsdelivr CDN unless given a monaco instance directly — that violates
@@ -16,9 +54,7 @@ import * as monaco from 'monaco-editor';
 // silently break the code editor offline. Point it at the bundled npm package
 // (already a project dependency) instead of the CDN. Every module that mounts
 // <Editor>/<DiffEditor> imports this file, so the config lands before any editor
-// instantiates. Worker creation is unaffected by this change either way: Monaco
-// falls back to a main-thread language-service mode when no
-// `MonacoEnvironment.getWorker` is configured (unchanged pre-existing behavior).
+// instantiates. Worker creation is now handled above via `MonacoEnvironment.getWorker`.
 loader.config({ monaco });
 
 // ─── Extension → Monaco Language ID ──────────────────────────────

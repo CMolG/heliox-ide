@@ -4,13 +4,14 @@
  * Executes a single step prompt with model-managed tool calling enabled through
  * AI SDK's step stop condition.
  */
-import { anthropic } from '@ai-sdk/anthropic';
+import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { generateText as aiGenerateText, streamText as aiStreamText, stepCountIs, type LanguageModel, type ToolSet } from 'ai';
 import { normalizeUsage } from '../performance-frontier/telemetry/normalize-usage';
 import { logProviderHeaders, normalizeProviderHeaders } from '../performance-frontier/telemetry/provider-headers';
 import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/collector';
 import type { PFCognitiveTraceEntry } from '../performance-frontier/types';
+import type { ConnectionResolver } from '../../types/ipc-events';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-4o-mini';
 const DEFAULT_MAX_STEPS = Number(process.env.HELIOX_HARNESS_MAX_STEPS) || 5;
@@ -27,6 +28,8 @@ export interface LLMStepResult {
   toolResults: unknown[];
   cognitiveTrace?: PFCognitiveTraceEntry[];
   metrics?: LLMStepTelemetryEvent;
+  /** Model the provider actually served (AI SDK response.modelId); e.g. resolves openrouter/auto. */
+  respondedModelId?: string;
 }
 
 export interface RunLLMStepInput {
@@ -35,9 +38,14 @@ export interface RunLLMStepInput {
   tools: ToolSet;
   model?: LanguageModel;
   modelId?: string;
+  /** Injected lookup so a `conn:<connectionId>/<modelId>` modelId can be resolved — see `resolveHarnessModel`. */
+  resolveConnection?: ConnectionResolver;
   maxSteps?: number;
   maxOutputTokens?: number;
   timeoutMs?: number;
+  /** Loop-body progress passthrough; not yet wired into telemetry (later phase). */
+  iteration?: number;
+  totalIterations?: number;
   generateText?: (options: Record<string, unknown>) => Promise<{
     text: string;
     usage?: unknown;
@@ -47,6 +55,7 @@ export interface RunLLMStepInput {
     steps?: unknown[];
     response?: {
       headers?: Record<string, string>;
+      modelId?: string;
     };
   }>;
   onTelemetry?: (event: LLMStepTelemetryEvent) => void;
@@ -171,7 +180,43 @@ function timeoutSignal(timeoutMs: number): AbortSignal | undefined {
   return controller.signal;
 }
 
-export function resolveHarnessModel(modelId = process.env.HELIOX_HARNESS_MODEL ?? DEFAULT_MODEL_ID): LanguageModel {
+/**
+ * Resolve a `conn:<connectionId>/<modelId>` model id against the
+ * user-defined connection profiles (Settings → Connections). `resolveConnection`
+ * is injected (rather than importing `provider-connections.ts` directly) so
+ * this module stays unit-testable in isolation — the ipc/executor boundary
+ * (`heliox:start-harness`) is the one place that actually reads the
+ * connection-profile store and decrypts a token, once per run, closing over
+ * the result in a plain synchronous lookup.
+ */
+function resolveConnectionModel(modelId: string, resolveConnection: ConnectionResolver | undefined): LanguageModel {
+  const rest = modelId.slice('conn:'.length); // '<connectionId>/<modelName...>'
+  const slashIdx = rest.indexOf('/');
+  const connectionId = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+  const modelName = slashIdx === -1 ? '' : rest.slice(slashIdx + 1);
+
+  const resolved = resolveConnection?.(connectionId);
+  if (!resolved) {
+    throw new Error(
+      `Unknown provider connection "${connectionId}". It may have been deleted — reselect a model in Settings → Connections.`,
+    );
+  }
+  if (!modelName) {
+    throw new Error(`Invalid harness model id "${modelId}". Expected "conn:<connectionId>/<modelId>".`);
+  }
+
+  if (resolved.protocol === 'anthropic') {
+    return createAnthropic({ baseURL: resolved.baseUrl, apiKey: resolved.token })(modelName);
+  }
+  return createOpenAI({ baseURL: resolved.baseUrl, apiKey: resolved.token })(modelName);
+}
+
+export function resolveHarnessModel(
+  modelId = process.env.HELIOX_HARNESS_MODEL ?? DEFAULT_MODEL_ID,
+  resolveConnection?: ConnectionResolver,
+): LanguageModel {
+  if (modelId.startsWith('conn:')) return resolveConnectionModel(modelId, resolveConnection);
+
   const [provider, ...modelParts] = modelId.includes('/') ? modelId.split('/') : ['openai', modelId];
   const modelName = modelParts.join('/');
 
@@ -225,6 +270,7 @@ interface RawStepResult {
   steps?: unknown[];
   response?: {
     headers?: Record<string, string>;
+    modelId?: string;
   };
 }
 
@@ -264,6 +310,7 @@ function buildLLMStepResult(
     toolResults: raw.toolResults ?? [],
     cognitiveTrace,
     metrics,
+    respondedModelId: raw.response?.modelId,
   };
 }
 
@@ -278,7 +325,7 @@ export async function runLLMStep(input: RunLLMStepInput): Promise<LLMStepResult>
   try {
     if (useStreaming) {
       const streamResult = aiStreamText({
-        model: input.model ?? resolveHarnessModel(input.modelId),
+        model: input.model ?? resolveHarnessModel(input.modelId, input.resolveConnection),
         system: input.systemPrompt,
         prompt: input.userPrompt,
         tools: input.tools,
@@ -326,7 +373,10 @@ export async function runLLMStep(input: RunLLMStepInput): Promise<LLMStepResult>
         toolCalls: toolCalls as unknown[],
         toolResults: toolResults as unknown[],
         steps: steps as unknown[],
-        response: { headers: (response as { headers?: Record<string, string> }).headers },
+        response: {
+          headers: (response as { headers?: Record<string, string> }).headers,
+          modelId: (response as { modelId?: string }).modelId,
+        },
       };
       return buildLLMStepResult(input, raw, startedAt);
     }
@@ -334,7 +384,7 @@ export async function runLLMStep(input: RunLLMStepInput): Promise<LLMStepResult>
     // Default path: generateText (used directly by tests via the override).
     const generateText = input.generateText ?? aiGenerateText;
     const result = await generateText({
-      model: input.model ?? resolveHarnessModel(input.modelId),
+      model: input.model ?? resolveHarnessModel(input.modelId, input.resolveConnection),
       system: input.systemPrompt,
       prompt: input.userPrompt,
       tools: input.tools,

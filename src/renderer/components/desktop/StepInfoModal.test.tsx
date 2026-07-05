@@ -1,40 +1,47 @@
 /**
- * StepInfoModal.test.tsx — Component tests for the editable Step Config panel
+ * StepInfoModal.test.tsx — Component tests for the read-only "Run evidence" panel
+ *
+ * Phase 8 surgery: StepConfigCore (the Instructions/Role/Mod/Execution
+ * editing surface) moved out of this modal into the right-side Inspector
+ * (`components/inspector/StepInspector.tsx`), which now owns that coverage —
+ * see InspectorPanel.test.tsx. This file keeps only what StepInfoModal still
+ * renders: the panel chrome (dialog semantics, focus trap, Escape) + the
+ * StatusBadge + StepRunEvidence's "Why this model"/Connections/Loop cards.
+ * The Instructions/Role/Mod/Execution-control/Model-override test bodies
+ * below were TRANSPLANTED — not deleted — into InspectorPanel.test.tsx,
+ * which renders `<InspectorPanel/>` with a step selected and exercises the
+ * exact same testids (StepConfigCore is embedded there unchanged).
  *
  * Strategy:
  * - Mount <StepInfoModal /> against the REAL `desktop-store` (it is pure
- *   client-side state, no IPC), seeded via `addStepNode` / `setMarketInventory`
- *   so `stepData` passed in matches what StepNode would actually hand down.
- * - `harness-store` IS mocked (hoisted spies for `runStep`/`runFromStep`) since
- *   the real implementation dispatches through IPC/`window.helioxAPI`, which
- *   isn't available in this environment and isn't what this file is testing —
- *   we only need to prove the panel *calls* the right action with the right id.
+ *   client-side state, no IPC), seeded via `addStepNode` so `stepData`
+ *   passed in matches what StepInspector would actually hand down.
+ * - `harness-store` IS mocked (hoisted fixture for `stepIterations`/
+ *   `stepModels`, both read by StepRunEvidence) since the real
+ *   implementation dispatches through IPC/`window.helioxAPI`, which isn't
+ *   available in this environment.
  *
  * Scenarios covered:
- *   1. Dialog semantics + testids are preserved.
- *   2. Instructions textarea seeds from `prompt` (falling back to `description`)
- *      and persists edits into the store via `updateStepData`.
- *   3. Edits survive a close (unmount) + reopen (remount with fresh props).
- *   4. Role picker: attach, remove, and one-role-per-step replace semantics.
- *   5. Mod picker: attach, remove, and a surfaced rejection when the store
- *      declines the add (duplicate/incompatible).
- *   6. Run / Run-from-here buttons call harness-store actions and are
- *      disabled while the step is busy.
- *   7. Keyboard: Escape closes; Tab is trapped inside the panel.
+ *   1. Dialog semantics + testids (heading now reads "Run evidence").
+ *   2. Execution status badge.
+ *   3. Keyboard: Escape closes; focus is trapped on the close button (the
+ *      panel's only focusable element now that StepConfigCore is gone).
+ *   4. Loop connections (loopOut/loopIn/live iteration) cards.
+ *   5. "Why this model" routing-evidence card (WS2 smart routing).
  */
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDesktopStore } from '../../store/desktop-store';
 import { StepInfoModal } from './StepInfoModal';
 import type { StepNodeData } from '@/types/desktop';
-import type { MarketMod, MarketRole } from '@/types/market';
+import type { RoutedModelEvidence } from '@/types/ipc-events';
 
 // ── Mock harness-store (execution is out of scope for this file) ───────────
 
 const mockHarness = vi.hoisted(() => ({
-  runStep: vi.fn(),
-  runFromStep: vi.fn(),
+  stepIterations: {} as Record<string, { iteration: number; total: number; loopId: string }>,
+  stepModels: {} as Record<string, { modelId: string; evidence?: RoutedModelEvidence }>,
 }));
 
 vi.mock('../../store/harness-store', () => ({
@@ -43,18 +50,6 @@ vi.mock('../../store/harness-store', () => ({
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
-const ROLE_A = { name: 'frontend-engineer', icon: 'MdCode', iconLibrary: 'md', description: 'Builds UI', tags: ['frontend'], color: '#E87040' };
-const ROLE_B = { name: 'backend-engineer', icon: 'MdStorage', iconLibrary: 'md', description: 'Builds APIs', tags: ['backend'], color: '#4285F4' };
-const MOD_LINT = { name: 'strict-linting', icon: 'MdRule', iconLibrary: 'md', description: 'Fail fast on lint drift', tags: ['quality'] };
-const MOD_DS_A = { name: 'design-system-a', icon: 'MdPalette', iconLibrary: 'md', description: 'Design system A', tags: ['design'], incompatibleWith: ['design-system-b'] };
-const MOD_DS_B = { name: 'design-system-b', icon: 'MdPalette', iconLibrary: 'md', description: 'Design system B', tags: ['design'], incompatibleWith: ['design-system-a'] };
-
-// Domain-hint fixtures (explicitly typed so the `domains` literals narrow to
-// `MarketDomain` instead of widening to `string[]`).
-const ROLE_DEVOPS: MarketRole = { name: 'devops-engineer', icon: 'MdCloud', iconLibrary: 'md', description: 'Runs infra', tags: ['infra'], color: '#4285F4', domains: ['infra'] };
-const MOD_DARK_MODE: MarketMod = { name: 'dark-mode', icon: 'MdPalette', iconLibrary: 'md', description: 'Dark theme tokens', tags: ['design'], domains: ['frontend'] };
-const MOD_UNIVERSAL: MarketMod = { name: 'self-review', icon: 'MdFactCheck', iconLibrary: 'md', description: 'Review before done', tags: ['process'], domains: ['universal'] };
-
 function seedStep(overrides?: Partial<{ prompt: string; description: string }>) {
   const stepId = useDesktopStore.getState().addStepNode({
     position: { x: 0, y: 0 },
@@ -62,43 +57,35 @@ function seedStep(overrides?: Partial<{ prompt: string; description: string }>) 
     description: overrides?.description,
     prompt: overrides?.prompt,
   });
-  useDesktopStore.getState().setMarketInventory({
-    flows: [],
-    roles: [ROLE_A, ROLE_B],
-    mods: [MOD_LINT, MOD_DS_A, MOD_DS_B],
-  });
   const stepData = (useDesktopStore.getState().mentalNodes.find((n) => n.id === stepId) as { data: StepNodeData }).data;
   return { stepId, stepData };
 }
 
-function renderModal(stepId: string, stepData: StepNodeData, opts?: { status?: string; onClose?: () => void }) {
+function renderModal(stepId: string, stepData: StepNodeData, opts?: {
+  status?: string;
+  onClose?: () => void;
+  connections?: {
+    incoming?: string[];
+    outgoing?: string[];
+    loopOut?: { toTitle: string; maxIterations: number };
+    loopIn?: { fromTitle: string; maxIterations: number };
+  };
+}) {
   return render(
     <StepInfoModal
       stepId={stepId}
       stepData={stepData}
-      connections={{ incoming: [], outgoing: [] }}
+      connections={{ incoming: [], outgoing: [], ...opts?.connections }}
       status={opts?.status as never}
       onClose={opts?.onClose ?? vi.fn()}
     />,
   );
 }
 
-/**
- * Re-reads a step's `data` fresh from the store. StepInfoModal receives
- * `stepData` as a prop (it does not itself subscribe to `mentalNodes`) — in
- * production, StepNode re-passes a fresh `data` prop on every store change
- * because xyflow's node data is derived reactively. Tests have to mimic that
- * same hand-off explicitly via `rerender` after any mutation whose on-screen
- * effect is being asserted.
- */
-function freshStepData(stepId: string): StepNodeData {
-  return (useDesktopStore.getState().mentalNodes.find((n) => n.id === stepId) as { data: StepNodeData }).data;
-}
-
 beforeEach(() => {
   useDesktopStore.setState(useDesktopStore.getInitialState(), true);
-  mockHarness.runStep.mockClear();
-  mockHarness.runFromStep.mockClear();
+  mockHarness.stepIterations = {};
+  mockHarness.stepModels = {};
 });
 
 afterEach(() => {
@@ -115,8 +102,13 @@ describe('StepInfoModal — dialog semantics', () => {
     const dialog = screen.getByTestId('step-info-modal');
     expect(dialog).toHaveAttribute('role', 'dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
-    expect(dialog).toHaveAttribute('aria-label', 'Step details: Test Step');
+    expect(dialog).toHaveAttribute('aria-label', 'Run evidence: Test Step');
     expect(screen.getByTestId('step-info-modal-close')).toBeInTheDocument();
+    // Phase 8: the heading is now a static "Run evidence" label — the step's
+    // own title moved to the small kicker line below it (still visible here
+    // too, and it's the primary identity shown in the Inspector this popup
+    // is opened from).
+    expect(screen.getByRole('heading', { name: 'Run evidence' })).toBeInTheDocument();
   });
 
   it('focuses the close button on mount', () => {
@@ -126,276 +118,19 @@ describe('StepInfoModal — dialog semantics', () => {
   });
 });
 
-// ── Instructions editor ──────────────────────────────────────────────────────
+// ── Execution status badge ───────────────────────────────────────────────────
 
-describe('StepInfoModal — instructions editor', () => {
-  it('seeds the textarea from description when prompt is unset', () => {
-    const { stepId, stepData } = seedStep({ description: 'Legacy description text' });
-    renderModal(stepId, stepData);
-    expect(screen.getByTestId('step-info-prompt')).toHaveValue('Legacy description text');
-  });
-
-  it('persists edits into the store via updateStepData', () => {
-    const { stepId, stepData } = seedStep();
-    renderModal(stepId, stepData);
-
-    fireEvent.change(screen.getByTestId('step-info-prompt'), {
-      target: { value: 'Summarize the README in three bullets.' },
-    });
-
-    const persisted = (useDesktopStore.getState().mentalNodes.find((n) => n.id === stepId) as { data: StepNodeData }).data;
-    expect(persisted.prompt).toBe('Summarize the README in three bullets.');
-  });
-
-  it('survives closing (unmount) and reopening (remount with fresh props)', () => {
-    const { stepId, stepData } = seedStep();
-    const { unmount } = renderModal(stepId, stepData);
-
-    fireEvent.change(screen.getByTestId('step-info-prompt'), {
-      target: { value: 'Persisted across reopen' },
-    });
-    unmount();
-
-    const reopenedData = (useDesktopStore.getState().mentalNodes.find((n) => n.id === stepId) as { data: StepNodeData }).data;
-    renderModal(stepId, reopenedData);
-    expect(screen.getByTestId('step-info-prompt')).toHaveValue('Persisted across reopen');
-  });
-});
-
-// ── Role picker ───────────────────────────────────────────────────────────────
-
-describe('StepInfoModal — role management', () => {
-  it('attaches a role via the picker and lists it with a remove button', () => {
-    const { stepId, stepData } = seedStep();
-    const { rerender } = renderModal(stepId, stepData);
-
-    fireEvent.change(screen.getByTestId('step-info-role-select'), { target: { value: ROLE_A.name } });
-    fireEvent.click(screen.getByTestId('step-info-role-attach'));
-
-    const persisted = freshStepData(stepId);
-    expect(persisted.roles.map((r) => r.name)).toEqual([ROLE_A.name]);
-
-    rerender(
-      <StepInfoModal stepId={stepId} stepData={persisted} connections={{ incoming: [], outgoing: [] }} onClose={vi.fn()} />,
-    );
-    expect(screen.getByTestId(`step-info-role-remove-${ROLE_A.name}`)).toBeInTheDocument();
-  });
-
-  it('honors one-role-per-step: attaching a second role replaces the first', () => {
-    const { stepId } = seedStep();
-    useDesktopStore.getState().addRoleToStep(stepId, ROLE_A);
-    const { rerender } = renderModal(stepId, freshStepData(stepId));
-
-    fireEvent.change(screen.getByTestId('step-info-role-select'), { target: { value: ROLE_B.name } });
-    fireEvent.click(screen.getByTestId('step-info-role-attach'));
-
-    const persisted = freshStepData(stepId);
-    expect(persisted.roles.map((r) => r.name)).toEqual([ROLE_B.name]);
-
-    rerender(
-      <StepInfoModal stepId={stepId} stepData={persisted} connections={{ incoming: [], outgoing: [] }} onClose={vi.fn()} />,
-    );
-    expect(screen.queryByTestId(`step-info-role-remove-${ROLE_A.name}`)).not.toBeInTheDocument();
-    expect(screen.getByTestId(`step-info-role-remove-${ROLE_B.name}`)).toBeInTheDocument();
-  });
-
-  it('removes a role via its remove button', () => {
-    const { stepId } = seedStep();
-    useDesktopStore.getState().addRoleToStep(stepId, ROLE_A);
-    const { rerender } = renderModal(stepId, freshStepData(stepId));
-
-    fireEvent.click(screen.getByTestId(`step-info-role-remove-${ROLE_A.name}`));
-
-    const persisted = freshStepData(stepId);
-    expect(persisted.roles).toEqual([]);
-
-    rerender(
-      <StepInfoModal stepId={stepId} stepData={persisted} connections={{ incoming: [], outgoing: [] }} onClose={vi.fn()} />,
-    );
-    expect(screen.getByText('No role assigned yet.')).toBeInTheDocument();
-  });
-});
-
-// ── Mod picker ────────────────────────────────────────────────────────────────
-
-describe('StepInfoModal — mod management', () => {
-  it('attaches a mod via the picker and lists it with a remove button', () => {
-    const { stepId, stepData } = seedStep();
-    const { rerender } = renderModal(stepId, stepData);
-
-    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_LINT.name } });
-    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
-
-    const persisted = freshStepData(stepId);
-    expect(persisted.mods.map((m) => m.name)).toEqual([MOD_LINT.name]);
-
-    rerender(
-      <StepInfoModal stepId={stepId} stepData={persisted} connections={{ incoming: [], outgoing: [] }} onClose={vi.fn()} />,
-    );
-    expect(screen.getByTestId(`step-info-mod-remove-${MOD_LINT.name}`)).toBeInTheDocument();
-  });
-
-  it('pre-filters an incompatible mod out of the picker options', () => {
-    const { stepId } = seedStep();
-    useDesktopStore.getState().addModToStep(stepId, MOD_DS_A);
-    renderModal(stepId, freshStepData(stepId));
-
-    const options = Array.from(screen.getByTestId('step-info-mod-select').querySelectorAll('option')).map((o) => o.textContent);
-    expect(options).not.toContain('Design System B');
-    expect(options).toContain('Strict Linting');
-  });
-
-  it('removes a mod via its remove button', () => {
-    const { stepId } = seedStep();
-    useDesktopStore.getState().addModToStep(stepId, MOD_LINT);
-    const { rerender } = renderModal(stepId, freshStepData(stepId));
-
-    fireEvent.click(screen.getByTestId(`step-info-mod-remove-${MOD_LINT.name}`));
-
-    const persisted = freshStepData(stepId);
-    expect(persisted.mods).toEqual([]);
-
-    rerender(
-      <StepInfoModal stepId={stepId} stepData={persisted} connections={{ incoming: [], outgoing: [] }} onClose={vi.fn()} />,
-    );
-    expect(screen.getByText('No mods assigned yet.')).toBeInTheDocument();
-  });
-
-  it('surfaces a rejection message when the store declines the add (e.g. a concurrent external attach)', () => {
-    const { stepId, stepData } = seedStep();
-    renderModal(stepId, stepData);
-
-    // Select a mod in the picker, then simulate something else (e.g. a
-    // drag-and-drop attach elsewhere) attaching that same mod first.
-    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_LINT.name } });
-    act(() => {
-      useDesktopStore.getState().addModToStep(stepId, MOD_LINT);
-    });
-
-    // The panel's own Attach now hits the store's duplicate guard and gets `false`.
-    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
-
-    // Anchor on the quoted mod name so this can't accidentally match the
-    // static picker hint ("Mods stack — incompatible combinations…").
-    expect(screen.getByText(/"Strict Linting" was rejected/i)).toBeInTheDocument();
-  });
-});
-
-// ── Mod domain hint (non-blocking) ───────────────────────────────────────────
-//
-// The hard rejection above (incompatible/duplicate) is a separate, pre-existing
-// guard. This hint is purely informational: it never blocks the attach, it
-// only surfaces when the mod's and the step's role's `domains` are both
-// declared and disjoint (see `domainMismatchHint` in attachable-helpers.ts).
-
-describe('StepInfoModal — mod domain hint (non-blocking)', () => {
-  it('attaches the mod AND shows a muted, non-blocking hint when its domains are disjoint from the attached role\'s', () => {
-    const { stepId } = seedStep();
-    useDesktopStore.getState().addRoleToStep(stepId, ROLE_DEVOPS);
-    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [ROLE_DEVOPS], mods: [MOD_DARK_MODE] });
-    renderModal(stepId, freshStepData(stepId));
-
-    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_DARK_MODE.name } });
-    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
-
-    // Non-blocking: the mod IS attached despite the domain mismatch.
-    expect(freshStepData(stepId).mods.map((m) => m.name)).toEqual([MOD_DARK_MODE.name]);
-
-    const hint = screen.getByTestId('step-info-mod-domain-hint');
-    expect(hint).toHaveAttribute('role', 'status');
-    expect(hint).toHaveTextContent('"dark-mode" targets frontend; the attached role "devops-engineer" covers infra. Attached anyway — it may be irrelevant here.');
-  });
-
-  it('shows no hint when the step has no role attached', () => {
-    const { stepId } = seedStep();
-    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [], mods: [MOD_DARK_MODE] });
-    renderModal(stepId, freshStepData(stepId));
-
-    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_DARK_MODE.name } });
-    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
-
-    expect(freshStepData(stepId).mods.map((m) => m.name)).toEqual([MOD_DARK_MODE.name]);
-    expect(screen.queryByTestId('step-info-mod-domain-hint')).not.toBeInTheDocument();
-  });
-
-  it('shows no hint when the mod is universal (role-agnostic)', () => {
-    const { stepId } = seedStep();
-    useDesktopStore.getState().addRoleToStep(stepId, ROLE_DEVOPS);
-    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [ROLE_DEVOPS], mods: [MOD_UNIVERSAL] });
-    renderModal(stepId, freshStepData(stepId));
-
-    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_UNIVERSAL.name } });
-    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
-
-    expect(freshStepData(stepId).mods.map((m) => m.name)).toEqual([MOD_UNIVERSAL.name]);
-    expect(screen.queryByTestId('step-info-mod-domain-hint')).not.toBeInTheDocument();
-  });
-
-  it('shows no hint when the mod\'s and role\'s domains overlap', () => {
-    const OVERLAPPING_MOD: MarketMod = { name: 'overlap-mod', icon: 'MdBuild', iconLibrary: 'md', description: 'Touches infra too', tags: [], domains: ['infra', 'backend'] };
-    const { stepId } = seedStep();
-    useDesktopStore.getState().addRoleToStep(stepId, ROLE_DEVOPS);
-    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [ROLE_DEVOPS], mods: [OVERLAPPING_MOD] });
-    renderModal(stepId, freshStepData(stepId));
-
-    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: OVERLAPPING_MOD.name } });
-    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
-
-    expect(freshStepData(stepId).mods.map((m) => m.name)).toEqual([OVERLAPPING_MOD.name]);
-    expect(screen.queryByTestId('step-info-mod-domain-hint')).not.toBeInTheDocument();
-  });
-
-  it('shows the hard-rejection error instead of the domain hint when the store declines the add', () => {
-    const { stepId } = seedStep();
-    useDesktopStore.getState().addRoleToStep(stepId, ROLE_DEVOPS);
-    useDesktopStore.getState().setMarketInventory({ flows: [], roles: [ROLE_DEVOPS], mods: [MOD_DARK_MODE] });
-    renderModal(stepId, freshStepData(stepId));
-
-    // Select the (still domain-mismatched) mod, then simulate something else
-    // attaching that same mod first — mirrors the existing "surfaces a
-    // rejection message" test above.
-    fireEvent.change(screen.getByTestId('step-info-mod-select'), { target: { value: MOD_DARK_MODE.name } });
-    act(() => {
-      useDesktopStore.getState().addModToStep(stepId, MOD_DARK_MODE);
-    });
-    fireEvent.click(screen.getByTestId('step-info-mod-attach'));
-
-    // The panel's own Attach now hits the store's duplicate guard (`ok === false`):
-    // the hard error shows, and the (otherwise applicable) domain hint does not.
-    expect(screen.getByText(/"Dark Mode" was rejected/i)).toBeInTheDocument();
-    expect(screen.queryByTestId('step-info-mod-domain-hint')).not.toBeInTheDocument();
-  });
-});
-
-// ── Execution controls ───────────────────────────────────────────────────────
-
-describe('StepInfoModal — execution controls', () => {
-  it('Run this step calls harness-store runStep with the step id', () => {
-    const { stepId, stepData } = seedStep();
-    renderModal(stepId, stepData);
-    fireEvent.click(screen.getByTestId('step-info-run'));
-    expect(mockHarness.runStep).toHaveBeenCalledWith(stepId);
-  });
-
-  it('Run from here calls harness-store runFromStep with the step id', () => {
-    const { stepId, stepData } = seedStep();
-    renderModal(stepId, stepData);
-    fireEvent.click(screen.getByTestId('step-info-run-from'));
-    expect(mockHarness.runFromStep).toHaveBeenCalledWith(stepId);
-  });
-
-  it('disables both run buttons while the step is running', () => {
-    const { stepId, stepData } = seedStep();
-    renderModal(stepId, stepData, { status: 'running' });
-    expect(screen.getByTestId('step-info-run')).toBeDisabled();
-    expect(screen.getByTestId('step-info-run-from')).toBeDisabled();
-    expect(screen.getByText(/currently running/i)).toBeInTheDocument();
-  });
-
+describe('StepInfoModal — status badge', () => {
   it('shows the execution status badge', () => {
     const { stepId, stepData } = seedStep();
     renderModal(stepId, stepData, { status: 'completed' });
     expect(screen.getByTestId('step-info-status')).toHaveTextContent('completed');
+  });
+
+  it('defaults to "idle" when no status is given', () => {
+    const { stepId, stepData } = seedStep();
+    renderModal(stepId, stepData);
+    expect(screen.getByTestId('step-info-status')).toHaveTextContent('idle');
   });
 });
 
@@ -410,26 +145,171 @@ describe('StepInfoModal — keyboard behavior', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('traps Tab focus: Tab from the last focusable element wraps to the first', () => {
+  // With StepConfigCore removed (Phase 8 — its Instructions/Role/Mod/
+  // Execution controls moved to the Inspector), the ONLY focusable element
+  // left inside this trimmed evidence-only panel is the close button itself
+  // — StepRunEvidence is read-only (no buttons/inputs/selects). The trap
+  // still engages correctly on a single-element focus set: `first` and
+  // `last` both resolve to the close button, so Tab/Shift+Tab simply keep
+  // focus there instead of "wrapping" anywhere else.
+  it('traps focus on the close button — the panel\'s only focusable element', () => {
     const { stepId, stepData } = seedStep();
     renderModal(stepId, stepData);
 
     const closeButton = screen.getByTestId('step-info-modal-close');
-    const focusables = screen.getByTestId('step-info-modal').querySelectorAll('button:not([disabled]), select, textarea');
-    const last = focusables[focusables.length - 1] as HTMLElement;
+    expect(closeButton).toHaveFocus(); // focused on mount
 
-    last.focus();
     fireEvent.keyDown(document, { key: 'Tab' });
     expect(closeButton).toHaveFocus();
-  });
 
-  it('traps Shift+Tab focus: Shift+Tab from the first focusable element wraps to the last', () => {
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(closeButton).toHaveFocus();
+  });
+});
+
+// ── Loop connections ─────────────────────────────────────────────────────────
+
+describe('StepInfoModal — loop connections', () => {
+  it('renders no loop card when neither loopOut nor loopIn is present', () => {
     const { stepId, stepData } = seedStep();
     renderModal(stepId, stepData);
+    expect(screen.queryByTestId('step-info-loop-card')).not.toBeInTheDocument();
+  });
 
-    const closeButton = screen.getByTestId('step-info-modal-close');
-    closeButton.focus();
-    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
-    expect(closeButton).not.toHaveFocus();
+  it('renders the loop card when this step is the loop source (loopOut)', () => {
+    const { stepId, stepData } = seedStep();
+    renderModal(stepId, stepData, { connections: { loopOut: { toTitle: 'Gather Requirements', maxIterations: 4 } } });
+
+    const card = screen.getByTestId('step-info-loop-card');
+    expect(card).toBeInTheDocument();
+    expect(screen.getByTestId('step-info-loop-out')).toHaveTextContent('×4');
+    expect(screen.getByTestId('step-info-loop-out')).toHaveTextContent('Gather Requirements');
+    expect(screen.queryByTestId('step-info-loop-in')).not.toBeInTheDocument();
+  });
+
+  it('renders the loop card when this step is the loop target (loopIn)', () => {
+    const { stepId, stepData } = seedStep();
+    renderModal(stepId, stepData, { connections: { loopIn: { fromTitle: 'Review Draft', maxIterations: 5 } } });
+
+    expect(screen.getByTestId('step-info-loop-card')).toBeInTheDocument();
+    expect(screen.getByTestId('step-info-loop-in')).toHaveTextContent('×5');
+    expect(screen.getByTestId('step-info-loop-in')).toHaveTextContent('Review Draft');
+    expect(screen.queryByTestId('step-info-loop-out')).not.toBeInTheDocument();
+  });
+
+  it('shows the live iteration when running and stepIterations has an entry for this step', () => {
+    const { stepId, stepData } = seedStep();
+    mockHarness.stepIterations = { [stepId]: { iteration: 2, total: 4, loopId: 'loop-1' } };
+    renderModal(stepId, stepData, {
+      status: 'running',
+      connections: { loopOut: { toTitle: 'Gather Requirements', maxIterations: 4 } },
+    });
+
+    expect(screen.getByTestId('step-info-loop-live')).toHaveTextContent('2');
+    expect(screen.getByTestId('step-info-loop-live')).toHaveTextContent('4');
+  });
+
+  it('does not show a live iteration line when idle, even if stepIterations has stale data', () => {
+    const { stepId, stepData } = seedStep();
+    mockHarness.stepIterations = { [stepId]: { iteration: 4, total: 4, loopId: 'loop-1' } };
+    renderModal(stepId, stepData, { connections: { loopOut: { toTitle: 'Gather Requirements', maxIterations: 4 } } });
+
+    expect(screen.queryByTestId('step-info-loop-live')).not.toBeInTheDocument();
+  });
+});
+
+// ── "Why this model" card (Phase 3b — WS2 routing evidence) ─────────────────
+
+describe('StepInfoModal — "Why this model" card', () => {
+  it('is absent when no run has produced routing evidence for this step', () => {
+    const { stepId, stepData } = seedStep();
+    renderModal(stepId, stepData);
+    expect(screen.queryByTestId('step-info-why-model')).not.toBeInTheDocument();
+  });
+
+  it('renders modelId, reason, and numeric evidence when present', () => {
+    const { stepId, stepData } = seedStep();
+    mockHarness.stepModels = {
+      [stepId]: {
+        modelId: 'anthropic/claude-opus-4.6',
+        evidence: {
+          source: 'arena-leaderboard',
+          reason: 'best-value winner: score 82 at $0.004/run',
+          strategy: 'best-value',
+          score: 82,
+          costPerRun: 0.004,
+          latencyMs: 1200,
+          sealed: true,
+        },
+      },
+    };
+    renderModal(stepId, stepData);
+
+    const card = screen.getByTestId('step-info-why-model');
+    expect(card).toHaveTextContent('anthropic/claude-opus-4.6');
+    expect(card).toHaveTextContent('best-value winner: score 82 at $0.004/run');
+    expect(card).toHaveTextContent('Score 82');
+    expect(card).toHaveTextContent('arena-leaderboard');
+  });
+
+  it('shows the "Benchmarked" pill (never "verified") when evidence.sealed is true', () => {
+    const { stepId, stepData } = seedStep();
+    mockHarness.stepModels = {
+      [stepId]: {
+        modelId: 'anthropic/claude-opus-4.6',
+        evidence: { source: 'arena-leaderboard', reason: 'Top Arena score for this flow.', sealed: true },
+      },
+    };
+    renderModal(stepId, stepData);
+
+    expect(screen.getByTestId('step-info-benchmarked-pill')).toHaveTextContent('Benchmarked');
+    expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
+  });
+
+  it('shows no Benchmarked pill — and an "External" note — for an unsealed external-router pick', () => {
+    const { stepId, stepData } = seedStep();
+    mockHarness.stepModels = {
+      [stepId]: {
+        modelId: 'openrouter/auto',
+        evidence: {
+          source: 'external-router',
+          reason: 'OpenRouter auto-router served openrouter/auto',
+          sealed: false,
+        },
+      },
+    };
+    renderModal(stepId, stepData);
+
+    expect(screen.queryByTestId('step-info-benchmarked-pill')).not.toBeInTheDocument();
+    expect(screen.getByTestId('step-info-why-model')).toHaveTextContent('External');
+    expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
+  });
+
+  it('shows no Benchmarked pill — and an "Unbenchmarked" note — for an unsealed fallback pick', () => {
+    const { stepId, stepData } = seedStep();
+    mockHarness.stepModels = {
+      [stepId]: {
+        modelId: 'opencode/claude-sonnet-4-6',
+        evidence: {
+          source: 'fallback',
+          reason: 'No completed Arena entries yet; used the flow default.',
+          sealed: false,
+        },
+      },
+    };
+    renderModal(stepId, stepData);
+
+    expect(screen.queryByTestId('step-info-benchmarked-pill')).not.toBeInTheDocument();
+    expect(screen.getByTestId('step-info-why-model')).toHaveTextContent('Unbenchmarked');
+  });
+
+  it('renders the bare modelId with no pill when the routed event carried no evidence at all', () => {
+    const { stepId, stepData } = seedStep();
+    mockHarness.stepModels = { [stepId]: { modelId: 'opencode/claude-sonnet-4-6' } };
+    renderModal(stepId, stepData);
+
+    const card = screen.getByTestId('step-info-why-model');
+    expect(card).toHaveTextContent('opencode/claude-sonnet-4-6');
+    expect(screen.queryByTestId('step-info-benchmarked-pill')).not.toBeInTheDocument();
   });
 });

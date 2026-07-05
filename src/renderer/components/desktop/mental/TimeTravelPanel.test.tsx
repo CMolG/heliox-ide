@@ -61,6 +61,35 @@ const MOCK_CHECKPOINTS: CheckpointRecord[] = [
   },
 ];
 
+// Two checkpoints for the SAME real stepId ("b1"), as a loop body pass would
+// produce — regression fixture for the "3 identical badges" bug (a loop-back
+// step keys every pass's checkpoint under the same stepId; `iteration` is
+// what lets the panel tell pass 1 apart from pass 2).
+const LOOP_CHECKPOINTS: CheckpointRecord[] = [
+  {
+    id: 'ckpt_run2_b1_1000',
+    runId: 'run2',
+    stepId: 'b1',
+    iteration: 1,
+    inputContext: 'Context for b1 pass 1',
+    output: 'b1 output pass 1',
+    completedStepIds: ['root', 'b1'],
+    modelId: 'claude-sonnet',
+    timestamp: 1_700_100_000_000,
+  },
+  {
+    id: 'ckpt_run2_b1_2000',
+    runId: 'run2',
+    stepId: 'b1',
+    iteration: 2,
+    inputContext: 'Context for b1 pass 2',
+    output: 'b1 output pass 2',
+    completedStepIds: ['root', 'b1', 'b1'],
+    modelId: 'claude-sonnet',
+    timestamp: 1_700_100_001_000,
+  },
+];
+
 const MOCK_FLOW = {
   id: 'flow-test',
   name: 'Test flow',
@@ -314,5 +343,84 @@ describe('TimeTravelPanel — empty and error states', () => {
     setupMockAPI();
     render(<TimeTravelPanel runId={null} flow={null} />);
     expect(screen.getByText(/start a run to enable time travel/i)).toBeInTheDocument();
+  });
+});
+
+describe('TimeTravelPanel — loop iteration badges', () => {
+  it('gives two same-stepId checkpoints distinguishable badge labels via their pass number', async () => {
+    setupMockAPI({
+      listCheckpoints: vi.fn((_runId: string) =>
+        Promise.resolve({ success: true, data: LOOP_CHECKPOINTS })
+      ),
+    });
+
+    render(<TimeTravelPanel runId="run2" flow={MOCK_FLOW} />);
+
+    await waitFor(() => expect(screen.getByRole('slider')).toBeInTheDocument());
+
+    // Both badges are labelled "b1" but must remain distinguishable — the
+    // pass number in the accessible name is what makes badge 1 and badge 2
+    // tell apart instead of reading as two identical "step b1" entries.
+    // `hidden: true` because the badge row sits under an `aria-hidden`
+    // wrapper (the slider track is the real, reachable a11y control — see
+    // the "ARIA slider value text" test below); this only asserts the
+    // per-badge aria-label text itself is correct.
+    expect(
+      screen.getByRole('button', { name: /checkpoint 1: step b1, pass 1,/i, hidden: true }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /checkpoint 2: step b1, pass 2,/i, hidden: true }),
+    ).toBeInTheDocument();
+  });
+
+  it('reflects the active checkpoint\'s pass number in the ARIA slider value text', async () => {
+    setupMockAPI({
+      listCheckpoints: vi.fn((_runId: string) =>
+        Promise.resolve({ success: true, data: LOOP_CHECKPOINTS })
+      ),
+    });
+
+    render(<TimeTravelPanel runId="run2" flow={MOCK_FLOW} />);
+
+    await waitFor(() => expect(screen.getByRole('slider')).toBeInTheDocument());
+
+    const slider = screen.getByRole('slider');
+    expect(slider).toHaveAttribute('aria-valuetext', expect.stringContaining('pass 1'));
+
+    slider.focus();
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(slider).toHaveAttribute('aria-valuetext', expect.stringContaining('pass 2'));
+  });
+
+  it('shows an "Iteration N" row in the state inspector and updates it as the active checkpoint changes', async () => {
+    setupMockAPI({
+      listCheckpoints: vi.fn((_runId: string) =>
+        Promise.resolve({ success: true, data: LOOP_CHECKPOINTS })
+      ),
+    });
+
+    render(<TimeTravelPanel runId="run2" flow={MOCK_FLOW} />);
+
+    await waitFor(() => expect(screen.getByRole('slider')).toBeInTheDocument());
+
+    // Pass 1 is active by default (first checkpoint loaded).
+    expect(screen.getByText('Iteration 1')).toBeInTheDocument();
+
+    const slider = screen.getByRole('slider');
+    slider.focus();
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+
+    expect(screen.getByText('Iteration 2')).toBeInTheDocument();
+  });
+
+  it('does not render an Iteration row for checkpoints with no iteration field (non-loop steps)', async () => {
+    // MOCK_CHECKPOINTS (top of file) has no `iteration` field on any entry —
+    // the panel must not fabricate an iteration row for plain, single-pass steps.
+    setupMockAPI();
+    render(<TimeTravelPanel runId="run1" flow={MOCK_FLOW} />);
+
+    await waitFor(() => expect(screen.getByRole('slider')).toBeInTheDocument());
+
+    expect(screen.queryByText(/^Iteration \d+$/)).not.toBeInTheDocument();
   });
 });

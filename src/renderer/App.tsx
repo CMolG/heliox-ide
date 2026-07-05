@@ -23,6 +23,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { SeamlessCanvas } from './components/desktop/SeamlessCanvas';
 import { SideBar } from './components/SideBar';
 import { ExpandSideBarButton } from './components/ExpandSideBarButton';
+import { InspectorPanel } from './components/inspector/InspectorPanel';
+import { ExpandInspectorButton } from './components/ExpandInspectorButton';
 import { useHelioxStore } from './store';
 import { useDesktopStore } from './store/desktop-store';
 import { useHarnessStore, lastLogMessage } from './store/harness-store';
@@ -43,6 +45,11 @@ export function App() {
   const addWindow = useDesktopStore(s => s.addWindow);
   const setShowMarketplace = useDesktopStore(s => s.setShowMarketplace);
   const setMarketInventory = useDesktopStore(s => s.setMarketInventory);
+  // `!== false` (not truthy) so pre-Phase-8 persisted stores — which lack
+  // `showInspector` entirely — still default to shown (see the field's doc
+  // comment in desktop-store.ts).
+  const settings = useDesktopStore(s => s.settings);
+  const showInspector = settings.showInspector !== false;
 
   // Expose stores on window for E2E testing
   useEffect(() => {
@@ -295,6 +302,17 @@ export function App() {
       return;
     }
 
+    // Cmd+. — toggle right-side inspector column. Reads/writes desktop-store
+    // via .getState() (like the other desktop-store branches in this
+    // handler) rather than the `settings` hook value above, so this
+    // callback's dependency array doesn't need to change.
+    if (isMeta && e.key === '.' && !isInput) {
+      e.preventDefault();
+      const dState = useDesktopStore.getState();
+      dState.updateSettings({ showInspector: !(dState.settings.showInspector !== false) });
+      return;
+    }
+
     // Cmd+W — close active window
     if (isMeta && e.key === 'w' && !isInput) {
       e.preventDefault();
@@ -377,6 +395,7 @@ export function App() {
     <div
       className="heliox-layout overflow-hidden"
       data-sidebar={showSidebar}
+      data-inspector={showInspector}
       role="application"
       aria-label="Heliox IDE"
     >
@@ -401,6 +420,21 @@ export function App() {
           <SeamlessCanvas />
         </ErrorBoundary>
       </main>
+      <div
+        className="heliox-inspector overflow-hidden transition-all duration-200"
+        style={{
+          width: showInspector ? '300px' : '0px',
+          minWidth: showInspector ? '300px' : '0px',
+          opacity: showInspector ? 1 : 0,
+        }}
+      >
+        {showInspector && (
+          <ErrorBoundary fallbackLabel="Inspector">
+            <InspectorPanel />
+          </ErrorBoundary>
+        )}
+      </div>
+      {!showInspector && <ExpandInspectorButton />}
       <ToastContainer />
       <SettingsModal />
       <HelpModal />

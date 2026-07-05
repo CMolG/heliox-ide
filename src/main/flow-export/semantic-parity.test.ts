@@ -49,6 +49,23 @@ const goldenToolCalls: Array<{
 );
 
 // ---------------------------------------------------------------------------
+// Load loop conformance fixtures (Phase 4a — bounded loop-back edges)
+// ---------------------------------------------------------------------------
+
+const loopExportedFlow: HelioxFlowExport = JSON.parse(
+  readFileSync(join(fixtureDir, 'conformance-loop.flow.json'), 'utf-8'),
+);
+
+/** stepId → array of canned responses, one entry consumed per call to that step. */
+const scriptedLoopResponses: Record<string, string[]> = JSON.parse(
+  readFileSync(join(fixtureDir, 'scripted-loop-responses.json'), 'utf-8'),
+);
+
+const goldenLoopTrace: Array<{ stepId: string; iteration: number; output: string }> = JSON.parse(
+  readFileSync(join(fixtureDir, 'golden-loop-trace.json'), 'utf-8'),
+);
+
+// ---------------------------------------------------------------------------
 // Deterministic conformance tool — uppercase
 //
 // This is the SAME pure function registered in the Java ToolRegistry (test scope).
@@ -218,5 +235,60 @@ describe('cross-runtime semantic execution parity — golden trace', () => {
     });
 
     expect(visitOrder).toEqual(['step-a', 'step-b', 'step-c', 'step-d', 'step-e']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite — Loop execution parity (Phase 4a)
+//
+// Proves the TS executor's loop expansion (loop-plan.ts's buildExecutionPlan,
+// driven by executor.ts's Kahn scheduler) reproduces the canonical loop trace
+// when fed per-iteration scripted responses — the cross-runtime contract
+// Java/Python must also satisfy once they implement loop expansion.
+// ---------------------------------------------------------------------------
+
+describe('cross-runtime loop execution parity — golden loop trace', () => {
+  it('reproduces golden-loop-trace.json exactly when fed per-iteration scripted responses', async () => {
+    const flow = importFlow(loopExportedFlow);
+
+    // Per-step queues, one array entry consumed per call to that step — cloned
+    // from the fixture so this test never mutates the shared parsed-JSON module.
+    const queues = new Map<string, string[]>(
+      Object.entries(scriptedLoopResponses).map(([stepId, responses]) => [stepId, [...responses]]),
+    );
+
+    const trace: Array<{ stepId: string; output: string }> = [];
+
+    await executeAgenticFlow(flow, {
+      runStep: async (input) => {
+        const stepId = input.step.id;
+        const output = queues.get(stepId)?.shift() ?? '';
+        trace.push({ stepId, output });
+        return { text: output, usage: null, toolCalls: [], toolResults: [] };
+      },
+    });
+
+    // Primary assertion: stepId + output match the golden trace, in completion order.
+    expect(trace).toEqual(goldenLoopTrace.map(({ stepId, output }) => ({ stepId, output })));
+
+    // Structural cross-check: per-step call count matches the golden fixture's
+    // per-step iteration count — i.e. every declared `iteration` actually ran,
+    // confirming `trace`'s order also encodes the right pass count per step.
+    const countByStep = (entries: Array<{ stepId: string }>) =>
+      entries.reduce<Map<string, number>>((counts, entry) => {
+        counts.set(entry.stepId, (counts.get(entry.stepId) ?? 0) + 1);
+        return counts;
+      }, new Map());
+    expect(countByStep(trace)).toEqual(countByStep(goldenLoopTrace));
+
+    // step-c sits outside the loop body ({step-b1, step-b2}): it must run
+    // exactly once, strictly after the loop's final (3rd) step-b2 pass.
+    const stepIds = trace.map((entry) => entry.stepId);
+    const stepCIndex = stepIds.indexOf('step-c');
+    expect(stepIds.filter((id) => id === 'step-c')).toHaveLength(1);
+    expect(stepIds.filter((id) => id === 'step-b1')).toHaveLength(3);
+    expect(stepIds.filter((id) => id === 'step-b2')).toHaveLength(3);
+    expect(stepCIndex).toBe(stepIds.lastIndexOf('step-b2') + 1);
+    expect(trace[stepCIndex]).toEqual({ stepId: 'step-c', output: 'C output' });
   });
 });

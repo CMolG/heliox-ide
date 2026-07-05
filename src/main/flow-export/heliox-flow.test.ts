@@ -3,7 +3,9 @@
  *
  * Suite 1 – Round-trip: verify execution-relevant structure is preserved and
  *           lossy fields (role ids, mods, mentalContext.relationToStep) are
- *           acceptably flattened.
+ *           acceptably flattened. Includes a regression case for an
+ *           empty-string systemPrompt, which a prior truthiness-based import
+ *           gate silently dropped instead of round-tripping exactly.
  * Suite 2 – Stable export order: two serialisations of the same flow produce
  *           identical JSON and a deterministic topological ordering.
  * Suite 3 – Cross-runtime conformance (TS half): load the shared golden fixture
@@ -81,6 +83,29 @@ function makeTestFlow(): AgenticFlow {
   };
 }
 
+/**
+ * Same 3-step chain as makeTestFlow(), but `root`'s roles are replaced with a
+ * single role whose systemPrompt is the empty string — regression coverage
+ * for an import-side truthiness bug: `s.systemPrompt ? [...] : []` used to
+ * drop the role entirely whenever systemPrompt was '', even though exportFlow
+ * gates on `roles.length > 0` (not on the joined string's truthiness) and so
+ * happily emits `systemPrompt: ''`. That mismatch broke the module's
+ * documented "round-tripped EXACTLY" contract for this case.
+ */
+function makeEmptySystemPromptTestFlow(): AgenticFlow {
+  const base = makeTestFlow();
+  return {
+    ...base,
+    stepsRecord: {
+      ...base.stepsRecord,
+      root: {
+        ...base.stepsRecord.root,
+        roles: [{ id: 'role-empty', name: 'Empty', systemPrompt: '' }],
+      },
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Suite 1 – Round-trip fidelity
 // ---------------------------------------------------------------------------
@@ -141,6 +166,27 @@ describe('exportFlow / importFlow round-trip', () => {
     expect(rootRestored.roles[0].id).toBe('exported-role');
     expect(rootRestored.roles[0].name).toBe('ExportedRole');
     expect(rootRestored.roles[0].systemPrompt).toBe('You are a planner.\n\nYou are a critic.');
+  });
+
+  it('exports systemPrompt as an empty string when the single role has an empty systemPrompt', () => {
+    const exported = exportFlow(makeEmptySystemPromptTestFlow());
+    const rootExported = exported.steps.find((s) => s.id === 'root')!;
+    expect(rootExported.systemPrompt).toBe('');
+  });
+
+  it('reconstructs exactly one role with systemPrompt \'\' on import instead of dropping it as falsy', () => {
+    const restored = importFlow(exportFlow(makeEmptySystemPromptTestFlow()));
+    const rootRestored = restored.stepsRecord['root']!;
+    expect(rootRestored.roles).toHaveLength(1);
+    expect(rootRestored.roles[0].id).toBe('exported-role');
+    expect(rootRestored.roles[0].systemPrompt).toBe('');
+  });
+
+  it('round-trips export→import→export with a stable result when systemPrompt is empty', () => {
+    const exportedOnce = exportFlow(makeEmptySystemPromptTestFlow());
+    const reimported = importFlow(exportedOnce);
+    const exportedTwice = exportFlow(reimported);
+    expect(exportedTwice).toEqual(exportedOnce);
   });
 
   it('preserves tool names for every step', () => {
@@ -279,5 +325,204 @@ describe('cross-runtime conformance — golden DAG order', () => {
     });
 
     expect(order).toEqual(['step-a', 'step-b', 'step-c', 'step-d', 'step-e']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 4 – loops + contract + model round-trip (Phase 4a)
+// ---------------------------------------------------------------------------
+
+/**
+ * Same 3-step chain as makeTestFlow(), plus a bounded loop (leaf → middle)
+ * and a completion contract + model override on the middle step — covers the
+ * three fields heliox-flow.ts added in Phase 4a (contract, model, loops).
+ */
+function makeLoopTestFlow(): AgenticFlow {
+  const base = makeTestFlow();
+  return {
+    ...base,
+    stepsRecord: {
+      ...base.stepsRecord,
+      middle: {
+        ...base.stepsRecord.middle,
+        contract: { mustWriteFiles: true, maxAttempts: 2 },
+        model: 'openai/gpt-4o-mini',
+      },
+    },
+    loops: [{ id: 'loop-1', sourceStepId: 'leaf', targetStepId: 'middle', maxIterations: 4 }],
+  };
+}
+
+describe('loops + contract + model round-trip (Phase 4a)', () => {
+  it('exports step.contract and step.model verbatim', () => {
+    const exported = exportFlow(makeLoopTestFlow());
+    const middleExported = exported.steps.find((s) => s.id === 'middle')!;
+    expect(middleExported.contract).toEqual({ mustWriteFiles: true, maxAttempts: 2 });
+    expect(middleExported.model).toBe('openai/gpt-4o-mini');
+  });
+
+  it('omits contract/model keys for steps that do not declare them', () => {
+    const exported = exportFlow(makeLoopTestFlow());
+    const rootExported = exported.steps.find((s) => s.id === 'root')!;
+    expect(rootExported.contract).toBeUndefined();
+    expect(rootExported.model).toBeUndefined();
+  });
+
+  it('restores contract and model onto the reconstructed AgenticStep', () => {
+    const restored = importFlow(exportFlow(makeLoopTestFlow()));
+    const middleRestored = restored.stepsRecord['middle']!;
+    expect(middleRestored.contract).toEqual({ mustWriteFiles: true, maxAttempts: 2 });
+    expect(middleRestored.model).toBe('openai/gpt-4o-mini');
+  });
+
+  it('exports flow.loops, omitted when the flow declares no loops', () => {
+    const withoutLoops = exportFlow(makeTestFlow());
+    expect(withoutLoops.loops).toBeUndefined();
+
+    const withLoops = exportFlow(makeLoopTestFlow());
+    expect(withLoops.loops).toEqual([
+      { id: 'loop-1', sourceStepId: 'leaf', targetStepId: 'middle', maxIterations: 4 },
+    ]);
+  });
+
+  it('clamps loops[].maxIterations into [1, LOOP_MAX_ITERATIONS_CAP] (1..50) at export time', () => {
+    const flow = makeLoopTestFlow();
+    flow.loops = [
+      { id: 'loop-too-high', sourceStepId: 'leaf', targetStepId: 'middle', maxIterations: 999 },
+      { id: 'loop-too-low', sourceStepId: 'leaf', targetStepId: 'middle', maxIterations: 0 },
+    ];
+    const exported = exportFlow(flow);
+    expect(exported.loops).toEqual([
+      { id: 'loop-too-high', sourceStepId: 'leaf', targetStepId: 'middle', maxIterations: 50 },
+      { id: 'loop-too-low', sourceStepId: 'leaf', targetStepId: 'middle', maxIterations: 1 },
+    ]);
+  });
+
+  it('restores flow.loops verbatim on import', () => {
+    const restored = importFlow(exportFlow(makeLoopTestFlow()));
+    expect(restored.loops).toEqual([
+      { id: 'loop-1', sourceStepId: 'leaf', targetStepId: 'middle', maxIterations: 4 },
+    ]);
+  });
+
+  it('round-trips a flow with loops + step contract/model through export→import→export with a stable result', () => {
+    const exportedOnce = exportFlow(makeLoopTestFlow());
+    const reimported = importFlow(exportedOnce);
+    const exportedTwice = exportFlow(reimported);
+    expect(exportedTwice).toEqual(exportedOnce);
+  });
+
+  it('keeps version at HELIOX_FLOW_FORMAT_VERSION ("1") for flows carrying contract/model/loops', () => {
+    const exported = exportFlow(makeLoopTestFlow());
+    expect(exported.version).toBe(HELIOX_FLOW_FORMAT_VERSION);
+    expect(exported.version).toBe('1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 5 – Cross-runtime conformance (TS half): contract/model fixture
+// ---------------------------------------------------------------------------
+
+describe('cross-runtime conformance — contract/model round-trip fixture', () => {
+  it('importFlow(conformance-contract.flow.json) → exportFlow deep-equals golden-contract-roundtrip.json', () => {
+    const fixturePath = join(process.cwd(), 'sdk', 'conformance', 'conformance-contract.flow.json');
+    const goldenPath = join(process.cwd(), 'sdk', 'conformance', 'golden-contract-roundtrip.json');
+
+    const exportedFixture: HelioxFlowExport = JSON.parse(readFileSync(fixturePath, 'utf-8'));
+    const goldenRoundtrip: HelioxFlowExport = JSON.parse(readFileSync(goldenPath, 'utf-8'));
+
+    const roundtripped = exportFlow(importFlow(exportedFixture));
+    expect(roundtripped).toEqual(goldenRoundtrip);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 6 – human-facing metadata round-trip (Phase 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Same 3-step chain as makeTestFlow(), plus flow-level description/tags/
+ * author/version and a per-step description on `root` and `leaf` (but not
+ * `middle`) — covers the two purely human-facing, execution-inert fields
+ * Phase 5 added: AgenticStep.description and AgenticFlow.description/tags/
+ * author/version.
+ */
+function makeMetaTestFlow(): AgenticFlow {
+  const base = makeTestFlow();
+  return {
+    ...base,
+    description: 'A flow that demonstrates metadata round-tripping.',
+    tags: ['demo', 'onboarding'],
+    author: 'Ada Lovelace',
+    version: '2.1.0',
+    stepsRecord: {
+      ...base.stepsRecord,
+      root: { ...base.stepsRecord.root, description: 'Kicks off the chain.' },
+      leaf: { ...base.stepsRecord.leaf, description: 'Wraps up the chain.' },
+    },
+  };
+}
+
+describe('human-facing metadata round-trip (Phase 5)', () => {
+  it('exports per-step description and flow meta, leaving steps without a description untouched', () => {
+    const exported = exportFlow(makeMetaTestFlow());
+
+    const rootExported = exported.steps.find((s) => s.id === 'root')!;
+    const middleExported = exported.steps.find((s) => s.id === 'middle')!;
+    const leafExported = exported.steps.find((s) => s.id === 'leaf')!;
+
+    expect(rootExported.description).toBe('Kicks off the chain.');
+    expect(leafExported.description).toBe('Wraps up the chain.');
+    expect(middleExported.description).toBeUndefined();
+    expect('description' in middleExported).toBe(false);
+
+    expect(exported.meta).toEqual({
+      description: 'A flow that demonstrates metadata round-tripping.',
+      tags: ['demo', 'onboarding'],
+      author: 'Ada Lovelace',
+      version: '2.1.0',
+    });
+  });
+
+  it('restores per-step description and flow meta fields on import', () => {
+    const restored = importFlow(exportFlow(makeMetaTestFlow()));
+
+    expect(restored.stepsRecord['root']?.description).toBe('Kicks off the chain.');
+    expect(restored.stepsRecord['leaf']?.description).toBe('Wraps up the chain.');
+    expect(restored.stepsRecord['middle']?.description).toBeUndefined();
+
+    expect(restored.description).toBe('A flow that demonstrates metadata round-tripping.');
+    expect(restored.tags).toEqual(['demo', 'onboarding']);
+    expect(restored.author).toBe('Ada Lovelace');
+    expect(restored.version).toBe('2.1.0');
+  });
+
+  it('round-trips a flow with full metadata through export→import→export with a stable result', () => {
+    const exportedOnce = exportFlow(makeMetaTestFlow());
+    const reimported = importFlow(exportedOnce);
+    const exportedTwice = exportFlow(reimported);
+    expect(exportedTwice).toEqual(exportedOnce);
+  });
+
+  it('omits the meta key and every step description key entirely when no metadata is set', () => {
+    const exported = exportFlow(makeTestFlow());
+
+    expect('meta' in exported).toBe(false);
+    for (const step of exported.steps) {
+      expect('description' in step).toBe(false);
+    }
+
+    // Guard against a stray `description: undefined` / `meta: undefined` key
+    // surviving JSON serialization — the whole point of the conditional-spread
+    // approach is that pre-Phase-5 exports stay byte-identical.
+    const json = JSON.stringify(exported);
+    expect(json).not.toContain('"meta"');
+    expect(json).not.toContain('"description"');
+  });
+
+  it('keeps version at HELIOX_FLOW_FORMAT_VERSION ("1") for flows carrying metadata', () => {
+    const exported = exportFlow(makeMetaTestFlow());
+    expect(exported.version).toBe(HELIOX_FLOW_FORMAT_VERSION);
+    expect(exported.version).toBe('1');
   });
 });

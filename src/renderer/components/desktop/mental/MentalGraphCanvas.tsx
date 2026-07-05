@@ -35,17 +35,21 @@ import '@xyflow/react/dist/style.css';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
 import { getConnectedComponent } from '../../../logic/mental-graph';
+import { wouldCreateStepCycle } from '../../../lib/harness-compiler';
+import { orientConnection } from './orient-connection';
 import { MentalNode } from './MentalNode';
 import { StepNode } from './StepNode';
 import { MentalEdge } from './MentalEdge';
 import { FlowEdge } from '../nodes/FlowEdge';
+import { LoopEdge } from '../nodes/LoopEdge';
 import { FrameNode } from '../nodes/FrameNode';
-import type { CanvasGraphNode, FrameGraphNode, StepGraphNode } from '@/types/desktop';
+import type { CanvasGraphNode, FrameGraphNode, MentalGraphEdge, StepGraphNode } from '@/types/desktop';
+import { LOOP_DEFAULT_MAX_ITERATIONS } from '@/types/harness';
 
 // ─── Custom node/edge type registrations ─────────────────────────
 
 const nodeTypes = { mental: MentalNode, step: StepNode, frame: FrameNode };
-const edgeTypes = { mental: MentalEdge, flow: FlowEdge };
+const edgeTypes = { mental: MentalEdge, flow: FlowEdge, loop: LoopEdge };
 
 // ─── Declarative handle positions ────────────────────────────────
 // Providing `handles` on each node lets React Flow resolve edge
@@ -78,6 +82,28 @@ function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
 
 function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
   return node.type === 'frame';
+}
+
+/**
+ * Decides whether a new Step→Step connection should compile as an ordinary
+ * forward 'link' edge or a bounded loop-back 'loop' edge. Delegates entirely
+ * to `wouldCreateStepCycle`, which already returns false whenever either
+ * endpoint isn't a Step node — so no separate step-node-ness check is needed
+ * here.
+ *
+ * Exported as a pure function (no store/React Flow access) so the decision
+ * is unit-testable without a real connection-drag simulation: this file's
+ * tests mock `<ReactFlow>` down to a plain children-passthrough div, which
+ * drops the `onConnect` prop entirely and makes it otherwise unreachable
+ * from a render-based test.
+ */
+export function resolveConnectionEdgeType(
+  sourceId: string,
+  targetId: string,
+  nodes: CanvasGraphNode[],
+  edges: MentalGraphEdge[],
+): 'loop' | 'link' {
+  return wouldCreateStepCycle(sourceId, targetId, nodes, edges) ? 'loop' : 'link';
 }
 
 // ─── Inner component (requires ReactFlowProvider ancestor) ───────
@@ -238,6 +264,7 @@ function MentalGraphCanvasInner({ viewportChildren }: MentalGraphCanvasInnerProp
       const edgeZ = Math.max(mentalZ[e.sourceId] ?? 1, mentalZ[e.targetId] ?? 1);
 
       if (isFlowEdge) {
+        const isLoopEdge = e.type === 'loop';
         return {
           id: e.id,
           zIndex: edgeZ,
@@ -245,17 +272,24 @@ function MentalGraphCanvasInner({ viewportChildren }: MentalGraphCanvasInnerProp
           target: e.targetId,
           sourceHandle: e.sourceHandle || 'right',
           targetHandle: e.targetHandle || 'left',
-          type: 'flow',
+          type: isLoopEdge ? 'loop' : 'flow',
           markerEnd: {
             type: MarkerType.ArrowClosed,
             width: 16,
             height: 16,
             color: edgeColor,
           },
-          data: {
-            edgeColor,
-            edgeType: e.type,
-          },
+          data: isLoopEdge
+            ? {
+                edgeColor,
+                maxIterations: e.maxIterations ?? LOOP_DEFAULT_MAX_ITERATIONS,
+                loopEdgeId: e.id,
+              }
+            : {
+                edgeColor,
+                edgeType: e.type,
+                flowEdgeId: e.id,
+              },
         };
       }
 
@@ -296,14 +330,25 @@ function MentalGraphCanvasInner({ viewportChildren }: MentalGraphCanvasInnerProp
 
   const onConnect: OnConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
+    // xyflow's ConnectionMode.Loose assigns source/target by handle TYPE, not
+    // drag order — re-orient so the edge direction always follows the node
+    // the user actually dragged from (tracked by onConnectStart, below).
+    const oriented = orientConnection(connectingSourceRef.current, {
+      source: connection.source,
+      target: connection.target,
+      sourceHandle: connection.sourceHandle,
+      targetHandle: connection.targetHandle,
+    });
+    const edgeType = resolveConnectionEdgeType(oriented.source, oriented.target, mentalNodes, mentalEdges);
     addMentalEdge(
-      connection.source,
-      connection.target,
-      'link',
-      connection.sourceHandle ?? undefined,
-      connection.targetHandle ?? undefined,
+      oriented.source,
+      oriented.target,
+      edgeType,
+      oriented.sourceHandle ?? undefined,
+      oriented.targetHandle ?? undefined,
+      edgeType === 'loop' ? LOOP_DEFAULT_MAX_ITERATIONS : undefined,
     );
-  }, [addMentalEdge]);
+  }, [addMentalEdge, mentalNodes, mentalEdges]);
 
   // ─── Track connection start for ramification ─────────────────
 

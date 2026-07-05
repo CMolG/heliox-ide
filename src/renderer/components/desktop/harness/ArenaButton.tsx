@@ -44,6 +44,31 @@ function scoreColor(score: number): string {
   return 'var(--hx-red, #f44336)';
 }
 
+// "Benchmarked" seal — recommendation cards are always drawn from completed
+// Arena leaderboard entries (ResultsView already excludes api_error models
+// from `recommendations`), so every card is sealed by construction. NEVER
+// "verified" — that word is reserved (RoutedModelEvidence.sealed doc
+// comment, src/types/ipc-events.ts). No dedicated CSS class exists for this
+// pill (this file is CSS-change-restricted this round — `.ab-*` classNames
+// here have no stylesheet rules at all yet), so it's inline-styled. The same
+// style constant is duplicated in StepInfoModal.tsx's "Why this model" card
+// so the two surfaces read as one visual language.
+const BENCHMARKED_PILL_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  fontSize: 9,
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+  padding: '2px 7px',
+  borderRadius: 8,
+  color: '#A0F695',
+  background: 'rgba(160, 246, 149, 0.15)',
+  border: '1px solid rgba(160, 246, 149, 0.3)',
+  whiteSpace: 'nowrap',
+};
+
 /** Human-readable label + icon for each strategy lens. */
 const STRATEGY_META: Record<
   ArenaRecommendation['strategy'],
@@ -91,6 +116,14 @@ function RecommendationCard({ rec, isChosen, onChoose }: RecommendationCardProps
       <div className="ab-rec-header">
         <LucideIcon name={meta.icon} size={13} aria-hidden="true" />
         <span className="ab-rec-strategy">{meta.label}</span>
+        <span
+          className="ab-benchmarked-pill"
+          data-testid="ab-benchmarked-pill"
+          style={{ ...BENCHMARKED_PILL_STYLE, marginLeft: 6 }}
+        >
+          <LucideIcon name="ShieldCheck" size={10} aria-hidden="true" />
+          Benchmarked
+        </span>
       </div>
       <p className="ab-rec-description">{meta.description}</p>
       <div className="ab-rec-model" title={rec.modelId}>
@@ -359,8 +392,8 @@ function ResultsView({ result, chosenModelId, onChoose }: ResultsViewProps) {
           {chosenModelId && (
             <div className="ab-deploy-notice" role="status" aria-live="polite">
               <LucideIcon name="Server" size={13} aria-hidden="true" />
-              <strong>{chosenModelId}</strong> will be used by{' '}
-              <code>heliox serve --select</code>
+              <strong>{chosenModelId}</strong> will run this flow when its Model policy is{' '}
+              <em>Fixed</em>, and is picked up by <code>heliox serve --select</code>.
             </div>
           )}
         </section>

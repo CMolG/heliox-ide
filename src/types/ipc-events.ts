@@ -21,6 +21,13 @@ export interface StepStatusChanged extends HarnessEventBase {
   stepId: string;
   status: HarnessExecutionStatus;
   logs?: string;
+  /** Loop-body progress (present only for steps inside a loop). */
+  iteration?: number;
+  totalIterations?: number;
+  loopId?: string;
+  /** WS2 routing: the effective model this step ran on + why (present when routed/recorded). */
+  modelId?: string;
+  modelEvidence?: RoutedModelEvidence;
 }
 
 export interface ModExecutionEvent extends HarnessEventBase {
@@ -68,6 +75,13 @@ export interface CheckpointRecord {
   id: string;
   runId: string;
   stepId: string;
+  /**
+   * 1-based loop-pass number, present only when this checkpoint's step is
+   * part of a loop body — lets the time-travel UI tell pass 1 apart from
+   * pass 3 of the same repeated step. Absent (not `undefined`-valued) for
+   * non-loop steps and for checkpoints persisted before this field existed.
+   */
+  iteration?: number;
   inputContext: string;
   output: string;
   completedStepIds: string[];
@@ -244,18 +258,43 @@ export interface ArenaLeaderboardEntryResult {
   avgLatencyMs?: number;
 }
 
+/** The four Arena selection strategies. */
+export type SelectionStrategy = 'best-score' | 'cheapest' | 'fastest' | 'best-value';
+
+/** Arena-measured evidence behind a model pick. */
+export interface ModelSelectionEvidence {
+  score: number;
+  costPerRun: number;
+  latencyMs: number | undefined;
+}
+
+/** Per-flow model-selection policy chosen by the user (default fixed). */
+export type ModelPolicy =
+  | { mode: 'fixed' }
+  | { mode: 'smart-local'; strategy: SelectionStrategy }
+  | { mode: 'smart-external' };
+
+/** Why a given model was chosen for a step run (recorded + surfaced in the UI). */
+export interface RoutedModelEvidence {
+  source: 'arena-leaderboard' | 'betterOn' | 'external-router' | 'fallback';
+  /** Human sentence, e.g. "best-value winner: score 82 at $0.004/run". */
+  reason: string;
+  strategy?: SelectionStrategy;
+  score?: number;
+  costPerRun?: number;
+  latencyMs?: number;
+  /** True only when backed by a completed Arena entry ("Benchmarked" seal; never say "verified"). */
+  sealed: boolean;
+}
+
 /**
  * The winning model recommendation for each of the four selection strategies.
  * Mirrors ModelSelection from model-selector, kept JSON-serializable.
  */
 export interface ArenaRecommendation {
-  strategy: 'best-score' | 'cheapest' | 'fastest' | 'best-value';
+  strategy: SelectionStrategy;
   modelId: string;
-  evidence: {
-    score: number;
-    costPerRun: number;
-    latencyMs: number | undefined;
-  };
+  evidence: ModelSelectionEvidence;
 }
 
 /**
@@ -268,3 +307,105 @@ export interface ArenaResult {
   /** Wall-clock ms for the full Arena run. */
   elapsedMs: number;
 }
+
+// ── Provider Connections (DBeaver-style, Phase 6) ────────────────────────────
+// Replaces the old opencode-backed provider-picker UI. A "connection" is a
+// user-defined endpoint (name + protocol + base URL + API token) that the
+// harness can execute steps against via the `conn:<connectionId>/<modelId>`
+// model-id convention (see harness-engine/llm-runner.ts).
+
+/** Wire protocols a connection can speak. Both map to an `@ai-sdk/*` client. */
+export type ConnectionProtocol = 'openai' | 'anthropic';
+
+/** Default base URL per protocol — used to pre-fill the connection form and as the tester's fallback target. */
+export const PROTOCOL_DEFAULTS: Record<ConnectionProtocol, string> = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com',
+};
+
+/** A single model a connection has reported, with its per-model enable flag. */
+export interface ConnectionModel {
+  id: string;
+  enabled: boolean;
+}
+
+/**
+ * A saved connection profile as seen by the renderer. The API token itself
+ * NEVER crosses the IPC boundary — only `hasToken`. The decrypted token is
+ * available main-side only, via `provider-connections.ts#getDecryptedToken`.
+ */
+export interface ProviderConnection {
+  id: string;
+  name: string;
+  protocol: ConnectionProtocol;
+  baseUrl: string;
+  hasToken: boolean;
+  models: ConnectionModel[];
+  lastTestedAt?: number;
+  lastTestOk?: boolean;
+}
+
+/** `provider-connections:create` request payload. */
+export interface ProviderConnectionInput {
+  name: string;
+  protocol: ConnectionProtocol;
+  baseUrl: string;
+  /** Plaintext token, encrypted at rest by provider-connections.ts. Omit for tokenless/local endpoints. */
+  token?: string;
+}
+
+/** `provider-connections:update` request payload — every field is an optional partial patch. */
+export interface ProviderConnectionUpdate {
+  name?: string;
+  baseUrl?: string;
+  /** A new plaintext token to encrypt and store, replacing the current one. */
+  token?: string;
+  models?: ConnectionModel[];
+  lastTestedAt?: number;
+  lastTestOk?: boolean;
+}
+
+/** Result of probing a connection's `/models` endpoint (saved or draft). */
+export interface ConnectionTestResult {
+  ok: boolean;
+  models?: string[];
+  error?: string;
+}
+
+/**
+ * `provider-connections:test` request payload — either a saved connection id
+ * (its token is resolved main-side, never round-tripped through the renderer)
+ * or a draft profile for pre-save testing.
+ */
+export type ConnectionTestRequest =
+  | { connectionId: string }
+  | { protocol: ConnectionProtocol; baseUrl: string; token?: string };
+
+/** `provider-connections:test` response — includes the refreshed profile when a SAVED connection's models were re-merged. */
+export interface ConnectionTestResponse {
+  success: boolean;
+  data?: { result: ConnectionTestResult; connection?: ProviderConnection };
+  error?: string;
+}
+
+/**
+ * Minimal connection facts `resolveHarnessModel` needs to build an AI SDK
+ * client for a `conn:<connectionId>/<modelId>` model id. Deliberately NOT the
+ * full `ProviderConnection` (no id/name/models bookkeeping needed at this
+ * layer) — see `ConnectionResolver` below.
+ */
+export interface ResolvedProviderConnection {
+  protocol: ConnectionProtocol;
+  baseUrl: string;
+  token?: string;
+}
+
+/**
+ * Synchronous lookup a harness run injects into `resolveHarnessModel` so it
+ * can resolve `conn:` model ids without importing the provider-connections
+ * store directly (keeps llm-runner.ts unit-testable in isolation). The
+ * ipc/executor boundary (`heliox:start-harness`) is responsible for
+ * pre-fetching every saved connection's decrypted token ONCE per run and
+ * closing over a plain map, so this callback itself never touches disk.
+ */
+export type ConnectionResolver = (connectionId: string) => ResolvedProviderConnection | undefined;

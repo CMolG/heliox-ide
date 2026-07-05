@@ -20,6 +20,7 @@ import type {
   ArenaRunOptions,
   ArenaProgressEvent,
   ArenaResult,
+  ModelPolicy,
 } from '../types/ipc-events';
 import type { BrowserAction } from '../types/browser';
 
@@ -30,8 +31,11 @@ const helioxAPI: HelioxAPI = {
   runAgent: (params: RunAgentParams) =>
     ipcRenderer.invoke('heliox:run-agent', params),
 
-  startHarness: (flow: AgenticFlow) =>
-    ipcRenderer.invoke('heliox:start-harness', flow),
+  startHarness: (flow: AgenticFlow, options?: { modelPolicy?: ModelPolicy; modelId?: string }) =>
+    ipcRenderer.invoke('heliox:start-harness', flow, options),
+
+  exportFlow: (flow: AgenticFlow) =>
+    ipcRenderer.invoke('heliox:export-flow', flow),
 
   assemblePipeline: (userIntent: string) =>
     ipcRenderer.invoke('heliox:assemble-pipeline', userIntent),
@@ -129,6 +133,20 @@ const helioxAPI: HelioxAPI = {
     ipcRenderer.invoke('opencode:remove-credential', providerId),
   opencodeStatus: () =>
     ipcRenderer.invoke('opencode:status'),
+
+  // ── Provider Connections (DBeaver-style, Phase 6) ───────────────
+  providerConnectionsList: () =>
+    ipcRenderer.invoke('provider-connections:list'),
+  providerConnectionsCreate: (input: import('../types/ipc-events').ProviderConnectionInput) =>
+    ipcRenderer.invoke('provider-connections:create', input),
+  providerConnectionsUpdate: (id: string, patch: import('../types/ipc-events').ProviderConnectionUpdate) =>
+    ipcRenderer.invoke('provider-connections:update', id, patch),
+  providerConnectionsDelete: (id: string) =>
+    ipcRenderer.invoke('provider-connections:delete', id),
+  providerConnectionsSetModelEnabled: (id: string, modelId: string, enabled: boolean) =>
+    ipcRenderer.invoke('provider-connections:set-model-enabled', id, modelId, enabled),
+  providerConnectionsTest: (request: import('../types/ipc-events').ConnectionTestRequest) =>
+    ipcRenderer.invoke('provider-connections:test', request),
 
   getConfigDir: (projectPath: string) =>
     ipcRenderer.invoke('heliox:get-config-dir', projectPath),

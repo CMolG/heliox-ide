@@ -54,18 +54,28 @@ export function StepThinkingPopover({ stepId, stepData, initialAnchor }: StepThi
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
+    // Measure the actual rendered element — the popover is usually far
+    // shorter/narrower than the CSS max-size, so flipping against the
+    // hardcoded constants overshoots the cursor by a wide margin. The
+    // constants remain only as a pre-measure fallback (first paint).
+    const w = el.offsetWidth || POPOVER_WIDTH;
+    const h = el.offsetHeight || POPOVER_HEIGHT;
+
     let left = x + POPOVER_OFFSET_X;
     let top = y + POPOVER_OFFSET_Y;
 
-    // Clamp so popover stays within viewport
-    if (left + POPOVER_WIDTH + VIEWPORT_MARGIN > vw) {
-      left = x - POPOVER_WIDTH - POPOVER_OFFSET_X;
+    // Flip only when the measured size doesn't actually fit
+    if (left + w + VIEWPORT_MARGIN > vw) {
+      left = x - w - POPOVER_OFFSET_X;
     }
-    if (top + POPOVER_HEIGHT + VIEWPORT_MARGIN > vh) {
-      top = y - POPOVER_HEIGHT - POPOVER_OFFSET_Y;
+    if (top + h + VIEWPORT_MARGIN > vh) {
+      top = y - h - POPOVER_OFFSET_Y;
     }
-    left = Math.max(VIEWPORT_MARGIN, left);
-    top = Math.max(VIEWPORT_MARGIN, top);
+
+    // Clamp both bounds on both axes so the popover never renders off-screen,
+    // even when the flipped position still overflows (e.g. narrow viewport).
+    left = Math.min(Math.max(VIEWPORT_MARGIN, left), vw - w - VIEWPORT_MARGIN);
+    top = Math.min(Math.max(VIEWPORT_MARGIN, top), vh - h - VIEWPORT_MARGIN);
 
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
@@ -85,12 +95,24 @@ export function StepThinkingPopover({ stepId, stepData, initialAnchor }: StepThi
     };
 
     window.addEventListener('mousemove', handleMouseMove, { passive: true });
+
+    // Content grows as a step streams thinking deltas — re-flip/clamp
+    // against the new measured size even without cursor movement.
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && divRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        applyPosition();
+      });
+      resizeObserver.observe(divRef.current);
+    }
+
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
+      resizeObserver?.disconnect();
     };
   }, [applyPosition]);
 

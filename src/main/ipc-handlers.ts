@@ -15,6 +15,10 @@ import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 import { AgentManager } from './agent-manager';
 import { Flow, FileEntry, CliStatus, RunAgentParams, errMsg } from '../types';
 import type { AgenticFlow } from '../types/harness';
+import type {
+  ModelPolicy, SelectionStrategy, ConnectionTestRequest,
+  ProviderConnectionInput, ProviderConnectionUpdate, ConnectionResolver,
+} from '../types/ipc-events';
 import { execFile } from 'child_process';
 import { readdir, stat, readFile, writeFile, mkdir, unlink, rm, rename, access } from 'fs/promises';
 import { join, basename, relative } from 'path';
@@ -25,7 +29,13 @@ import {
   listProviders, listModels as opencodeListModels, saveProviderCredential,
   removeProviderCredential, opencodeStatus,
 } from './opencode-providers';
+import {
+  listConnections, createConnection, updateConnection, deleteConnection,
+  getDecryptedToken, setModelEnabled, mergeModelList,
+} from './provider-connections';
+import { testConnection } from './provider-connection-tester';
 import { executeAgenticFlow } from './harness-engine/executor';
+import { exportFlow } from './flow-export/heliox-flow';
 import { setHarnessEventWindow } from './harness-engine/event-bus';
 import { assemblePipeline } from './meta-agent/pipeline-generator';
 import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
@@ -139,6 +149,55 @@ const EVENT_TYPE_MAP: Record<AgentEventName, string> = {
   'patch-failed': 'file-changed',
 };
 
+const VALID_MODEL_POLICY_MODES = new Set(['fixed', 'smart-local', 'smart-external']);
+const VALID_SELECTION_STRATEGIES = new Set(['best-score', 'cheapest', 'fastest', 'best-value']);
+
+/**
+ * Loose IPC-boundary validation for `heliox:start-harness`'s `options.modelPolicy`.
+ * Renderer input is `unknown` by construction (crossed the context bridge) —
+ * anything that doesn't shape up as a real `ModelPolicy` is dropped back to
+ * `undefined` rather than thrown on, matching this IPC layer's convention of
+ * normalized, non-throwing handlers. `executeAgenticFlow` treats a missing
+ * policy exactly like `{mode:'fixed'}` (no router), so "ignore" is always safe.
+ */
+function sanitizeModelPolicy(value: unknown): ModelPolicy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const mode = (value as { mode?: unknown }).mode;
+  if (typeof mode !== 'string' || !VALID_MODEL_POLICY_MODES.has(mode)) return undefined;
+
+  if (mode === 'smart-local') {
+    const strategy = (value as { strategy?: unknown }).strategy;
+    if (typeof strategy !== 'string' || !VALID_SELECTION_STRATEGIES.has(strategy)) return undefined;
+    return { mode: 'smart-local', strategy: strategy as SelectionStrategy };
+  }
+
+  return { mode } as ModelPolicy;
+}
+
+/**
+ * Build the synchronous `ConnectionResolver` a harness run needs to resolve
+ * `conn:<connectionId>/<modelId>` model ids (see llm-runner.ts#resolveHarnessModel).
+ * Reads every saved connection + its decrypted token ONCE, up front, so the
+ * resolver itself never touches disk mid-run. Never throws — a failure here
+ * (e.g. a corrupt provider-connections.json) degrades to an empty resolver
+ * rather than blocking the whole flow, matching this module's convention of
+ * normalized, non-throwing handlers.
+ */
+async function buildConnectionResolver(): Promise<ConnectionResolver> {
+  try {
+    const connections = await listConnections();
+    const entries = await Promise.all(connections.map(async (c) => {
+      const token = await getDecryptedToken(c.id);
+      return [c.id, { protocol: c.protocol, baseUrl: c.baseUrl, token }] as const;
+    }));
+    const byId = new Map(entries);
+    return (id: string) => byId.get(id);
+  } catch (err) {
+    log.warn('[Heliox Harness] failed to load provider connections for model resolution:', errMsg(err));
+    return () => undefined;
+  }
+}
+
 function getIpcWindow(): BrowserWindow | null {
   if (currentIpcWindow && !currentIpcWindow.isDestroyed()) {
     return currentIpcWindow;
@@ -211,13 +270,27 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:start-harness', async (_event, flow: AgenticFlow) => {
+  ipcMain.handle('heliox:start-harness', async (
+    _event,
+    flow: AgenticFlow,
+    options?: { modelPolicy?: unknown; modelId?: unknown },
+  ) => {
     if (!flow || typeof flow !== 'object') {
       return { success: false, error: 'Invalid AgenticFlow payload.' };
     }
 
+    const modelPolicy = sanitizeModelPolicy(options?.modelPolicy);
+    const modelId = typeof options?.modelId === 'string' ? options.modelId : undefined;
+    // Pre-fetch every saved connection's decrypted token ONCE per run and
+    // close over a plain synchronous map — resolveHarnessModel (and anything
+    // that threads a `conn:<connectionId>/<modelId>` modelId down to it) never
+    // touches disk itself. A lookup failure here (e.g. a corrupt store file)
+    // degrades to "no connections resolvable" rather than blocking the run —
+    // any step that isn't actually using a `conn:` model is unaffected.
+    const resolveConnection = await buildConnectionResolver();
+
     setTimeout(() => {
-      void executeAgenticFlow(flow).catch((err) => {
+      void executeAgenticFlow(flow, { modelPolicy, modelId, resolveConnection }).catch((err) => {
         const message = errMsg(err);
         log.error(`[Heliox Harness] execution failed: ${message}`);
       });
@@ -363,6 +436,88 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle('opencode:status', async () => opencodeStatus());
+
+  // ── Provider Connections (DBeaver-style, Phase 6) ──────────────────────────
+  // Replaces the old opencode-backed provider-picker UI (see ConnectionsSection.tsx).
+  // Tokens never cross this boundary in plaintext — profiles only carry
+  // `hasToken`; `getDecryptedToken` is called main-side only, here and from
+  // the `resolveConnection` closure built for `heliox:start-harness` below.
+  ipcMain.handle('provider-connections:list', async () => {
+    try {
+      return { success: true, data: await listConnections() };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:create', async (_e, input: ProviderConnectionInput) => {
+    try {
+      return { success: true, data: await createConnection(input) };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:update', async (_e, id: string, patch: ProviderConnectionUpdate) => {
+    try {
+      const data = await updateConnection(id, patch);
+      if (!data) return { success: false, error: `No connection with id "${id}".` };
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:delete', async (_e, id: string) => {
+    try {
+      await deleteConnection(id);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:set-model-enabled', async (_e, id: string, modelId: string, enabled: boolean) => {
+    try {
+      const data = await setModelEnabled(id, modelId, enabled);
+      if (!data) return { success: false, error: `No connection with id "${id}".` };
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  ipcMain.handle('provider-connections:test', async (_e, request: ConnectionTestRequest) => {
+    try {
+      // Draft profile (pre-save testing) — no persistence, no model merge.
+      if (!('connectionId' in request)) {
+        const result = await testConnection(request);
+        return { success: true, data: { result } };
+      }
+
+      // Saved connection — resolve its decrypted token main-side, run the
+      // probe, and on success merge the fetched model list into the profile
+      // (new models arrive enabled, vanished models are dropped) so the UI
+      // gets a fully refreshed card in one round trip.
+      const [connections, token] = await Promise.all([
+        listConnections(),
+        getDecryptedToken(request.connectionId),
+      ]);
+      const conn = connections.find((c) => c.id === request.connectionId);
+      if (!conn) return { success: false, error: `No connection with id "${request.connectionId}".` };
+
+      const result = await testConnection({ protocol: conn.protocol, baseUrl: conn.baseUrl, token });
+      const patch: ProviderConnectionUpdate = {
+        lastTestedAt: Date.now(),
+        lastTestOk: result.ok,
+        ...(result.ok && result.models ? { models: mergeModelList(conn.models, result.models) } : {}),
+      };
+      const connection = await updateConnection(request.connectionId, patch);
+      return { success: true, data: { result, connection } };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
 
   ipcMain.handle('heliox:get-project-name', async (_event, projectPath: string): Promise<string> => {
     try {
@@ -595,6 +750,33 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return true;
     } catch {
       return false;
+    }
+  });
+
+  // Export a canvas-compiled AgenticFlow to the portable heliox-flow.json
+  // interchange format (src/main/flow-export/heliox-flow.ts) — the format the
+  // Java/Python runtimes and the SDK conformance suite consume. Clones the
+  // heliox:save-file dialog pattern above.
+  ipcMain.handle('heliox:export-flow', async (_event, flow: AgenticFlow): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> => {
+    try {
+      const exported = exportFlow(flow);
+      const options: SaveDialogOptions = {
+        title: 'Export Flow',
+        defaultPath: `${flow.id}.flow.json`,
+        filters: [
+          { name: 'Heliox Flow', extensions: ['json'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      };
+      const win = getIpcWindow();
+      const { canceled, filePath } = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options);
+      if (canceled || !filePath) return { success: false, canceled: true };
+      await writeFile(filePath, JSON.stringify(exported, null, 2), 'utf-8');
+      return { success: true, path: filePath };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
     }
   });
 

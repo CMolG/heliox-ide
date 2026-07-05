@@ -40,6 +40,16 @@ interface WebviewEl extends HTMLElement {
   canGoForward(): boolean;
 }
 
+/** Shape of the 'did-fail-load' DOM event Electron dispatches on <webview>. */
+interface WebviewFailLoadEvent extends Event {
+  errorCode: number;
+  errorDescription: string;
+  isMainFrame: boolean;
+}
+
+/** Chromium net error for a cancelled/superseded navigation — not a real failure. */
+const NET_ERROR_ABORTED = -3;
+
 // ─── Props ───────────────────────────────────────────────────────────────────
 
 interface WebPreviewAppProps {
@@ -86,6 +96,9 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
   const [addressValue, setAddressValue] = useState(initialUrl);
   // Tracks whether the link/unlink IPC call is in-flight (prevents double-click)
   const [linkPending, setLinkPending] = useState(false);
+  // Set when the guest page fails to load (e.g. dev server not running yet);
+  // drives the "Preview unreachable" overlay. Cleared on the next successful load.
+  const [loadFailed, setLoadFailed] = useState<{ code: number; desc: string } | null>(null);
 
   // ── Agent-link toggle ────────────────────────────────────────────
   // Enable: call browserAttach then mark this window as the agent surface.
@@ -134,20 +147,42 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
 
     // Keep the address bar in sync with page navigations initiated inside the webview
     const handleNavigate = (e: Event) => {
+      // A completed navigation (top-level or in-page) means the guest is no
+      // longer in the failed state, even if a stale overlay was still showing.
+      setLoadFailed(null);
       const ev = e as CustomEvent<{ url: string }>;
       if (ev.detail?.url) {
         setAddressValue(ev.detail.url);
       }
     };
 
+    // Dead-URL guard: surface a "Preview unreachable" overlay instead of the
+    // guest silently showing Chromium's own error page (or nothing at all).
+    // Ignored cases:
+    //  - isMainFrame === false: a sub-resource/iframe inside the guest failed,
+    //    not the page itself.
+    //  - errorCode === ABORTED (-3): a cancelled/superseded navigation (e.g. a
+    //    quick reload or redirect), not a genuine connection failure.
+    const handleFailLoad = (e: Event) => {
+      const ev = e as WebviewFailLoadEvent;
+      if (ev.isMainFrame === false || ev.errorCode === NET_ERROR_ABORTED) return;
+      setLoadFailed({ code: ev.errorCode, desc: ev.errorDescription });
+    };
+
+    const handleFinishLoad = () => setLoadFailed(null);
+
     el.addEventListener('dom-ready', handleDomReady);
     el.addEventListener('did-navigate', handleNavigate);
     el.addEventListener('did-navigate-in-page', handleNavigate);
+    el.addEventListener('did-fail-load', handleFailLoad);
+    el.addEventListener('did-finish-load', handleFinishLoad);
 
     return () => {
       el.removeEventListener('dom-ready', handleDomReady);
       el.removeEventListener('did-navigate', handleNavigate);
       el.removeEventListener('did-navigate-in-page', handleNavigate);
+      el.removeEventListener('did-fail-load', handleFailLoad);
+      el.removeEventListener('did-finish-load', handleFinishLoad);
     };
   }, [windowId, _updateWindow]);
 
@@ -261,23 +296,92 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
         </div>
       </div>
 
-      {/* ── Webview ─────────────────────────────────────────────────── */}
-    {/*
-        partition="persist:heliox-preview" keeps session cookies across reloads
-        but isolated from the main renderer session.
-        Popups/new windows are denied in the MAIN process via setWindowOpenHandler
-        (the did-attach-webview guard in src/main/index.ts). The `allowpopups`
-        attribute is intentionally omitted: a <webview> enables popups by the
-        attribute's mere PRESENCE, and `allowpopups={false}` would render the
-        string "false" (treated as truthy) — the opposite of the intent.
-        No preload — guest content runs with no privileged access.
-      */}
-      <webview
-        ref={webviewRef as React.Ref<HTMLElement>}
-        src={initialUrl}
-        partition="persist:heliox-preview"
-        style={{ flex: 1, width: '100%', height: '100%', border: 'none' }}
-      />
+      {/* ── Webview (+ dead-URL overlay) ────────────────────────────── */}
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+        {/*
+            partition="persist:heliox-preview" keeps session cookies across reloads
+            but isolated from the main renderer session.
+            Popups/new windows are denied in the MAIN process via setWindowOpenHandler
+            (the did-attach-webview guard in src/main/index.ts). The `allowpopups`
+            attribute is intentionally omitted: a <webview> enables popups by the
+            attribute's mere PRESENCE, and `allowpopups={false}` would render the
+            string "false" (treated as truthy) — the opposite of the intent.
+            No preload — guest content runs with no privileged access.
+        */}
+        <webview
+          ref={webviewRef as React.Ref<HTMLElement>}
+          src={initialUrl}
+          partition="persist:heliox-preview"
+          style={{ width: '100%', height: '100%', border: 'none' }}
+        />
+
+        {/* ── Dead-URL guard overlay ───────────────────────────────────
+            Shown when the guest fails to load (e.g. the dev server behind
+            this preview isn't running yet). Sits above the <webview> —
+            Electron 41's OOPIF-backed guest view composites through the
+            normal Chromium layer stack, so plain absolute positioning is
+            enough (no portal / extra z-index trickery needed).
+        */}
+        {loadFailed && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              textAlign: 'center',
+              padding: 24,
+              background: 'rgba(17,17,17,0.85)', // theme.surface (#111111) + glass alpha, matches WidgetWrapper's overlay idiom
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+            }}
+          >
+            <LucideIcon name="TriangleAlert" size={26} style={{ color: theme.warning }} />
+            <div style={{ fontSize: 13, fontWeight: 600, color: theme.textPrimary, fontFamily: theme.fontGrotesk }}>
+              Preview unreachable
+            </div>
+            <div style={{ fontSize: 11, color: theme.textMuted, maxWidth: 380, wordBreak: 'break-all' }}>
+              {addressValue}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textDim, maxWidth: 380 }}>
+              {loadFailed.desc}
+            </div>
+            {addressValue.includes(':8080') && (
+              <div style={{ fontSize: 11, color: theme.textFaint, maxWidth: 380 }}>
+                Heliox Serve is not running — start it with <code style={{ fontFamily: theme.fontMono }}>npm run heliox:serve</code>
+              </div>
+            )}
+            <button
+              onClick={() => {
+                webviewRef.current?.loadURL(addressValue);
+                setLoadFailed(null);
+              }}
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 14px',
+                borderRadius: 6,
+                border: `1px solid ${theme.borderMedium}`,
+                background: theme.surfaceRaised,
+                color: theme.textSecondary,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = theme.surfaceHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = theme.surfaceRaised)}
+            >
+              <LucideIcon name="RefreshCw" size={12} />
+              Retry
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

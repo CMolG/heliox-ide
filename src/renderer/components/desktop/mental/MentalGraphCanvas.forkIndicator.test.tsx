@@ -29,6 +29,8 @@ vi.mock('@dnd-kit/core', () => ({
 }));
 
 // Mock @xyflow/react — createPortal and NodeToolbar aren't needed in unit tests.
+// Handle is stubbed too: StepNode now renders real connection handles, and the
+// genuine xyflow Handle throws when rendered outside a ReactFlowProvider.
 vi.mock('@xyflow/react', () => ({
   useReactFlow: () => ({ screenToFlowPosition: vi.fn() }),
   ReactFlow: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
@@ -37,6 +39,9 @@ vi.mock('@xyflow/react', () => ({
   ConnectionMode: { Loose: 'loose' },
   Position: { Top: 'top', Right: 'right', Bottom: 'bottom', Left: 'left' },
   MarkerType: { ArrowClosed: 'arrowclosed' },
+  Handle: (p: { id: string; type: string }) => (
+    <div data-testid={`step-handle-${p.id}`} data-handletype={p.type} />
+  ),
 }));
 
 // Mock desktop-store — StepNode reads mentalEdges and store actions.
