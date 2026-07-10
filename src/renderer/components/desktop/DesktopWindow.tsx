@@ -29,7 +29,6 @@ import { TYPE_META } from './DesktopAttachable';
 import { kebabToTitle } from './attachable-helpers';
 import { TopRoleAttachment } from '../atoms/attachment/TopRoleAttachment';
 import { BottomModAttachment } from '../atoms/attachment/BottomModAttachment';
-import { RightFlowAttachment } from '../atoms/attachment/RightFlowAttachment';
 import { theme } from '../../logic/theme';
 import type { MarketRole, MarketMod, MarketFlow } from '@/types/market';
 
@@ -103,7 +102,14 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
   const isActive = activeWindowId === windowId;
   const isHighlighted = hoveredWindowId === windowId;
   const isSelected = selectedWindowIds.includes(windowId);
-  const isChatWindow = win?.type === 'chat';
+  // 'chat' window type retired (chats→steps re-architecture, F0 decision 2,
+  // 2026-07-10) — mirrors connectFlow/attachToWindow's own retirement in
+  // desktop-store.ts (both always return false now for the identical
+  // reason): drag-drop-attach-to-window and its ribbon UI below were only
+  // ever valid for chat windows, the sole surface that supported them, so
+  // this is always false now — zero observable change for every window type
+  // that still exists (they never satisfied `win?.type === 'chat'` either).
+  const isChatWindow = false;
 
   // ─── dnd-kit droppable ─────────────────────────────────
   const { setNodeRef: setDropRef, isOver } = useDroppable({
@@ -589,13 +595,14 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
             />
           )}
 
-          {inventoryFlow && (
-            <RightFlowAttachment
-              flow={inventoryFlow}
-              onDetach={() => detachFromWindow(windowId, 'flow', inventoryFlow.name)}
-              onClickFlow={() => openAttachmentModal('flow', inventoryFlow)}
-            />
-          )}
+          {/* RightFlowAttachment.tsx retired (chats→steps re-architecture, F0
+              decision 4, 2026-07-10): flows no longer attach to a window —
+              `inventoryFlow` is still computed above (it also feeds the
+              window's "Remove flow" context-menu action and
+              `hasExternalAttachments`) but this dedicated ribbon render is
+              gone. This whole block is already unreachable in practice:
+              `hasExternalAttachments` requires `isChatWindow`, hardcoded
+              `false` since 'chat' windows were retired. */}
         </>
       )}
 

@@ -34,11 +34,30 @@
         "infinite"
       ],
       "steps": [
-        "Profile the codebase for performance hotspots and algorithmic bottlenecks",
-        "Identify functions with suboptimal Big-O complexity",
-        "Generate optimized implementations with benchmarks",
-        "Run tests to verify correctness after optimization",
-        "Commit changes and loop to the next hotspot"
+        {
+          "id": "profile-hotspots",
+          "prompt": "Profile the codebase for performance hotspots and algorithmic bottlenecks"
+        },
+        {
+          "id": "identify-complexity",
+          "prompt": "Identify functions with suboptimal Big-O complexity"
+        },
+        {
+          "id": "generate-optimizations",
+          "prompt": "Generate optimized implementations with benchmarks"
+        },
+        {
+          "id": "verify-with-tests",
+          "prompt": "Run tests to verify correctness after optimization"
+        },
+        {
+          "id": "commit-and-loop",
+          "prompt": "Commit changes and loop to the next hotspot",
+          "loopBackTo": {
+            "stepId": "profile-hotspots",
+            "maxIterations": 3
+          }
+        }
       ]
     },
     {
@@ -59,11 +78,30 @@
         "infinite"
       ],
       "steps": [
-        "Scan the codebase for dead code, duplication, and unnecessary complexity",
-        "Identify the highest-impact simplification opportunity",
-        "Refactor the code while preserving external behavior",
-        "Run the full test suite to verify no regressions",
-        "Commit changes and loop to the next reduction target"
+        {
+          "id": "scan-for-bloat",
+          "prompt": "Scan the codebase for dead code, duplication, and unnecessary complexity"
+        },
+        {
+          "id": "identify-simplification-target",
+          "prompt": "Identify the highest-impact simplification opportunity"
+        },
+        {
+          "id": "refactor-preserving-behavior",
+          "prompt": "Refactor the code while preserving external behavior"
+        },
+        {
+          "id": "verify-no-regressions",
+          "prompt": "Run the full test suite to verify no regressions"
+        },
+        {
+          "id": "commit-and-loop",
+          "prompt": "Commit changes and loop to the next reduction target",
+          "loopBackTo": {
+            "stepId": "scan-for-bloat",
+            "maxIterations": 3
+          }
+        }
       ]
     },
     {
@@ -86,11 +124,30 @@
         "infinite"
       ],
       "steps": [
-        "Audit the UI for accessibility violations and layout inconsistencies",
-        "Prioritize issues by severity (WCAG compliance first)",
-        "Apply targeted CSS/component fixes without altering business logic",
-        "Verify fixes visually and with accessibility tooling",
-        "Commit changes and loop to the next UI issue"
+        {
+          "id": "audit-a11y-and-layout",
+          "prompt": "Audit the UI for accessibility violations and layout inconsistencies"
+        },
+        {
+          "id": "prioritize-by-severity",
+          "prompt": "Prioritize issues by severity (WCAG compliance first)"
+        },
+        {
+          "id": "apply-targeted-fixes",
+          "prompt": "Apply targeted CSS/component fixes without altering business logic"
+        },
+        {
+          "id": "verify-visually",
+          "prompt": "Verify fixes visually and with accessibility tooling"
+        },
+        {
+          "id": "commit-and-loop",
+          "prompt": "Commit changes and loop to the next UI issue",
+          "loopBackTo": {
+            "stepId": "audit-a11y-and-layout",
+            "maxIterations": 3
+          }
+        }
       ]
     },
     {
@@ -112,11 +169,30 @@
         "infinite"
       ],
       "steps": [
-        "Analyze project structure, dependencies, and architectural patterns",
-        "Identify areas needing refactoring, modularization, or cleanup",
-        "Generate finite Agent Sessions as backlog tasks for each improvement",
-        "Prioritize tasks by impact and dependency order",
-        "Continuously monitor for new architectural drift and create new tasks"
+        {
+          "id": "analyze-architecture",
+          "prompt": "Analyze project structure, dependencies, and architectural patterns"
+        },
+        {
+          "id": "identify-improvement-areas",
+          "prompt": "Identify areas needing refactoring, modularization, or cleanup"
+        },
+        {
+          "id": "generate-backlog-cards",
+          "prompt": "Generate finite Agent Sessions as backlog tasks for each improvement"
+        },
+        {
+          "id": "prioritize-by-impact",
+          "prompt": "Prioritize tasks by impact and dependency order"
+        },
+        {
+          "id": "monitor-and-requeue",
+          "prompt": "Continuously monitor for new architectural drift and create new tasks",
+          "loopBackTo": {
+            "stepId": "analyze-architecture",
+            "maxIterations": 3
+          }
+        }
       ]
     },
     {
@@ -140,11 +216,26 @@
         "agentic-task"
       ],
       "steps": [
-        "Read the assigned optimization task from the backlog",
-        "Profile the target code section for performance metrics",
-        "Implement the optimization with benchmarks",
-        "Run tests to validate correctness",
-        "Mark the backlog item as complete and terminate"
+        {
+          "id": "read-backlog-task",
+          "prompt": "Read the assigned optimization task from the backlog"
+        },
+        {
+          "id": "profile-target",
+          "prompt": "Profile the target code section for performance metrics"
+        },
+        {
+          "id": "implement-optimization",
+          "prompt": "Implement the optimization with benchmarks"
+        },
+        {
+          "id": "validate-with-tests",
+          "prompt": "Run tests to validate correctness"
+        },
+        {
+          "id": "mark-complete",
+          "prompt": "Mark the backlog item as complete and terminate"
+        }
       ]
     },
     {
@@ -169,11 +260,26 @@
         "agentic-task"
       ],
       "steps": [
-        "Read the assigned reduction task from the backlog",
-        "Analyze the target code for safe simplification opportunities",
-        "Refactor and remove unnecessary complexity",
-        "Run tests to ensure no regressions",
-        "Mark the backlog item as complete and terminate"
+        {
+          "id": "read-backlog-task",
+          "prompt": "Read the assigned reduction task from the backlog"
+        },
+        {
+          "id": "analyze-target",
+          "prompt": "Analyze the target code for safe simplification opportunities"
+        },
+        {
+          "id": "refactor-and-simplify",
+          "prompt": "Refactor and remove unnecessary complexity"
+        },
+        {
+          "id": "verify-no-regressions",
+          "prompt": "Run tests to ensure no regressions"
+        },
+        {
+          "id": "mark-complete",
+          "prompt": "Mark the backlog item as complete and terminate"
+        }
       ]
     },
     {
@@ -200,11 +306,26 @@
         "agentic-task"
       ],
       "steps": [
-        "Read the assigned UI/UX fix from the backlog",
-        "Inspect the affected component for layout and accessibility issues",
-        "Apply the targeted fix preserving design consistency",
-        "Validate the fix with visual and a11y checks",
-        "Mark the backlog item as complete and terminate"
+        {
+          "id": "read-backlog-task",
+          "prompt": "Read the assigned UI/UX fix from the backlog"
+        },
+        {
+          "id": "inspect-component",
+          "prompt": "Inspect the affected component for layout and accessibility issues"
+        },
+        {
+          "id": "apply-fix",
+          "prompt": "Apply the targeted fix preserving design consistency"
+        },
+        {
+          "id": "validate-fix",
+          "prompt": "Validate the fix with visual and a11y checks"
+        },
+        {
+          "id": "mark-complete",
+          "prompt": "Mark the backlog item as complete and terminate"
+        }
       ]
     },
     {
@@ -225,11 +346,30 @@
         "tdd"
       ],
       "steps": [
-        "Pull the next feature task from the backlog queue",
-        "Design the implementation approach and identify affected files",
-        "Write the feature code with proper type safety and error handling",
-        "Create or update tests covering the new functionality",
-        "Commit changes and loop to the next backlog feature"
+        {
+          "id": "pull-backlog-task",
+          "prompt": "Pull the next feature task from the backlog queue"
+        },
+        {
+          "id": "design-approach",
+          "prompt": "Design the implementation approach and identify affected files"
+        },
+        {
+          "id": "implement-feature",
+          "prompt": "Write the feature code with proper type safety and error handling"
+        },
+        {
+          "id": "write-tests",
+          "prompt": "Create or update tests covering the new functionality"
+        },
+        {
+          "id": "commit-and-loop",
+          "prompt": "Commit changes and loop to the next backlog feature",
+          "loopBackTo": {
+            "stepId": "pull-backlog-task",
+            "maxIterations": 3
+          }
+        }
       ]
     },
     {
@@ -253,11 +393,26 @@
         "agentic-task"
       ],
       "steps": [
-        "Read the assigned feature task from the backlog",
-        "Plan implementation approach and identify dependencies",
-        "Build the feature with tests and documentation",
-        "Run the full test suite to verify integration",
-        "Mark the backlog item as complete and terminate"
+        {
+          "id": "read-backlog-task",
+          "prompt": "Read the assigned feature task from the backlog"
+        },
+        {
+          "id": "plan-approach",
+          "prompt": "Plan implementation approach and identify dependencies"
+        },
+        {
+          "id": "build-feature",
+          "prompt": "Build the feature with tests and documentation"
+        },
+        {
+          "id": "verify-integration",
+          "prompt": "Run the full test suite to verify integration"
+        },
+        {
+          "id": "mark-complete",
+          "prompt": "Mark the backlog item as complete and terminate"
+        }
       ]
     },
     {
@@ -278,11 +433,30 @@
         "infinite"
       ],
       "steps": [
-        "Analyze the project structure and inventory existing features",
-        "Autonomously generate a prioritized functional improvement backlog",
-        "Engineer real behavioral upgrades (not cosmetic) for the top item",
-        "Validate the improvement and log results to results.tsv",
-        "Commit changes and loop to the next backlog item"
+        {
+          "id": "analyze-features",
+          "prompt": "Analyze the project structure and inventory existing features"
+        },
+        {
+          "id": "generate-improvement-backlog",
+          "prompt": "Autonomously generate a prioritized functional improvement backlog"
+        },
+        {
+          "id": "engineer-upgrade",
+          "prompt": "Engineer real behavioral upgrades (not cosmetic) for the top item"
+        },
+        {
+          "id": "validate-and-log",
+          "prompt": "Validate the improvement and log results to results.tsv"
+        },
+        {
+          "id": "commit-and-loop",
+          "prompt": "Commit changes and loop to the next backlog item",
+          "loopBackTo": {
+            "stepId": "analyze-features",
+            "maxIterations": 3
+          }
+        }
       ]
     },
     {
@@ -303,11 +477,30 @@
         "infinite"
       ],
       "steps": [
-        "Analyze IaC, deployment configs, and paid API usage",
-        "Inventory expensive operations and generate a prioritized FinOps backlog",
-        "Implement the highest-impact cost reduction without degrading UX",
-        "Validate savings and log to finops_results.tsv",
-        "Commit changes and loop to the next cost-saving target"
+        {
+          "id": "analyze-cost-surface",
+          "prompt": "Analyze IaC, deployment configs, and paid API usage"
+        },
+        {
+          "id": "generate-finops-backlog",
+          "prompt": "Inventory expensive operations and generate a prioritized FinOps backlog"
+        },
+        {
+          "id": "implement-reduction",
+          "prompt": "Implement the highest-impact cost reduction without degrading UX"
+        },
+        {
+          "id": "validate-savings",
+          "prompt": "Validate savings and log to finops_results.tsv"
+        },
+        {
+          "id": "commit-and-loop",
+          "prompt": "Commit changes and loop to the next cost-saving target",
+          "loopBackTo": {
+            "stepId": "analyze-cost-surface",
+            "maxIterations": 3
+          }
+        }
       ]
     }
   ],

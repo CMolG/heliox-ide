@@ -58,7 +58,17 @@ export type WindowState = 'normal' | 'minimized' | 'maximized';
 
 export interface DesktopWindow {
   id: string;
-  type: 'chat' | 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena';
+  /**
+   * 'chat' retired (chats→steps re-architecture, F0 decision 2, 2026-07-10):
+   * general chat is no longer a window surface — code-editing work happens
+   * through launched steps, and the single automation chat lives outside the
+   * window system entirely (HudAutoChatPanel, a fixed HUD panel). Boards
+   * persisted before this change may still contain serialized 'chat'
+   * windows; desktop-store's v19 migration drops them (tombstone + user
+   * notification) before they ever reach this type, so no live window can
+   * have this shape — see the migrate() comment for the full contract.
+   */
+  type: 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena';
   title: string;
   /** Lucide icon name (e.g. 'MessageSquare', 'Terminal') */
   iconName: string;
@@ -66,9 +76,9 @@ export interface DesktopWindow {
   size: WindowSize;
   zIndex: number;
   state: WindowState;
-  /** For chat windows — the associated session ID */
+  /** Legacy — was chat windows' associated session ID ('chat' type retired above). Vestigial; no surviving window type sets this. */
   sessionId?: string;
-  /** For chat windows — which CLI provider this window uses */
+  /** Legacy — was which CLI provider a chat window used ('chat' type retired above). Vestigial; no surviving window type sets this. */
   cliProvider?: CliProvider;
   /** For plugin windows — the plugin ID */
   pluginId?: string;
@@ -78,7 +88,7 @@ export interface DesktopWindow {
   roleId?: string;
   /** Connected market modifier names (stackable, compatibility-checked) */
   modifierIds: string[];
-  /** For chat windows — the child project path (cwd for agent) */
+  /** Legacy — was chat windows' child project path/cwd ('chat' type retired above). Vestigial; no surviving window type sets this. */
   childProjectPath?: string;
   /** For file-viewer windows — the absolute file path to display */
   filePath?: string;
@@ -105,10 +115,11 @@ export interface DesktopWindow {
   /** Creation timestamp */
   createdAt: number;
   /**
-   * For chat windows — subgraphs of the mental map attached as context.
-   * Each entry is one attachment (list of node ids at attach-time).
-   * An empty `nodeIds` array means "the entire mental graph at send-time".
-   * Serialized live on each send; we keep only ids, not snapshots.
+   * Legacy — was chat windows' subgraphs of the mental map attached as
+   * context ('chat' type retired above). Vestigial; no surviving window
+   * type sets this. Each entry is one attachment (list of node ids at
+   * attach-time); an empty `nodeIds` array meant "the entire mental graph
+   * at send-time".
    */
   mentalAttachments?: MentalAttachment[];
 }

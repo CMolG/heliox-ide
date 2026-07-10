@@ -14,17 +14,22 @@
 import React from 'react';
 import { AttachableRole } from '../atoms/attachables/AttachableRole';
 import { AttachableMod } from '../atoms/attachables/AttachableMod';
-import { AttachableFlow } from '../atoms/attachables/AttachableFlow';
 import type { DesktopAttachable as AttachableT } from '@/types/desktop';
 import type { MarketRole, MarketMod, MarketFlow } from '@/types/market';
 import { TYPE_META } from './DesktopAttachable';
 import { kebabToTitle } from './attachable-helpers';
 import { theme } from '../../logic/theme';
 
+// AttachableFlow.tsx retired (chats→steps re-architecture, F0 decision 4,
+// 2026-07-10): flows no longer spawn as a canvas attachable — the market
+// copies a flow's steps straight onto the board as real, editable steps
+// (see MarketplaceApp's "Add to board"). `attachable.type === 'flow'` can
+// still be reached with a legacy persisted attachable (older saved boards),
+// so it isn't removed from `AttachableType` — it just falls through to the
+// generic chip below instead of a dedicated renderer.
 export function AttachableContent({ attachable, marketItem }: { attachable: AttachableT; marketItem: MarketRole | MarketMod | MarketFlow | null }) {
   if (attachable.type === 'role' && marketItem) return <AttachableRole role={marketItem as MarketRole} />;
   if (attachable.type === 'mod' && marketItem) return <AttachableMod mod={marketItem as MarketMod} />;
-  if (attachable.type === 'flow' && marketItem) return <AttachableFlow flow={marketItem as MarketFlow} />;
 
   const meta = TYPE_META[attachable.type];
   return (

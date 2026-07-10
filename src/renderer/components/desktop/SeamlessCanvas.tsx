@@ -25,7 +25,6 @@ import { MentalGraphCanvas } from './mental/MentalGraphCanvas';
 import { Dock } from './Dock';
 import { TutorialEngine } from './tutorial/TutorialEngine';
 import { MarketplaceApp } from '@/renderer/components/atoms/apps/MarketplaceApp';
-import { AgenticChatApp } from '@/renderer/components/atoms/apps/AgenticChatApp';
 import { WindowContextPlugin } from '@/renderer/components/atoms/plugins/WindowContextPlugin';
 import { FileExplorerAppp } from '@/renderer/components/atoms/apps/FileExplorerAppp';
 import { FileViewerApp } from '@/renderer/components/atoms/apps/FileViewerApp';
@@ -84,6 +83,10 @@ export function SeamlessCanvas() {
   const mentalMode = useDesktopStore(s => s.mentalMode);
   const addMentalNode = useDesktopStore(s => s.addMentalNode);
   const setMentalEditingNodeId = useDesktopStore(s => s.setMentalEditingNodeId);
+  const addStepNode = useDesktopStore(s => s.addStepNode);
+  const setSelectedMentalNodeIds = useDesktopStore(s => s.setSelectedMentalNodeIds);
+  const updateSettings = useDesktopStore(s => s.updateSettings);
+  const setPendingStepFocusId = useDesktopStore(s => s.setPendingStepFocusId);
 
   // Detect if any window is maximized — blocks pan/zoom/selection
   const hasMaximizedWindow = windows.some(w => w.state === 'maximized');
@@ -325,12 +328,26 @@ export function SeamlessCanvas() {
     }
   }, [selectRect, setSelectedWindowIds, mentalDrawRect]);
 
-  // Double-click on empty canvas in shapes mode creates a mental node at the click position.
+  // Double-click on empty canvas.
   // Handled here (not in MentalGraphCanvas) because the React Flow root div has
   // pointer-events:auto by default and intercepts the event, so we rely on bubbling
   // up to this root container where we own the full canvas interaction.
+  //
+  // Two behaviors, gated on `mentalMode` (chats→steps re-architecture, F0
+  // decision 1, 2026-07-10):
+  // - `mentalMode !== 'off'` (actively authoring shapes): UNCHANGED — creates
+  //   a mental (shape) node, exactly as before this task.
+  // - `mentalMode === 'off'` (the default/read-only mode — previously a
+  //   no-op here): NEW — the canonical "mono-step" gesture. Creates a step
+  //   node centered on the click point, selects it, and force-opens the
+  //   Inspector (mirrors StepNode.tsx's own "Inspect step" context-menu
+  //   action) so it's immediately visible and ready to configure/launch via
+  //   the existing per-step run. `setPendingStepFocusId` carries the "and
+  //   please focus my input" signal forward for whichever component ends up
+  //   owning the step's prompt textarea (Task H2, ola B1 — no such input
+  //   exists on the canvas yet as of this task; see that field's doc
+  //   comment in desktop-store.ts for the full consumer contract).
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-    if (mentalMode === 'off') return;
     const target = e.target as HTMLElement;
     if (
       target.closest('.desktop-window') ||
@@ -344,6 +361,18 @@ export function SeamlessCanvas() {
     const { canvasPan: pan, canvasZoom: zoom } = useDesktopStore.getState();
     const flowX = (e.clientX - rect.left - pan.x) / zoom;
     const flowY = (e.clientY - rect.top  - pan.y) / zoom;
+
+    if (mentalMode === 'off') {
+      // Center the new step (300×190, matches DEFAULT_STEP_WIDTH/HEIGHT in
+      // desktop-store.ts — same 150/95 half-offset Dock.tsx's 'new-step'
+      // dock action already uses) on the double-click point.
+      const stepId = addStepNode({ position: { x: flowX - 150, y: flowY - 95 } });
+      setSelectedMentalNodeIds([stepId]);
+      updateSettings({ showInspector: true });
+      setPendingStepFocusId(stepId);
+      return;
+    }
+
     const nodeId = addMentalNode({
       position: { x: flowX, y: flowY },
       width: 220,
@@ -353,7 +382,7 @@ export function SeamlessCanvas() {
       shape: 'square',
     });
     setMentalEditingNodeId(nodeId);
-  }, [mentalMode, addMentalNode, setMentalEditingNodeId]);
+  }, [mentalMode, addMentalNode, setMentalEditingNodeId, addStepNode, setSelectedMentalNodeIds, updateSettings, setPendingStepFocusId]);
 
   // Prevent default middle-click scroll
   const handleAuxClick = useCallback((e: React.MouseEvent) => {
@@ -380,7 +409,20 @@ export function SeamlessCanvas() {
 
     switch (action) {
       case 'new-chat': {
-        store.setShowProjectPicker(true, { x: cx, y: cy });
+        // chats→steps re-architecture (F0 decision 2, 2026-07-10): "New
+        // Step" (label updated in CanvasContextMenu.tsx; the `action`
+        // literal stays 'new-chat' — see that file's comment) no longer
+        // opens a chat window — chat is not a window surface anymore, and
+        // the one surviving chat (Auto-Chat) is a position-independent
+        // fixed HUD panel, not something this *spatially*-anchored menu can
+        // meaningfully spawn at (cx, cy) the way its sibling actions here
+        // do. Replaced with the canonical mono-step gesture — the same
+        // primitive handleDoubleClick below uses for double-click-on-empty-
+        // canvas — anchored at the right-click point instead.
+        const stepId = store.addStepNode({ position: { x: cx - 150, y: cy - 95 } });
+        store.setSelectedMentalNodeIds([stepId]);
+        store.updateSettings({ showInspector: true });
+        store.setPendingStepFocusId(stepId);
         break;
       }
       case 'file-explorer': {
@@ -468,7 +510,13 @@ export function SeamlessCanvas() {
 
   // Helper: render the correct app component inside a window
   const renderWindowContent = (win: typeof windows[number]) => {
-    if (win.type === 'chat' && win.sessionId) return <AgenticChatApp windowId={win.id} sessionId={win.sessionId} />;
+    // 'chat' branch retired alongside DesktopWindow['type'] (chats→steps
+    // re-architecture, F0 decision 2, 2026-07-10) — no window can have this
+    // type anymore (desktop-store's v19 migration tombstones any legacy
+    // persisted 'chat' window before it ever reaches this switch), so this
+    // render path is unreachable. This orphans AgenticChatApp (no remaining
+    // call site imports it anywhere in the tree) — left for C2's dead-code
+    // sweep to delete the component itself, per this task's territory.
     if (win.type === 'plugin' && win.pluginId) return <WindowContextPlugin pluginId={win.pluginId} />;
     if (win.type === 'file-explorer') return <FileExplorerAppp windowId={win.id} />;
     if (win.type === 'file-viewer' && win.filePath) return <FileViewerApp windowId={win.id} filePath={win.filePath} />;

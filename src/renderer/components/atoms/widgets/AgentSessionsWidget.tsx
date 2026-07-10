@@ -55,8 +55,7 @@ export function AgentSessionsWidget() {
   const projectPath = useFluxorStore(s => s.projectPath);
   const updateSessionStatus = useFluxorStore(s => s.updateSessionStatus);
   const setSelectedSessionId = useFluxorStore(s => s.setSelectedSessionId);
-  const addWindow = useDesktopStore(s => s.addWindow);
-  const focusWindow = useDesktopStore(s => s.focusWindow);
+  const addToast = useFluxorStore(s => s.addToast);
   const windows = useDesktopStore(s => s.windows);
 
   const [finishedIds, setFinishedIds] = useState<Set<string>>(new Set());
@@ -101,14 +100,22 @@ export function AgentSessionsWidget() {
     };
   }, [contextMenu]);
 
+  // chats→steps re-architecture (F0 decision 2, 2026-07-10): 'chat' windows
+  // are retired — no window type can ever bind to a session id again (see
+  // DesktopWindow['type']'s doc comment in types/desktop.ts), so the old
+  // "focus its window, or open a fresh one" behavior has no destination left
+  // to open/focus. `setSelectedSessionId` is preserved (harmless — no
+  // current UI reads it, see this task's final report) but the click no
+  // longer silently no-ops: it surfaces what happened via the existing
+  // toast system. OPEN QUESTION flagged for the orchestrator, not guessed:
+  // what should activating a session do now — nothing once agent-manager
+  // itself is fully retired (F0 decision 3, pending C2's dead-code sweep),
+  // or does this widget need a new destination (e.g. a future per-run
+  // evidence surface)? Left unresolved rather than invented.
   const handleActivate = useCallback((sessionId: string) => {
     setSelectedSessionId(sessionId);
-    const existing = windows.find(w => w.sessionId === sessionId);
-    if (existing) { focusWindow(existing.id); return; }
-    const session = sessions.find(s => s.id === sessionId);
-    const title = session?.description.trim() || (session ? `Session #${session.number}` : 'Chat');
-    addWindow('chat', { title, sessionId });
-  }, [setSelectedSessionId, windows, focusWindow, sessions, addWindow]);
+    addToast('This session ran in the retired chat surface — start new work from the Auto-Chat panel or by double-clicking the canvas.', 'info');
+  }, [setSelectedSessionId, addToast]);
 
   const handleFinish = useCallback(() => {
     if (!contextMenu) return;

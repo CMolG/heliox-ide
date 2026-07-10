@@ -6,7 +6,8 @@
  *    Clicking dock-new-step creates a step node.
  * 2. Widget launcher: widget-launcher exists bottom-right; toggling widgets via it flips
  *    hudWidgets visibility in the store; hud-widget-agent-sessions is visible by default.
- * 3. Text-to-Flow widget: mounts with textarea + "Build flow" button.
+ * 3. Auto-Chat widget (was Text-to-Flow — renamed in place, chats→steps
+ *    re-architecture F0 decision 2): mounts with textarea + "Build flow" button.
  * 4. Window focus z-order: focusWindow() raises the target window's zIndex above others.
  * 5. Mental topLayer toggle: default topLayer='mental'; focusWindow → 'windows';
  *    addStepNode / setSelectedMentalNodeIds → 'mental'.
@@ -83,11 +84,9 @@ async function resetCanvas() {
     // Reset camera
     s.setCanvasPan({ x: 0, y: 0 });
     s.setCanvasZoom(1);
-    // Reset topLayer to its initial value
-    s.setTopLayer('mental');
-    // Reset HUD widgets to defaults (text-to-flow visible, others hidden)
+    // Reset HUD widgets to defaults (auto-chat visible, others hidden)
     s.setHudWidgetVisible('agent-sessions', false);
-    s.setHudWidgetVisible('text-to-flow', true);
+    s.setHudWidgetVisible('auto-chat', true);
     s.setHudWidgetVisible('notifications', false);
   });
   await page.waitForTimeout(150);
@@ -154,14 +153,14 @@ test.describe('Widget launcher', () => {
     await expect(launcher).toBeVisible({ timeout: 5_000 });
   });
 
-  test('text-to-flow HUD widget is visible by default (default visible=true)', async () => {
+  test('auto-chat HUD widget is visible by default (default visible=true)', async () => {
     const visible = await page.evaluate(() => {
       const s = (window as any).__DESKTOP_STORE__.getState();
-      return s.hudWidgets.find((w: any) => w.type === 'text-to-flow')?.visible ?? false;
+      return s.hudWidgets.find((w: any) => w.type === 'auto-chat')?.visible ?? false;
     });
     expect(visible).toBe(true);
     // The layer should render the widget in the DOM
-    await expect(page.locator('[data-testid="hud-widget-text-to-flow"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="hud-widget-auto-chat"]')).toBeVisible({ timeout: 5_000 });
   });
 
   test('agent-sessions and notifications start hidden', async () => {
@@ -176,32 +175,32 @@ test.describe('Widget launcher', () => {
     expect(states.notifications).toBe(false);
   });
 
-  test('toggleHudWidget flips text-to-flow visibility in the store', async () => {
+  test('toggleHudWidget flips auto-chat visibility in the store', async () => {
     // Start hidden
     await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('text-to-flow', false)
+      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('auto-chat', false)
     );
     await page.waitForTimeout(100);
 
     // Toggle on
     await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().toggleHudWidget('text-to-flow')
+      (window as any).__DESKTOP_STORE__.getState().toggleHudWidget('auto-chat')
     );
     await page.waitForTimeout(200);
 
     const visibleAfterOn = await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().hudWidgets.find((w: any) => w.type === 'text-to-flow')?.visible
+      (window as any).__DESKTOP_STORE__.getState().hudWidgets.find((w: any) => w.type === 'auto-chat')?.visible
     );
     expect(visibleAfterOn).toBe(true);
 
     // Toggle off
     await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().toggleHudWidget('text-to-flow')
+      (window as any).__DESKTOP_STORE__.getState().toggleHudWidget('auto-chat')
     );
     await page.waitForTimeout(200);
 
     const visibleAfterOff = await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().hudWidgets.find((w: any) => w.type === 'text-to-flow')?.visible
+      (window as any).__DESKTOP_STORE__.getState().hudWidgets.find((w: any) => w.type === 'auto-chat')?.visible
     );
     expect(visibleAfterOff).toBe(false);
   });
@@ -221,17 +220,17 @@ test.describe('Widget launcher', () => {
     );
   });
 
-  test('setHudWidgetVisible(true) renders hud-widget-text-to-flow in hud-widget-layer', async () => {
+  test('setHudWidgetVisible(true) renders hud-widget-auto-chat in hud-widget-layer', async () => {
     await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('text-to-flow', true)
+      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('auto-chat', true)
     );
     await page.waitForTimeout(300);
 
-    await expect(page.locator('[data-testid="hud-widget-text-to-flow"]')).toBeVisible({ timeout: 3_000 });
+    await expect(page.locator('[data-testid="hud-widget-auto-chat"]')).toBeVisible({ timeout: 3_000 });
 
     // Clean up
     await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('text-to-flow', false)
+      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('auto-chat', false)
     );
   });
 
@@ -261,45 +260,45 @@ test.describe('Widget launcher', () => {
   });
 });
 
-// ─── 3. Text-to-Flow widget ───────────────────────────────────────
+// ─── 3. Auto-Chat widget (was Text-to-Flow — renamed in place) ────
 
-test.describe('Text to Flow widget', () => {
+test.describe('Auto-Chat widget', () => {
   test.beforeEach(async () => {
-    // Make the text-to-flow widget visible
+    // Make the auto-chat widget visible
     await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('text-to-flow', true)
+      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('auto-chat', true)
     );
     await page.waitForTimeout(300);
   });
 
   test.afterEach(async () => {
     await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('text-to-flow', false)
+      (window as any).__DESKTOP_STORE__.getState().setHudWidgetVisible('auto-chat', false)
     );
   });
 
-  test('text-to-flow widget mounts with the data-testid="text-to-flow" container', async () => {
-    await expect(page.locator('[data-testid="hud-widget-text-to-flow"]')).toBeVisible({ timeout: 3_000 });
-    // The TextToFlowWidget form has data-testid="text-to-flow"
-    await expect(page.locator('[data-testid="text-to-flow"]')).toBeVisible({ timeout: 3_000 });
+  test('auto-chat widget mounts with the data-testid="auto-chat" container', async () => {
+    await expect(page.locator('[data-testid="hud-widget-auto-chat"]')).toBeVisible({ timeout: 3_000 });
+    // The TextToFlowWidget form has data-testid="auto-chat"
+    await expect(page.locator('[data-testid="auto-chat"]')).toBeVisible({ timeout: 3_000 });
   });
 
-  test('text-to-flow widget renders a textarea', async () => {
-    await page.locator('[data-testid="text-to-flow"]').waitFor({ state: 'visible', timeout: 3_000 });
-    const textarea = page.locator('[data-testid="text-to-flow"] textarea');
+  test('auto-chat widget renders a textarea', async () => {
+    await page.locator('[data-testid="auto-chat"]').waitFor({ state: 'visible', timeout: 3_000 });
+    const textarea = page.locator('[data-testid="auto-chat"] textarea');
     await expect(textarea).toBeVisible({ timeout: 3_000 });
   });
 
-  test('text-to-flow widget renders a "Build flow" button', async () => {
-    await page.locator('[data-testid="text-to-flow"]').waitFor({ state: 'visible', timeout: 3_000 });
+  test('auto-chat widget renders a "Build flow" button', async () => {
+    await page.locator('[data-testid="auto-chat"]').waitFor({ state: 'visible', timeout: 3_000 });
     const btn = page.locator('[aria-label="Build flow from description"]');
     await expect(btn).toBeVisible({ timeout: 3_000 });
     await expect(btn).toContainText('Build flow');
   });
 
   test('typing in the textarea enables the Build flow button', async () => {
-    await page.locator('[data-testid="text-to-flow"]').waitFor({ state: 'visible', timeout: 3_000 });
-    const textarea = page.locator('[data-testid="text-to-flow"] textarea');
+    await page.locator('[data-testid="auto-chat"]').waitFor({ state: 'visible', timeout: 3_000 });
+    const textarea = page.locator('[data-testid="auto-chat"] textarea');
     const btn = page.locator('[aria-label="Build flow from description"]');
 
     // Initially disabled (empty input)
@@ -311,6 +310,56 @@ test.describe('Text to Flow widget', () => {
 
     // Should now be enabled
     await expect(btn).not.toBeDisabled();
+  });
+
+  // Actually submitting (assemblePipeline) requires a full AI/IPC round trip
+  // not available in this E2E environment (see this file's header comment,
+  // item 6) — these seed `autoChatHistory` directly via the store instead,
+  // covering the history list's render/collapse/clear affordances (the
+  // genuinely new surface this panel adds over the widget it replaced).
+  test('history list is absent when there is no history yet', async () => {
+    await expect(page.locator('[data-testid="auto-chat-history"]')).not.toBeVisible();
+  });
+
+  test('seeding autoChatHistory renders an entry with its intent text', async () => {
+    await page.evaluate(() => {
+      (window as any).__DESKTOP_STORE__.getState().addAutoChatHistoryEntry({
+        intent: 'Scrape a site and summarise each page',
+        result: { kind: 'success', frameId: 'frame-e2e-test', stepCount: 3 },
+      });
+    });
+    await page.waitForTimeout(150);
+
+    await expect(page.locator('[data-testid="auto-chat-history"]')).toBeVisible({ timeout: 2_000 });
+    const item = page.locator('[data-testid^="auto-chat-history-item-"]').first();
+    await expect(item).toBeVisible();
+    await expect(item).toContainText('Scrape a site and summarise each page');
+    await expect(item).toContainText('3 steps');
+
+    // Clean up (this store slice isn't persisted, but keep the suite isolated)
+    await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().clearAutoChatHistory());
+  });
+
+  test('history toggle collapses and re-expands the list', async () => {
+    await page.evaluate(() => {
+      (window as any).__DESKTOP_STORE__.getState().addAutoChatHistoryEntry({
+        intent: 'Call a REST API and validate the schema',
+        result: { kind: 'error', message: 'Meta-Agent assembly failed.' },
+      });
+    });
+    await page.waitForTimeout(150);
+
+    const toggle = page.locator('[data-testid="auto-chat-history-toggle"]');
+    const list = page.locator('#auto-chat-history-list');
+    await expect(list).toBeVisible({ timeout: 2_000 });
+
+    await toggle.click();
+    await expect(list).not.toBeVisible();
+
+    await toggle.click();
+    await expect(list).toBeVisible();
+
+    await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().clearAutoChatHistory());
   });
 });
 
@@ -325,8 +374,8 @@ test.describe('Window focus z-order', () => {
       hs.setProjectPath('/tmp/test-zorder');
       const sA = hs.addSession();
       const sB = hs.addSession();
-      const winA = ds.addWindow('chat', { sessionId: sA, title: 'WinA', position: { x: 80, y: 80 } });
-      const winB = ds.addWindow('chat', { sessionId: sB, title: 'WinB', position: { x: 200, y: 200 } });
+      const winA = ds.addWindow('file-explorer', { sessionId: sA, title: 'WinA', position: { x: 80, y: 80 } });
+      const winB = ds.addWindow('file-explorer', { sessionId: sB, title: 'WinB', position: { x: 200, y: 200 } });
       return { winA, winB };
     });
 
@@ -357,89 +406,5 @@ test.describe('Window focus z-order', () => {
     }, { winA, winB });
 
     expect(zAfterFocusB.zB).toBeGreaterThan(zAfterFocusB.zA);
-  });
-});
-
-// ─── 5. Mental topLayer toggle ───────────────────────────────────
-
-test.describe('Mental topLayer toggle', () => {
-  test('default topLayer is "mental"', async () => {
-    // After canvas reset (no windows, no selections), the initial value is 'mental'.
-    const layer = await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().topLayer
-    );
-    expect(layer).toBe('mental');
-  });
-
-  test('focusWindow switches topLayer to "windows"', async () => {
-    const winId = await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__.getState();
-      const hs = (window as any).__FLUXOR_STORE__.getState();
-      hs.setProjectPath('/tmp/test-toplayer');
-      const sid = hs.addSession();
-      return ds.addWindow('chat', { sessionId: sid, title: 'TopLayer-Win', position: { x: 100, y: 100 } });
-    });
-    await page.waitForTimeout(100);
-
-    await page.evaluate((id) => (window as any).__DESKTOP_STORE__.getState().focusWindow(id), winId);
-    await page.waitForTimeout(100);
-
-    const layer = await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().topLayer);
-    expect(layer).toBe('windows');
-  });
-
-  test('addStepNode switches topLayer back to "mental"', async () => {
-    // Force topLayer to 'windows' directly (avoids window-creation timing issues)
-    await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().setTopLayer('windows'));
-    await page.waitForTimeout(100);
-
-    const beforeLayer = await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().topLayer);
-    expect(beforeLayer).toBe('windows');
-
-    // Now add a step node — should flip topLayer back to 'mental'
-    await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().addStepNode());
-    await page.waitForTimeout(100);
-
-    const afterLayer = await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().topLayer);
-    expect(afterLayer).toBe('mental');
-  });
-
-  test('setSelectedMentalNodeIds switches topLayer to "mental"', async () => {
-    // Seed a mental node first, then use setTopLayer to force 'windows',
-    // then call setSelectedMentalNodeIds — that should flip it back to 'mental'.
-    // We seed the node first to avoid addMentalNode changing topLayer before we can test.
-    const nodeId = await page.evaluate(() =>
-      (window as any).__DESKTOP_STORE__.getState().addMentalNode({
-        position: { x: 200, y: 200 }, width: 200, height: 100, text: 'X',
-        color: '#BFDBFE', shape: 'square',
-      })
-    );
-
-    // Force topLayer to 'windows' directly
-    await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().setTopLayer('windows'));
-    await page.waitForTimeout(100);
-
-    const beforeLayer = await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().topLayer);
-    expect(beforeLayer).toBe('windows');
-
-    // Selecting the node should raise topLayer to 'mental'
-    await page.evaluate((id) => (window as any).__DESKTOP_STORE__.getState().setSelectedMentalNodeIds([id]), nodeId);
-    await page.waitForTimeout(100);
-
-    const afterLayer = await page.evaluate(() => (window as any).__DESKTOP_STORE__.getState().topLayer);
-    expect(afterLayer).toBe('mental');
-  });
-});
-
-// ─── 6. Flow attachment right-click (skipped) ────────────────────
-
-test.describe('Flow attachment right-click context menu', () => {
-  test.skip('right-clicking a flow ribbon on a chat window shows flow-context-menu', async () => {
-    // SKIPPED: Attaching a flow to a chat window requires a full AI IPC round-trip
-    // via assemblePipeline (main-process meta-agent), which is not available in the
-    // isolated E2E environment without a real model. The store-side state for
-    // flow attachments (attachFlow, detachFlow) is covered by unit tests.
-    // This test can be enabled once an E2E-safe mock for fluxorAPI.assemblePipeline
-    // is wired into the test environment.
   });
 });

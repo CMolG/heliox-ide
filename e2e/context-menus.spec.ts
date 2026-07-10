@@ -265,7 +265,7 @@ test.describe('NodeTree window context menu', () => {
     const windowId = await page.evaluate(() => {
       const s = (window as any).__DESKTOP_STORE__?.getState();
       return s?.addWindow({
-        type: 'chat',
+        type: 'file-explorer',
         title: 'Test Chat',
         position: { x: 100, y: 100 },
         size: { width: 400, height: 300 },
@@ -295,7 +295,7 @@ test.describe('NodeTree window context menu', () => {
   test('rename action shows inline input and updates window title', async () => {
     const windowId = await page.evaluate(() => {
       return (window as any).__DESKTOP_STORE__?.getState()?.addWindow({
-        type: 'chat',
+        type: 'file-explorer',
         title: 'Old Title',
         position: { x: 100, y: 100 },
         size: { width: 400, height: 300 },
@@ -332,7 +332,7 @@ test.describe('NodeTree window context menu', () => {
   test('delete action removes the window from the store', async () => {
     const windowId = await page.evaluate(() => {
       return (window as any).__DESKTOP_STORE__?.getState()?.addWindow({
-        type: 'chat',
+        type: 'file-explorer',
         title: 'To Delete',
         position: { x: 100, y: 100 },
         size: { width: 400, height: 300 },

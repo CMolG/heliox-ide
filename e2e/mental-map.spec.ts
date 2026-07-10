@@ -307,6 +307,65 @@ test.describe('Mental map node creation', () => {
     expect(afterCount).toBeGreaterThan(beforeCount);
   });
 
+  // ─── Mono-step gesture (chats→steps re-architecture, F0 decision 1) ──
+  //
+  // Sibling of the test above: same double-click-on-empty-canvas gesture,
+  // but gated on the OPPOSITE mentalMode. 'off' (the default/read-only mode
+  // — previously a no-op here) now creates a mono-step instead of a mental
+  // shape node; 'square'/authoring mode (tested above) is UNCHANGED. This is
+  // the canonical "abrir para operar sobre código" gesture — see
+  // SeamlessCanvas.tsx's handleDoubleClick.
+  test('double-clicking on empty canvas in the default (off) mode creates a mono-step, selected and ready in the Inspector — fast', async () => {
+    await page.evaluate(() => {
+      const ds = (window as any).__DESKTOP_STORE__?.getState();
+      ds?.setMentalMode('off');
+      ds?.updateSettings({ showInspector: false }); // start collapsed so we can prove the gesture force-opens it
+    });
+    await page.waitForTimeout(150);
+
+    const beforeStepCount = await page.evaluate(() =>
+      (window as any).__DESKTOP_STORE__?.getState()?.mentalNodes?.filter((n: any) => n.type === 'step').length ?? 0,
+    );
+
+    const canvas = page.locator('[data-testid="mental-graph-canvas"]');
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('mental-graph-canvas not found');
+
+    // Time-to-ready-to-type: the DX requirement (backlog risk: mono-step
+    // must feel at least as fast as opening a chat used to) is measured from
+    // the gesture to the step existing, selected, and the Inspector open —
+    // the full time-to-first-TOKEN needs a launched run (prompt input:
+    // Task H2; streamed evidence: Task T1), not yet wired as of this task.
+    const startedAt = Date.now();
+    await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+
+    const result = await page.evaluate(() => {
+      const ds = (window as any).__DESKTOP_STORE__?.getState();
+      const steps = ds?.mentalNodes?.filter((n: any) => n.type === 'step') ?? [];
+      return {
+        stepCount: steps.length,
+        newestId: steps[steps.length - 1]?.id,
+        selectedIds: ds?.selectedMentalNodeIds ?? [],
+        showInspector: ds?.settings?.showInspector,
+        pendingStepFocusId: ds?.pendingStepFocusId,
+      };
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(result.stepCount).toBe(beforeStepCount + 1);
+    expect(result.selectedIds).toEqual([result.newestId]);
+    expect(result.showInspector).toBe(true);
+    expect(result.pendingStepFocusId).toBe(result.newestId);
+    // Generous budget for CI jitter — the point is "near-instant", not a
+    // strict perf gate; still catches an accidental async round-trip.
+    expect(elapsedMs).toBeLessThan(1_500);
+
+    // Confirms the DOM node is really a step (not a mental card) and the
+    // Inspector panel is visible, not just the store flag.
+    await expect(page.locator(`[data-testid="step-node-${result.newestId}"]`)).toBeVisible({ timeout: 2_000 });
+    await expect(page.locator('[data-testid="inspector-step"]')).toBeVisible({ timeout: 2_000 });
+  });
+
   test('rectangle-draw on canvas creates a node in mentalNodes (not attachables)', async () => {
     await page.evaluate(() => {
       (window as any).__DESKTOP_STORE__?.getState()?.setMentalMode('square');

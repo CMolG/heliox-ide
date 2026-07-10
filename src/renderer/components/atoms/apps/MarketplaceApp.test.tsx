@@ -9,10 +9,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
-import { MarketplaceApp } from './MarketplaceApp';
+import { MarketplaceApp, buildFlowAssembly } from './MarketplaceApp';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import type { Plugin } from '@/types/desktop';
-import type { MarketInventory } from '@/types/market';
+import type { MarketFlow, MarketInventory } from '@/types/market';
 
 // ─── Fixtures ───────────────────────────────────────────────────────
 
@@ -46,6 +46,18 @@ const FLOW_PLUGIN: Plugin = {
   installed: true,
 };
 
+// A flow with no authored `steps[]` — exercises the mono-step fallback path
+// (e.g. brainstorm-cards in the real market/inventory.json).
+const FLOW_PLUGIN_NO_STEPS: Plugin = {
+  id: 'flow-idea-crystallizer',
+  name: 'Idea Crystallizer',
+  description: 'Turns a rough idea into structured requirements.',
+  iconName: 'MdLightbulb',
+  category: 'flows',
+  author: 'Fluxor Market',
+  installed: true,
+};
+
 const INVENTORY: MarketInventory = {
   flows: [
     {
@@ -57,6 +69,26 @@ const INVENTORY: MarketInventory = {
       iconLibrary: 'react-icons/md',
       description: 'An autonomous, self-correcting execution loop for large refactors.',
       tags: ['autonomous', 'refactor'],
+      steps: [
+        { id: 'scan-target', prompt: 'Scan the target files for the refactor.' },
+        {
+          id: 'apply-refactor',
+          prompt: 'Apply the refactor across all affected files.',
+          roleId: 'frontend-engineer',
+          modIds: ['strict-linting'],
+        },
+      ],
+    },
+    {
+      name: 'idea-crystallizer',
+      betterOn: 'opencode/claude-sonnet-4-6',
+      recommendedComplexity: 'low',
+      cost: 'low',
+      icon: 'MdLightbulb',
+      iconLibrary: 'react-icons/md',
+      description: 'Turns a rough idea into structured requirements.',
+      tags: ['discovery'],
+      // No `steps` — this flow should fall back to a single mono-step.
     },
   ],
   roles: [
@@ -93,6 +125,7 @@ function seedStore() {
       ROLE_PLUGIN,
       MOD_PLUGIN,
       FLOW_PLUGIN,
+      FLOW_PLUGIN_NO_STEPS,
     ],
     marketInventory: INVENTORY,
   });
@@ -264,6 +297,142 @@ describe('MarketplaceApp — Deploy deploys, Back/X do not', () => {
     rerender(<MarketplaceApp />);
     expect(screen.queryByTestId('plugin-sheet')).not.toBeInTheDocument();
     expect(screen.getByTestId('marketplace-search')).toBeInTheDocument();
+  });
+});
+
+// ─── Flows copy to the board as real steps (F0 decision 4) ──────────────
+//
+// A market flow is no longer an attachable spawned onto the canvas — its
+// sheet CTA builds a PipelineAssembly straight from the flow's authored
+// steps[] and materializes it via `insertPipelineAssembly` (the SAME seam
+// the auto-chat panel uses), landing real, independently-editable step nodes
+// on the board. deployPlugin is NOT called for a flow.
+
+describe('MarketplaceApp — flows materialize onto the board', () => {
+  function stepNodes() {
+    // Loosely typed like desktop-store.test.ts — the step node's `data`
+    // carries prompt/roles/mods (see insertPipelineAssembly).
+    return useDesktopStore.getState().mentalNodes.filter((n: any) => n.type === 'step') as any[];
+  }
+  function frameNodes() {
+    return useDesktopStore.getState().mentalNodes.filter((n: any) => n.type === 'frame');
+  }
+
+  it('labels the flow sheet CTA "Add to board", not "Deploy"', () => {
+    seedStore();
+    render(<MarketplaceApp />);
+    fireEvent.click(screen.getByTestId(`plugin-card-${FLOW_PLUGIN.id}`));
+
+    expect(screen.getByRole('button', { name: /add to board/i })).toBeInTheDocument();
+    // The flow CTA is NOT the generic "Deploy" — that word only survives for
+    // non-flow categories (roles/mods/steps/tools).
+    expect(screen.queryByRole('button', { name: 'Deploy' })).not.toBeInTheDocument();
+  });
+
+  it('"Add to board" inserts a frame + one step per authored flow step — not an attachable — and closes the marketplace', () => {
+    seedStore();
+    render(<MarketplaceApp />);
+    fireEvent.click(screen.getByTestId(`plugin-card-${FLOW_PLUGIN.id}`));
+    fireEvent.click(screen.getByTestId(`plugin-deploy-${FLOW_PLUGIN.id}`));
+
+    expect(frameNodes()).toHaveLength(1);
+    expect(stepNodes()).toHaveLength(2); // karpathy-loop fixture has 2 authored steps
+
+    // Real steps on the board, NOT a canvas attachable (the retired form).
+    expect(useDesktopStore.getState().attachables).toHaveLength(0);
+    expect(useDesktopStore.getState().showMarketplace).toBe(false);
+  });
+
+  it('carries the flow\'s authored prompts, seed role and seed mods onto the steps', () => {
+    seedStore();
+    render(<MarketplaceApp />);
+    fireEvent.click(screen.getByTestId(`plugin-card-${FLOW_PLUGIN.id}`));
+    fireEvent.click(screen.getByTestId(`plugin-deploy-${FLOW_PLUGIN.id}`));
+
+    const prompts = stepNodes().map((s) => s.data.prompt);
+    expect(prompts).toContain('Scan the target files for the refactor.');
+    expect(prompts).toContain('Apply the refactor across all affected files.');
+
+    const applyStep = stepNodes().find((s) => s.data.prompt === 'Apply the refactor across all affected files.');
+    expect(applyStep.data.roles.map((r: any) => r.name)).toEqual(['frontend-engineer']);
+    expect(applyStep.data.mods.map((m: any) => m.name)).toEqual(['strict-linting']);
+  });
+
+  it('falls back to a single mono-step (description as prompt) for a flow with no authored steps', () => {
+    seedStore();
+    render(<MarketplaceApp />);
+    fireEvent.click(screen.getByTestId(`plugin-card-${FLOW_PLUGIN_NO_STEPS.id}`));
+    fireEvent.click(screen.getByTestId(`plugin-deploy-${FLOW_PLUGIN_NO_STEPS.id}`));
+
+    const steps = stepNodes();
+    expect(steps).toHaveLength(1);
+    expect(steps[0].data.prompt).toBe('Turns a rough idea into structured requirements.');
+    // Still NOT deployed as an attachable.
+    expect(useDesktopStore.getState().attachables).toHaveLength(0);
+  });
+});
+
+// ─── buildFlowAssembly (pure) ───────────────────────────────────────────
+
+describe('buildFlowAssembly', () => {
+  function makeFlow(overrides: Partial<MarketFlow>): MarketFlow {
+    return {
+      name: 'sample-flow',
+      betterOn: 'x',
+      recommendedComplexity: 'low',
+      cost: 'low',
+      icon: 'MdBolt',
+      iconLibrary: 'react-icons/md',
+      description: 'A sample flow.',
+      tags: [],
+      ...overrides,
+    };
+  }
+
+  it('title-cases the flow name into the frame title', () => {
+    expect(buildFlowAssembly(makeFlow({ name: 'auto-feature-engineer' })).frameTitle)
+      .toBe('Auto Feature Engineer');
+  });
+
+  it('maps authored steps to a linear chain (prevStepIds follows array order)', () => {
+    const assembly = buildFlowAssembly(makeFlow({
+      steps: [
+        { id: 'a', prompt: 'A' },
+        { id: 'b', prompt: 'B' },
+        { id: 'c', prompt: 'C' },
+      ],
+    }));
+    expect(assembly.steps.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(assembly.steps[0].prevStepIds).toEqual([]);
+    expect(assembly.steps[1].prevStepIds).toEqual(['a']);
+    expect(assembly.steps[2].prevStepIds).toEqual(['b']);
+  });
+
+  it('preserves an explicit prevStepIds graph and a loopBackTo edge (infinite-loop flow)', () => {
+    const assembly = buildFlowAssembly(makeFlow({
+      cost: 'infinite',
+      steps: [
+        { id: 'profile', prompt: 'P' },
+        { id: 'fix', prompt: 'F', prevStepIds: ['profile'], loopBackTo: { stepId: 'profile', maxIterations: 3 } },
+      ],
+    }));
+    expect(assembly.steps[1].prevStepIds).toEqual(['profile']);
+    expect(assembly.steps[1].loopBackTo).toEqual({ stepId: 'profile', maxIterations: 3 });
+  });
+
+  it('defaults roleId to "" and modIds to [] when a step omits them', () => {
+    const assembly = buildFlowAssembly(makeFlow({ steps: [{ id: 'only', prompt: 'Do it' }] }));
+    expect(assembly.steps[0].roleId).toBe('');
+    expect(assembly.steps[0].modIds).toEqual([]);
+    expect(assembly.steps[0].loopBackTo).toBeUndefined();
+  });
+
+  it('falls back to a single mono-step carrying the description for a flow with no steps', () => {
+    const assembly = buildFlowAssembly(makeFlow({ description: 'Turns an idea into cards.' }));
+    expect(assembly.steps).toHaveLength(1);
+    expect(assembly.steps[0].prompt).toBe('Turns an idea into cards.');
+    expect(assembly.steps[0].prevStepIds).toEqual([]);
+    expect(assembly.missingCapabilitiesRequested).toEqual([]);
   });
 });
 

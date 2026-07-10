@@ -19,9 +19,16 @@
 import React, { useCallback } from 'react';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useFluxorStore } from '@/renderer/store';
+import { useHarnessStore } from '@/renderer/store/harness-store';
+import { calculateSafeInsertionPoint } from '@/renderer/store/spatial-engine';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { PRIORITY_LABELS } from './BacklogKanbanWidget';
 import type { BacklogCard } from '@/types/market';
+
+// Mirrors DEFAULT_STEP_WIDTH/HEIGHT in desktop-store.ts — see
+// BacklogKanbanWidget.tsx's identical constant for the full rationale.
+const STEP_WIDTH = 300;
+const STEP_HEIGHT = 190;
 
 export function FlowDeckCard({
   card,
@@ -44,21 +51,53 @@ export function FlowDeckCard({
   isSelected?: boolean;
   onSelect?: (filename: string, event: React.MouseEvent) => void;
 }) {
-  const addWindow = useDesktopStore(s => s.addWindow);
-  const connectFlow = useDesktopStore(s => s.connectFlow);
-  const addSession = useFluxorStore(s => s.addSession);
+  const marketInventory = useDesktopStore(s => s.marketInventory);
+  const projectPath = useFluxorStore(s => s.projectPath);
   const setBacklogCards = useDesktopStore(s => s.setBacklogCards);
   const backlogCards = useDesktopStore(s => s.backlogCards);
 
-  const launchFlow = useCallback((flowName: string) => {
-    const sessionId = addSession();
-    const windowId = addWindow('chat', {
+  // chats→steps re-architecture (F0 decision 2, 2026-07-10, Task L): used to
+  // open a chat window (`addWindow('chat', …)`) with the flow merely
+  // attached (`connectFlow`) as a ribbon — no message was ever auto-sent,
+  // the user had to type one. Now materializes a real step onto the board,
+  // pre-filled with the flow's own prompt (+ this card's title/body as
+  // task context, from already-in-memory `card` data — no extra file read
+  // needed) and runs it immediately through the harness-engine, matching
+  // this button's Play-icon affordance (see the other 3 re-wired launchers
+  // for the identical pattern — BacklogKanbanWidget.executeCard is the
+  // canonical one).
+  const launchFlow = useCallback(async (flowName: string) => {
+    if (!window.fluxorAPI || !projectPath) return;
+
+    const flowPrompt = await window.fluxorAPI.readMarketPrompt(projectPath, 'flows', flowName);
+    const flowAbsPath = `${projectPath}/market/flows/${flowName}.md`;
+    const wrapperPrompt = `Read the @${flowAbsPath} and begin the task "${card.title}".`;
+    const instruction = [
+      `--- ${flowAbsPath} ---`,
+      flowPrompt ?? '(flow prompt unavailable)',
+      `--- end ${flowAbsPath} ---`,
+      '',
+      `--- Task: ${card.title} ---`,
+      card.body || '(no description)',
+      `--- end task ---`,
+      '',
+      wrapperPrompt,
+    ].join('\n');
+
+    const dStore = useDesktopStore.getState();
+    const position = calculateSafeInsertionPoint(dStore.mentalNodes, STEP_WIDTH, STEP_HEIGHT);
+    const stepId = dStore.addStepNode({
+      position,
       title: `${flowName} → ${card.targetModule}`,
-      iconName: 'Zap',
-      sessionId,
+      prompt: instruction,
     });
-    connectFlow(windowId, flowName);
-  }, [card, addSession, addWindow, connectFlow]);
+    const flowMeta = marketInventory?.flows.find(f => f.name === flowName);
+    if (flowMeta?.betterOn) dStore.updateStepData(stepId, { model: flowMeta.betterOn });
+    dStore.setSelectedMentalNodeIds([stepId]);
+    dStore.updateSettings({ showInspector: true });
+
+    await useHarnessStore.getState().runStep(stepId);
+  }, [card, projectPath, marketInventory]);
 
   const deleteCard = useCallback(() => {
     setBacklogCards(backlogCards.filter(c => c.filename !== card.filename));

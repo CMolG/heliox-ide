@@ -33,10 +33,18 @@ import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useFluxorStore } from '../../../store';
+import { useHarnessStore } from '../../../store/harness-store';
+import { calculateSafeInsertionPoint } from '../../../store/spatial-engine';
 import { LucideIcon } from '../../desktop/LucideIcon';
 import { KanbanColumn } from './KanbanColumn';
 import type { BacklogCard, BacklogStatus, BacklogPriority } from '@/types/market';
-import type { ChatMessage } from '@/types';
+
+// Mirrors DEFAULT_STEP_WIDTH/HEIGHT in desktop-store.ts (module-private,
+// not exported) — same 300×190 mono-step footprint SeamlessCanvas.tsx's
+// double-click gesture and Dock.tsx's 'new-step' action both use, so cards
+// executed from here materialize at the same size as any other step.
+const STEP_WIDTH = 300;
+const STEP_HEIGHT = 190;
 
 const STATUS_COLUMNS: { key: BacklogStatus; label: string; icon: string; color: string }[] = [
   { key: 'pending', label: 'Backlog', icon: 'Clock', color: '#00e676' },
@@ -426,44 +434,36 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
       wrapperPrompt,
     ].join('\n');
 
-    const store = useFluxorStore.getState();
+    // chats→steps re-architecture (F0 decision 2, 2026-07-10, Task L): this
+    // used to open a chat window (`addWindow('chat', …)` + `connectFlow`)
+    // and drive it via the old agent-manager `runAgent` IPC. It now
+    // materializes a real step onto the board and runs it through the
+    // harness-engine instead — no chat window, no code edits outside a
+    // launched step. `card.targetAgent` names a flow we already have in
+    // hand (`flowMeta`/`flowPrompt` above), so this builds the step
+    // directly rather than round-tripping through `assemblePipeline` (which
+    // would re-generate an already-known flow via an LLM call).
+    // market/inventory.json's `steps` field for every flow today is a prose
+    // description list, not a structured `PipelineAssemblyStep[]` — so this
+    // always takes the documented fallback (mono-step carrying the flow's
+    // full prompt) rather than a multi-step `insertPipelineAssembly` frame.
+    // NOTE (known gap, not fixable in this territory): the harness-engine
+    // has no per-step/per-flow cwd override, so a card belonging to a
+    // DIFFERENT child project than the one currently open (the
+    // `selectedBacklog.projectPath !== projectPath` case the old
+    // `childProjectPath`/`cwd` plumbing handled) now runs against the
+    // top-level opened project instead of its own directory — see this
+    // task's final report.
     const dStore = useDesktopStore.getState();
-    const effectiveCwd = selectedBacklog?.projectPath || projectPath;
-
-    const sessionId = store.addSession();
-    const windowId = dStore.addWindow('chat', {
+    const position = calculateSafeInsertionPoint(dStore.mentalNodes, STEP_WIDTH, STEP_HEIGHT);
+    const stepId = dStore.addStepNode({
+      position,
       title: `${card.targetAgent} → ${card.title}`,
-      iconName: 'Zap',
-      sessionId,
-      childProjectPath: selectedBacklog?.projectPath !== projectPath ? selectedBacklog?.projectPath : undefined,
+      prompt: instruction,
     });
-    dStore.connectFlow(windowId, card.targetAgent);
-
-    const model = flowMeta.betterOn || 'opencode/claude-sonnet-4-6';
-    store.setSessionModel(sessionId, model);
-
-    const createdSession = useFluxorStore.getState().sessions.find(s => s.id === sessionId);
-    if (window.fluxorAPI && projectPath && createdSession) {
-      window.fluxorAPI.contextMapUpsertSessionNode(projectPath, {
-        sessionId,
-        label: `Session #${createdSession.number}: ${card.title}`,
-        status: 'running',
-        roleId: createdSession.roleId,
-      }).catch(() => {});
-    }
-
-    const effort = (flowMeta.recommendedComplexity || 'medium') as 'low' | 'medium' | 'high';
-
-    const userMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: wrapperPrompt,
-      timestamp: Date.now(),
-    };
-    store.addSessionMessage(sessionId, userMsg);
-    store.updateSessionStatus(sessionId, 'running');
-    store.updateSessionDescription(sessionId, card.title);
-    dStore.updateWindowTitle(windowId, card.title);
+    if (flowMeta.betterOn) dStore.updateStepData(stepId, { model: flowMeta.betterOn });
+    dStore.setSelectedMentalNodeIds([stepId]);
+    dStore.updateSettings({ showInspector: true });
 
     // Optimistic status update
     const updatedCards = backlogCards.map(c =>
@@ -476,23 +476,10 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
       );
     }
 
-    try {
-      await window.fluxorAPI.runAgent({
-        agentId: sessionId,
-        instruction,
-        flows: store.flows,
-        cwd: effectiveCwd,
-        contextProjectPath: projectPath,
-        model,
-        effort,
-        aiAdapter: store.appSettings.aiAdapter,
-        autoCommit: store.appSettings.autoCommit,
-        runE2E: store.appSettings.runE2E,
-      });
-    } catch (err) {
-      store.updateSessionStatus(sessionId, 'error');
-      setError(`Agent error: ${err}`);
-    }
+    // Runs through the harness-engine (per-step run) — runStep never
+    // throws; failures surface via harness-store's executionStatus, already
+    // bridged to a toast in App.tsx, same as any other step run.
+    await useHarnessStore.getState().runStep(stepId);
   }, [projectPath, selectedBacklog, marketInventory, backlogCards, setBacklogCards]);
 
   // ─── Launch the auto-architect to generate backlog cards ──────────
@@ -522,60 +509,24 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
       wrapperPrompt,
     ].join('\n');
 
-    const store = useFluxorStore.getState();
-    const dStore = useDesktopStore.getState();
-    const effectiveCwd = selectedBacklog?.projectPath || projectPath;
     const projectName = selectedBacklog?.projectName || 'Project';
 
-    const sessionId = store.addSession();
-    const windowId = dStore.addWindow('chat', {
+    // Same chats→steps re-wiring as executeCard above — materialize a step
+    // and run it through the harness instead of a chat window +
+    // agent-manager. See executeCard's comment for the cwd-override gap
+    // (same limitation applies here for an external child-project backlog).
+    const dStore = useDesktopStore.getState();
+    const position = calculateSafeInsertionPoint(dStore.mentalNodes, STEP_WIDTH, STEP_HEIGHT);
+    const stepId = dStore.addStepNode({
+      position,
       title: `auto-architect → ${projectName}`,
-      iconName: 'Zap',
-      sessionId,
-      childProjectPath: selectedBacklog?.projectPath !== projectPath ? selectedBacklog?.projectPath : undefined,
+      prompt: instruction,
     });
-    dStore.connectFlow(windowId, 'auto-architect');
+    if (architectFlow.betterOn) dStore.updateStepData(stepId, { model: architectFlow.betterOn });
+    dStore.setSelectedMentalNodeIds([stepId]);
+    dStore.updateSettings({ showInspector: true });
 
-    const model = architectFlow.betterOn || 'claude-opus-4.6';
-    store.setSessionModel(sessionId, model);
-
-    const createdSession = useFluxorStore.getState().sessions.find(s => s.id === sessionId);
-    if (window.fluxorAPI && projectPath && createdSession) {
-      window.fluxorAPI.contextMapUpsertSessionNode(projectPath, {
-        sessionId,
-        label: `Session #${createdSession.number}: Auto-Architect ${projectName}`,
-        status: 'running',
-        roleId: createdSession.roleId,
-      }).catch(() => {});
-    }
-
-    store.addSessionMessage(sessionId, {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: wrapperPrompt,
-      timestamp: Date.now(),
-    });
-    store.updateSessionStatus(sessionId, 'running');
-    store.updateSessionDescription(sessionId, `Auto-Architect: ${projectName}`);
-    dStore.updateWindowTitle(windowId, `Auto-Architect: ${projectName}`);
-
-    try {
-      await window.fluxorAPI.runAgent({
-        agentId: sessionId,
-        instruction,
-        flows: store.flows,
-        cwd: effectiveCwd,
-        contextProjectPath: projectPath,
-        model,
-        effort: 'high',
-        aiAdapter: store.appSettings.aiAdapter,
-        autoCommit: store.appSettings.autoCommit,
-        runE2E: store.appSettings.runE2E,
-      });
-    } catch (err) {
-      store.updateSessionStatus(sessionId, 'error');
-      setError(`Auto-architect error: ${err}`);
-    }
+    await useHarnessStore.getState().runStep(stepId);
   }, [projectPath, selectedBacklog, marketInventory]);
 
   const cardsByStatus = (status: BacklogStatus) =>

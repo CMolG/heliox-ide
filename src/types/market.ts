@@ -62,6 +62,59 @@ export interface MarketRolePalette {
   hover: string;
 }
 
+/**
+ * A single step in a `MarketFlow`'s prebuilt pipeline (chats→steps
+ * re-architecture, F0 decision 4, 2026-07-10: flows change from an
+ * attachable "sealed engine" to a pipeline prebuilt that's copied onto the
+ * board as real, independently editable steps).
+ *
+ * Shaped to convert directly into a `PipelineAssemblyStep` (see
+ * `src/types/meta-agent.ts`, the contract `insertPipelineAssembly` —
+ * desktop-store.ts — expects) WITHOUT going through `assemblePipeline`: a
+ * market flow's steps are pre-authored content, not an LLM-generated intent,
+ * so re-generating them via the Meta-Agent would be slower, non-deterministic,
+ * and pointless. `MarketplaceApp`'s "Add to board" action builds that
+ * `PipelineAssembly` straight from this shape.
+ */
+export interface MarketFlowStep {
+  /**
+   * Kebab-case slug, unique within this flow's `steps[]`. Becomes both the
+   * inserted step node's id suffix and its display title (title-cased) —
+   * see `insertPipelineAssembly`'s `titleFromId`. Also the addressable target
+   * for another step's `loopBackTo.stepId` and for `prevStepIds`.
+   */
+  id: string;
+  /** Instruction text materialized verbatim into the inserted step's `prompt`. */
+  prompt: string;
+  /**
+   * Optional persona seeded on the step at insertion time. Left unset for a
+   * step with no clear single-persona fit — the step still lands with a
+   * "no role" state, freely assignable afterward via the step's helm UI. This
+   * is an initial seed only: `validateStepAtoms` (main process) remains the
+   * sole runtime authority on Single Persona / mod compatibility, and the
+   * user can add/replace/remove roles and mods once the step is on the board.
+   */
+  roleId?: string;
+  /** Optional mods seeded on the step at insertion time (see `roleId` above for the same "seed, not a lock" semantics). */
+  modIds?: string[];
+  /**
+   * Explicit predecessor step ids (by `id`, within the same flow). Omit for
+   * the default linear chain: each step follows the previous one in array
+   * order (the shape every current market flow needs — a plain ordered
+   * pipeline). Present only if a future flow needs a non-linear graph
+   * (parallel branches, a router fan-out).
+   */
+  prevStepIds?: string[];
+  /**
+   * Bounded loop-back to an earlier step in the SAME flow — the structural
+   * translation of a `cost: infinite` "Karpathy loop" flow (its prose used to
+   * end in "...commit and loop to the next X"). Re-runs the steps between
+   * the target and this one, `maxIterations` total passes; mirrors
+   * `PipelineAssemblyStep.loopBackTo` exactly.
+   */
+  loopBackTo?: { stepId: string; maxIterations: number };
+}
+
 export interface MarketFlow {
   name: string;
   betterOn: string;
@@ -72,6 +125,14 @@ export interface MarketFlow {
   description: string;
   tags: string[];
   usableBy?: string[];
+  /**
+   * Prebuilt pipeline steps materialized by "Add to board" (MarketplaceApp) —
+   * NOT an attachable surface (that form retired, F0 decision 4). Optional:
+   * a flow with no authored `steps[]` (e.g. a single-shot conversational
+   * flow whose whole value is one system prompt, like `brainstorm-cards`)
+   * falls back to a single mono-step carrying `description` as its prompt.
+   */
+  steps?: MarketFlowStep[];
 }
 
 export interface MarketRole {
