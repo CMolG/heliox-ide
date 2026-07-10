@@ -85,6 +85,22 @@ function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
   return node.type === 'frame';
 }
 
+/**
+ * Finds the Frame that visually owns `stepId` — either by listing it in
+ * `childIds`, or via the step's own `parentId` pointing back at the frame.
+ * Shared by `compileFlowFromCanvas` (flow metadata passthrough below) and any
+ * renderer surface that needs a step's owning Frame's canvas data without
+ * recompiling the whole flow (e.g. StepRunEvidence.tsx's Rosetta context-mode
+ * badge, which reads `.data.contextMode` off the result).
+ */
+export function findOwningFrame(stepId: string, nodes: CanvasGraphNode[]): FrameGraphNode | undefined {
+  const step = nodes.find((n): n is StepGraphNode => isStepGraphNode(n) && n.id === stepId);
+  return nodes.find(
+    (n): n is FrameGraphNode =>
+      isFrameGraphNode(n) && (n.data.childIds.includes(stepId) || step?.parentId === n.id),
+  );
+}
+
 function stringField(record: UnknownRecord, key: string): string | null {
   const value = record[key];
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
@@ -407,20 +423,30 @@ export function compileFlowFromCanvas(
     };
   }
 
-  // Optional human-facing flow metadata (description/tags/author/version),
-  // sourced from the Frame that visually owns the root step — either by
-  // listing it in `childIds` or via the root step's own `parentId` pointing
-  // back at the frame. When no frame owns the root step (or the frame sets
-  // none of the four fields), every key below is omitted — purely display
-  // metadata, never consulted by the execution pipeline.
-  const owningFrame = nodes.find(
-    (n): n is FrameGraphNode =>
-      isFrameGraphNode(n) && (n.data.childIds.includes(rootStepId) || rootStep.parentId === n.id),
-  );
+  // Optional human-facing flow metadata (description/tags/author/version) plus
+  // the Rosetta contextMode toggle, all sourced from the Frame that visually
+  // owns the root step — either by listing it in `childIds` or via the root
+  // step's own `parentId` pointing back at the frame. When no frame owns the
+  // root step (or the frame sets none of these fields), every key below is
+  // omitted. The first four are purely display metadata, never consulted by
+  // the execution pipeline; contextMode IS consulted (it selects the executor's
+  // blind/feedback path) but is copied with the exact same omit-when-absent
+  // shape as its siblings.
+  const owningFrame = findOwningFrame(rootStepId, nodes);
   const flowDescription = owningFrame?.data.description;
   const flowTags = owningFrame?.data.tags;
   const flowAuthor = owningFrame?.data.author;
   const flowVersion = owningFrame?.data.version;
+  // Rosetta context-mode (spec: docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md).
+  // Copied exactly like the other three flow-metadata fields above: omitted
+  // when the owning frame never set it (undefined stays undefined — every
+  // pre-existing flow with no Frame-level toggle keeps compiling byte-
+  // identically, matching AgenticFlow.contextMode's own "absent ≡ blind"
+  // contract). An explicit 'blind' selection is copied through too — it is
+  // semantically identical to omission (see that same contract) and the
+  // export layer (fluxor-flow.ts) is responsible for byte-identical omission
+  // on write, not this compiler.
+  const flowContextMode = owningFrame?.data.contextMode;
 
   return {
     id: options.flowId ?? `flow-${rootStepId}`,
@@ -432,6 +458,7 @@ export function compileFlowFromCanvas(
     ...(flowTags && flowTags.length > 0 ? { tags: [...flowTags] } : {}),
     ...(flowAuthor ? { author: flowAuthor } : {}),
     ...(flowVersion ? { version: flowVersion } : {}),
+    ...(flowContextMode ? { contextMode: flowContextMode } : {}),
   };
 }
 

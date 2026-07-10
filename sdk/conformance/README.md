@@ -25,6 +25,7 @@ conformance suite against these shared fixtures. The contract is:
 | Loop execution parity (expansion algorithm → golden loop trace) | TS: `semantic-parity.test.ts`; Java: `CrossRuntimeConformanceTest.loopExecutionMatchesGoldenTrace`; Python: `test_loop_execution_matches_golden_trace` |
 | `contract`/`model` carried opaquely round-trip | TS: `fluxor-flow.test.ts`; Java: `CrossRuntimeConformanceTest.contractAndModelAreCarried`; Python: `test_contract_and_model_are_carried` |
 | Legacy/absent `format` tag imports with one deprecation warning — `"fluxor-flow"` is silent, absent/null is assumed `"heliox-flow"`, any other value is reported as seen; never blocks parsing | TS: `fluxor-flow.test.ts` suite 7 ("legacy format tag compat"); Java: `CrossRuntimeConformanceTest.legacyFormatImportsWithDeprecationWarning` / `currentFormatFlowsNeverWarn` / `absentFormatWarnsAssumingLegacyHelioxFlow` / `unknownFormatWarnsMentioningSeenValue` / `legacyWarningIsEmittedOncePerDistinctValue`; Python: `test_legacy_format_imports_with_deprecation_warning` / `test_current_format_flows_never_warn` / `test_absent_format_warns_assuming_legacy_heliox_flow` / `test_unknown_format_warns_mentioning_seen_value` |
+| `contextMode: "feedback"` imports on Java/Python with ONE downgrade-to-blind warning (TS executes it natively); the value is preserved verbatim; `"blind"`/absent/any other value is silent; never blocks parsing | TS: `fluxor-flow.test.ts` suite 8 ("contextMode export/import round-trip") + `semantic-parity.test.ts` ("feedback-mode contextMode is additive"); Java: `CrossRuntimeConformanceTest.feedbackContextModeDowngradesToBlindWithWarning` / `blindContextModeNeverWarns` / `absentContextModeNeverWarns` / `unknownContextModeValueNeverWarns` / `feedbackDowngradeWarningIsEmittedOncePerProcess`; Python: `test_feedback_context_mode_downgrades_to_blind_with_warning` / `test_blind_context_mode_never_warns` / `test_absent_context_mode_never_warns` / `test_unknown_context_mode_value_never_warns` / `test_feedback_downgrade_warning_is_emitted_once` — see [Context modes](#context-modes--rosetta-downgrade-on-javapython-2026-07-10) |
 
 ### Running all three suites
 
@@ -195,3 +196,67 @@ predates the tag, and the TS round-trip test compensates by spreading
 suite 5, "importFlow(conformance-contract.flow.json) → exportFlow deep-equals
 golden-contract-roundtrip.json"). Regenerate the golden with the tag if that workaround is
 ever retired.
+
+## Context modes — Rosetta downgrade on Java/Python (2026-07-10)
+
+The wire format carries an optional top-level `contextMode` string (`AgenticFlow.contextMode`
+in `src/types/harness.ts`; spec:
+`docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md`). It selects how a run threads
+context between steps: **blind** (the default — steps only see their declared upstream
+outputs, exactly as before the field existed) or **feedback** (the TS harness materializes a
+`.fluxor/run-context/<runId>/` directory with a Rosetta manifest and per-step context files,
+and injects a deterministic `<flow_awareness>` block). The exporter omits the key entirely for
+blind/absent flows and stamps only the literal `"feedback"`, so blind exports stay
+byte-identical to every pre-Rosetta export.
+
+### Runtime × mode support matrix
+
+| Runtime | `contextMode` absent / `"blind"` | `contextMode: "feedback"` |
+|---|---|---|
+| **TypeScript** (IDE / serve) | Native (byte-identical to pre-Rosetta behaviour) | **Native** — run-context genesis, manifest, `<flow_awareness>`, briefing guardrail |
+| **Java** (`sdk/java`) | Native (blind is the only implemented mode) | **Downgrade to blind** — one warning on `System.err`, then executes blind |
+| **Python** (`sdk/python`) | Native (blind is the only implemented mode) | **Downgrade to blind** — one `DeprecationWarning`, then executes blind |
+
+### The downgrade contract (spec decision 2 — frozen)
+
+Feedback-mode parity in Java/Python is a **v2** concern (the PF measurement campaign runs on
+the TS runtime); in v1 both SDKs perform an explicit, documented downgrade at import:
+
+1. **`contextMode === "feedback"`** → the import succeeds unchanged and emits **one** warning
+   with the exact wording:
+
+   > feedback mode is not supported by this runtime yet; downgrading to blind
+
+   Execution then proceeds in blind mode — the only mode these executors implement (they have
+   no run-context manifest/briefing machinery; neither executor ever reads `contextMode`, so
+   blind execution is structural, not a branch).
+2. **`"blind"`, absent/null, or any other value** → total silence: there is nothing to
+   downgrade. The SDKs do not validate the enum (only the TS IDE authoring surface does); an
+   unrecognized value is carried like any other opaque field.
+
+In every case `contextMode` is **preserved verbatim** on the parsed definition
+(`FlowDefinition.contextMode()` in Java, `FlowDefinition.context_mode` in Python — `null`/
+`None` when absent). The downgrade changes runtime behaviour, never the recorded value, so
+the definition round-trips without loss.
+
+Warning channels and once-semantics mirror the legacy-format shim exactly: Java prints one
+line to `System.err`, deduped by a once-per-process flag (test reset hook
+`resetContextModeWarningsForTests`); Python raises one `DeprecationWarning` via
+`warnings.warn`, dedup delegated to the stdlib warnings filter. Unlike the format shim's
+message, the downgrade wording above is itself part of the frozen contract — it may **not**
+vary per runtime.
+
+- **`conformance-feedback-mode.flow.json`** — a minimal 1-step flow carrying
+  `"format": "fluxor-flow"` and `"contextMode": "feedback"` (rule 1). Proof: Java
+  `CrossRuntimeConformanceTest.feedbackContextModeDowngradesToBlindWithWarning` /
+  `feedbackDowngradeWarningIsEmittedOncePerProcess`; Python
+  `test_feedback_context_mode_downgrades_to_blind_with_warning` /
+  `test_feedback_downgrade_warning_is_emitted_once`.
+- The **silent cases** (rule 2) are proven with inline JSON and the existing chain fixture:
+  Java `blindContextModeNeverWarns` / `absentContextModeNeverWarns` /
+  `unknownContextModeValueNeverWarns`; Python `test_blind_context_mode_never_warns` /
+  `test_absent_context_mode_never_warns` / `test_unknown_context_mode_value_never_warns`.
+- The **TS side** (native execution, no downgrade) is proven by `fluxor-flow.test.ts` suite 8
+  ("contextMode export/import round-trip" — omit-when-blind, stamp-only-`"feedback"`) and
+  `semantic-parity.test.ts` ("feedback-mode contextMode is additive — does not perturb the
+  golden trace", which also materializes a real run-context manifest).

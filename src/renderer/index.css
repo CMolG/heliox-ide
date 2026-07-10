@@ -2286,6 +2286,46 @@ body {
   z-index: 4;
 }
 
+/* Context-mode select (Rosetta feedback-mode toggle, leftmost in the
+   cluster — see FrameNode.tsx's comment on ordering). Same neutral dark-pill
+   chrome as the Model-policy select right next to it, so the two read as a
+   pair of flow-level settings; Export/Run keep their own distinct accent
+   colors as the cluster's action controls. Unlike the policy select (still
+   inline-styled from an earlier round), this is a real class — nothing here
+   is dynamically computed — with an explicit focus-visible ring since no
+   ancestor supplies one. */
+.pipeline-frame-context-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(244, 244, 245, 0.14);
+  background: rgba(10, 10, 10, 0.72);
+  color: rgba(228, 228, 231, 0.8);
+}
+
+.pipeline-frame-context-mode-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  max-width: 108px;
+}
+
+.pipeline-frame-context-mode-select:focus-visible {
+  outline: 2px solid #4285F4;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* Export control — small, unobtrusive icon-only sibling of Run. Violet
    accent matches .pipeline-frame-workflow-icon's flow-identity hue rather
    than Run's green "go" signal, so the two stay visually distinct. */

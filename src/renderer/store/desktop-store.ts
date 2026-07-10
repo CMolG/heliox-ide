@@ -404,11 +404,13 @@ interface DesktopStore {
   updateStepData: (stepId: string, patch: Partial<StepNodeData>) => void;
   /**
    * Patch arbitrary fields on a Frame node's `data` (e.g. `title`,
-   * `description`, `tags`, `author`, `version`). Powers the Inspector's Flow
-   * tools editor (FlowInspector) — `compileFlowFromCanvas`'s owning-frame
-   * lookup reads these fields directly (see harness-compiler.ts), so edits
-   * made here feed the compiled AgenticFlow's matching fields on the next
-   * compile. No-ops (does not mutate) if `frameId` doesn't name a Frame node.
+   * `description`, `tags`, `author`, `version`, `contextMode`). Powers the
+   * Inspector's Flow tools editor (FlowInspector) and FrameNode.tsx's
+   * context-mode select — `compileFlowFromCanvas`'s owning-frame lookup
+   * (`findOwningFrame`) reads these fields directly (see
+   * harness-compiler.ts), so edits made here feed the compiled AgenticFlow's
+   * matching fields on the next compile. No-ops (does not mutate) if
+   * `frameId` doesn't name a Frame node.
    */
   updateFrameData: (frameId: string, patch: Partial<FrameNodeData>) => void;
   removeMentalNode: (nodeId: string) => void;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CanvasGraphNode, FrameGraphNode, MentalGraphEdge, MentalGraphNode, StepGraphNode } from '@/types/desktop';
-import { collectDownstreamStepIds, compileFlowFromCanvas, wouldCreateStepCycle } from '../lib/harness-compiler';
+import { collectDownstreamStepIds, compileFlowFromCanvas, findOwningFrame, wouldCreateStepCycle } from '../lib/harness-compiler';
 
 function stepNode(id: string, title: string, data: Partial<StepGraphNode['data']> = {}): StepGraphNode {
   return {
@@ -462,5 +462,99 @@ describe('compileFlowFromCanvas — human-facing metadata (Phase 5)', () => {
 
     expect(flow.tags).toBeUndefined();
     expect('tags' in flow).toBe(false);
+  });
+});
+
+// ─── Rosetta contextMode passthrough (Task U — spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md) ───
+//
+// Mirrors the description/tags/author/version suite above exactly:
+// `contextMode` is sourced from the same owning-Frame lookup and copied with
+// the same omit-when-absent shape. The one case that does NOT mirror those
+// four fields is the explicit-'blind' test below — 'blind' is a non-empty
+// string (truthy), so it is copied through rather than omitted, unlike an
+// empty-string/array "unset" author/tags/etc. That's intentional: an
+// explicit 'blind' is semantically identical to omission per
+// AgenticFlow.contextMode's own doc, and fluxor-flow.ts (export layer, Ola
+// A's territory) is responsible for byte-identical omission on write.
+describe('compileFlowFromCanvas — Rosetta contextMode passthrough (Task U)', () => {
+  it("compiles a frame's contextMode:'feedback' onto the flow when it owns the root step via childIds", () => {
+    const root = stepNode('root', 'Root');
+    const frame = frameNode('frame-1', 'Onboarding Flow', {
+      description: 'Handles new-user onboarding.',
+      tags: ['onboarding', 'core'],
+      author: 'Ada Lovelace',
+      version: '1.2.0',
+      contextMode: 'feedback',
+      childIds: ['root'],
+    });
+
+    const flow = compileFlowFromCanvas([frame, root], []);
+
+    // The full data chain, all five fields together: FrameNodeData -> the
+    // compiled AgenticFlow the executor reads.
+    expect(flow.description).toBe('Handles new-user onboarding.');
+    expect(flow.tags).toEqual(['onboarding', 'core']);
+    expect(flow.author).toBe('Ada Lovelace');
+    expect(flow.version).toBe('1.2.0');
+    expect(flow.contextMode).toBe('feedback');
+  });
+
+  it("finds the owning frame's contextMode via the root step's parentId when childIds omits it", () => {
+    const frame = frameNode('frame-1', 'Frame', { contextMode: 'feedback' });
+    const root: StepGraphNode = { ...stepNode('root', 'Root'), parentId: 'frame-1' };
+
+    const flow = compileFlowFromCanvas([frame, root], []);
+
+    expect(flow.contextMode).toBe('feedback');
+  });
+
+  it("copies an explicit contextMode:'blind' through (semantically identical to omission, not filtered as falsy)", () => {
+    const root = stepNode('root', 'Root');
+    const frame = frameNode('frame-1', 'Frame', { childIds: ['root'], contextMode: 'blind' });
+
+    const flow = compileFlowFromCanvas([frame, root], []);
+
+    expect(flow.contextMode).toBe('blind');
+  });
+
+  it('omits contextMode when no frame owns the root step (criterion 1: byte-identical to today)', () => {
+    const flow = compileFlowFromCanvas([stepNode('root', 'Root')], []);
+    expect(flow.contextMode).toBeUndefined();
+    expect('contextMode' in flow).toBe(false);
+  });
+
+  it('omits contextMode when the owning frame does not itself set it', () => {
+    const frame = frameNode('frame-1', 'Frame', { childIds: ['root'], description: 'Only a description.' });
+    const root = stepNode('root', 'Root');
+
+    const flow = compileFlowFromCanvas([frame, root], []);
+
+    expect(flow.contextMode).toBeUndefined();
+    expect('contextMode' in flow).toBe(false);
+  });
+});
+
+describe('findOwningFrame (Task U — shared by compileFlowFromCanvas and StepRunEvidence.tsx)', () => {
+  it('finds the frame that lists the step in childIds', () => {
+    const frame = frameNode('frame-1', 'Frame', { childIds: ['s1'] });
+    const step = stepNode('s1', 'Step');
+    expect(findOwningFrame('s1', [frame, step])?.id).toBe('frame-1');
+  });
+
+  it("finds the frame via the step's parentId when childIds omits it", () => {
+    const frame = frameNode('frame-1', 'Frame');
+    const step: StepGraphNode = { ...stepNode('s1', 'Step'), parentId: 'frame-1' };
+    expect(findOwningFrame('s1', [frame, step])?.id).toBe('frame-1');
+  });
+
+  it('returns undefined when no frame owns the step', () => {
+    const step = stepNode('s1', 'Step');
+    expect(findOwningFrame('s1', [step])).toBeUndefined();
+  });
+
+  it('returns undefined for an unknown stepId', () => {
+    const frame = frameNode('frame-1', 'Frame', { childIds: ['s1'] });
+    expect(findOwningFrame('does-not-exist', [frame])).toBeUndefined();
   });
 });

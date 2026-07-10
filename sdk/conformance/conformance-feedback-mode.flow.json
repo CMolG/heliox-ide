@@ -1,0 +1,17 @@
+{
+  "version": "1",
+  "format": "fluxor-flow",
+  "id": "conformance-feedback-mode",
+  "name": "Conformance Feedback Mode",
+  "contextMode": "feedback",
+  "rootStepId": "step-a",
+  "steps": [
+    {
+      "id": "step-a",
+      "type": "llm_call",
+      "prompt": "Step A: a flow exported with contextMode 'feedback' must still import cleanly, downgrading to blind execution with one warning on this runtime.",
+      "dependsOn": [],
+      "tools": []
+    }
+  ]
+}

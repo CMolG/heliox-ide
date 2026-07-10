@@ -12,12 +12,32 @@ import java.util.List;
  * body re-runs, up to {@code maxIterations} total passes. The forward graph stays acyclic;
  * loops are expanded into a per-iteration instance graph at execution time by
  * {@link io.fluxor.sdk.engine.FlowExecutor#executeAllTextTrace}.
+ *
+ * <p>{@code contextMode} is the Rosetta context mode ({@code AgenticFlow.contextMode} in
+ * {@code src/types/harness.ts}; spec:
+ * {@code docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md}), carried
+ * <em>opaquely</em> like {@link StepConfig#contract()}/{@link StepConfig#model()}: this
+ * runtime never branches on it. {@code null} when the flow declares none (blind default).
+ * {@code "feedback"} is NOT supported by this runtime in v1 — {@link FlowImport} emits a
+ * one-time downgrade warning at import and execution proceeds in blind mode (the only mode
+ * this executor implements); the recorded value stays {@code "feedback"} so the definition
+ * round-trips without loss (spec decision 2: downgrade, not parity).
  */
-public record FlowDefinition(String id, List<StepConfig> steps, List<LoopConfig> loops) {
+public record FlowDefinition(String id, List<StepConfig> steps, List<LoopConfig> loops,
+                             String contextMode) {
 
     public FlowDefinition {
         steps = List.copyOf(steps);
         loops = loops == null ? List.of() : List.copyOf(loops);
+    }
+
+    /**
+     * Compatibility constructor for callers built against the pre-Rosetta 3-arg shape —
+     * defaults {@code contextMode} to {@code null} (carry-opaque field; absent means the flow
+     * declares none, i.e. blind) so existing call sites compile unchanged.
+     */
+    public FlowDefinition(String id, List<StepConfig> steps, List<LoopConfig> loops) {
+        this(id, steps, loops, null);
     }
 
     /**

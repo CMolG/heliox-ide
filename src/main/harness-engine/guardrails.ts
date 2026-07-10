@@ -36,6 +36,14 @@ export interface ReadableWorkspace {
 }
 
 /**
+ * Directories the recursive walk never descends into: on a real project
+ * rootDir (feedback mode runs the guardrail against the actual workspace)
+ * snapshotting `node_modules`/`.git` would load the whole tree into memory
+ * twice per attempt. Neutral for the PF sandbox VFS, which uses `snapshot()`.
+ */
+const SNAPSHOT_EXCLUDED_DIRS = new Set(['node_modules', '.git']);
+
+/**
  * Snapshot the workspace as a path→content map. Prefers a VFS `snapshot()` (the
  * PF sandbox); otherwise walks `rootDir` with readdir/stat/readFile.
  */
@@ -69,7 +77,7 @@ export async function snapshotWorkspace(
         isDir = false;
       }
       if (isDir) {
-        await walk(full);
+        if (!SNAPSHOT_EXCLUDED_DIRS.has(name)) await walk(full);
       } else {
         try {
           out[full] = await readFile(full, 'utf-8');

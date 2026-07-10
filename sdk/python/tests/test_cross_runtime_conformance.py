@@ -531,3 +531,159 @@ def test_unknown_format_warns_mentioning_seen_value() -> None:
         flow = FlowImport.from_canonical_json(raw)
 
     assert flow.id == "unknown-format", "An unknown format tag must never block parsing"
+
+
+# ---------------------------------------------------------------------------
+# Test 8: Rosetta context-mode SDK downgrade (feedback -> blind, spec decision 2)
+#
+# Frozen cross-runtime contract (orchestrator ruling 2026-07-10; canonical
+# reference: docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md,
+# decision 2, and AgenticFlow.contextMode in src/types/harness.ts):
+#   1. contextMode == "feedback"  -> ONE DeprecationWarning ("feedback mode is
+#                                    not supported by this runtime yet;
+#                                    downgrading to blind"); the flow still
+#                                    executes in blind mode — this SDK has no
+#                                    feedback-mode manifest/briefing machinery
+#                                    (v2 concern; the PF campaign runs on the
+#                                    TS runtime).
+#   2. "blind", absent/null, or   -> silent: no downgrade warning, because
+#      any other value               there is nothing to downgrade.
+# In every case contextMode is preserved verbatim on the parsed FlowDefinition
+# (context_mode attribute) — the downgrade changes runtime behavior, never the
+# recorded value. Channel and once-semantics mirror the legacy-format shim:
+# one DeprecationWarning via warnings.warn, dedup delegated to the stdlib
+# warnings filter (pytest installs an "always" filter, so each test observes
+# its own warning). Java counterpart: System.err + once-per-process flag
+# (CrossRuntimeConformanceTest, "Rosetta context-mode SDK downgrade" section).
+# ---------------------------------------------------------------------------
+
+_FEEDBACK_DOWNGRADE_WARNING = (
+    "feedback mode is not supported by this runtime yet; downgrading to blind"
+)
+
+
+def test_feedback_context_mode_downgrades_to_blind_with_warning() -> None:
+    """Rule 1: importing ``conformance-feedback-mode.flow.json``
+    (``contextMode: "feedback"``) emits exactly one DeprecationWarning with
+    the exact downgrade message and preserves ``context_mode`` verbatim on
+    the returned FlowDefinition (NOT cleared to ``None`` or rewritten to
+    ``"blind"`` — only execution downgrades)."""
+    raw = _load_fixture("conformance-feedback-mode.flow.json")
+
+    with pytest.warns(DeprecationWarning, match=_FEEDBACK_DOWNGRADE_WARNING) as record:
+        flow = FlowImport.from_canonical_json(raw)
+
+    # The downgrade never affects structural parsing.
+    assert flow.id == "conformance-feedback-mode"
+    assert len(flow.steps) == 1
+    assert flow.steps[0].id == "step-a"
+
+    # contextMode is preserved verbatim, not erased or rewritten to "blind".
+    assert flow.context_mode == "feedback", (
+        f"context_mode must be preserved verbatim, got {flow.context_mode!r}"
+    )
+
+    assert len(record) == 1, f"Expected exactly one DeprecationWarning, got {len(record)}"
+
+
+def test_blind_context_mode_never_warns(recwarn: pytest.WarningsRecorder) -> None:
+    """Rule 2a: an explicit ``"blind"`` contextMode never warns, and is
+    preserved verbatim (not defaulted to ``None``)."""
+    raw = json.dumps(
+        {
+            "version": "1",
+            "format": "fluxor-flow",
+            "id": "context-mode-blind",
+            "name": "Context Mode Blind",
+            "contextMode": "blind",
+            "rootStepId": "step-a",
+            "steps": [
+                {"id": "step-a", "type": "llm_call", "prompt": "Step A.", "dependsOn": [], "tools": []}
+            ],
+        }
+    )
+
+    flow = FlowImport.from_canonical_json(raw)
+
+    assert len(recwarn) == 0, (
+        f"An explicit 'blind' contextMode must never warn, got "
+        f"{[str(w.message) for w in recwarn]}"
+    )
+    assert flow.context_mode == "blind", (
+        f"An explicit 'blind' contextMode must be preserved verbatim, got {flow.context_mode!r}"
+    )
+
+
+def test_absent_context_mode_never_warns(recwarn: pytest.WarningsRecorder) -> None:
+    """Rule 2b: a flow with NO ``contextMode`` field at all (every flow
+    predating Rosetta, and every blind-mode export per the wire-format doc)
+    never warns, and ``context_mode`` reads back ``None``."""
+    raw = _load_fixture("conformance-chain.flow.json")  # no contextMode field.
+
+    flow = FlowImport.from_canonical_json(raw)
+
+    assert len(recwarn) == 0, (
+        f"An absent contextMode must never warn, got {[str(w.message) for w in recwarn]}"
+    )
+    assert flow.context_mode is None, (
+        f"An absent contextMode must read back as None, got {flow.context_mode!r}"
+    )
+
+
+def test_unknown_context_mode_value_never_warns(recwarn: pytest.WarningsRecorder) -> None:
+    """Rule 2c: any value other than the literal ``"feedback"`` never warns,
+    even an unrecognized string; the raw value is still preserved verbatim
+    (this SDK does not validate the enum — only the TS IDE authoring surface
+    does)."""
+    raw = json.dumps(
+        {
+            "version": "1",
+            "format": "fluxor-flow",
+            "id": "context-mode-unknown",
+            "name": "Context Mode Unknown",
+            "contextMode": "quantum",
+            "rootStepId": "step-a",
+            "steps": [
+                {"id": "step-a", "type": "llm_call", "prompt": "Step A.", "dependsOn": [], "tools": []}
+            ],
+        }
+    )
+
+    flow = FlowImport.from_canonical_json(raw)
+
+    assert len(recwarn) == 0, (
+        f"An unrecognized contextMode value must never warn, got "
+        f"{[str(w.message) for w in recwarn]}"
+    )
+    assert flow.context_mode == "quantum", (
+        f"An unrecognized contextMode value must still be preserved verbatim, "
+        f"got {flow.context_mode!r}"
+    )
+
+
+def test_feedback_downgrade_warning_is_emitted_once() -> None:
+    """Once-semantics, mirroring the Java
+    ``feedbackDowngradeWarningIsEmittedOncePerProcess`` as closely as the
+    Python idiom allows: the downgrade shim delegates dedup to the stdlib
+    warnings filter, exactly like the legacy-format shim — under the
+    ``"default"`` action (the production configuration), repeated identical
+    warnings from the same import call site collapse to one. Three imports
+    of the same feedback-mode flow from one call site emit exactly one
+    downgrade warning."""
+    import warnings as _warnings
+
+    raw = _load_fixture("conformance-feedback-mode.flow.json")
+
+    with _warnings.catch_warnings(record=True) as record:
+        _warnings.simplefilter("default")
+        for _ in range(3):
+            FlowImport.from_canonical_json(raw)
+
+    downgrade_warnings = [
+        w for w in record if _FEEDBACK_DOWNGRADE_WARNING in str(w.message)
+    ]
+    assert len(downgrade_warnings) == 1, (
+        f"Three imports of the same feedback-mode flow must produce exactly one "
+        f"downgrade warning under the default filter, got {len(downgrade_warnings)}: "
+        f"{[str(w.message) for w in record]}"
+    )

@@ -28,6 +28,7 @@ const mockDesktop = vi.hoisted(() => ({
   bringMentalToFront: vi.fn(),
   settings: { modelPolicy: { mode: 'fixed' } as ModelPolicy },
   setModelPolicy: vi.fn(),
+  updateFrameData: vi.fn(),
 }));
 
 vi.mock('../../../store/desktop-store', () => ({
@@ -55,7 +56,7 @@ vi.mock('../../../store/harness-store', () => {
 
 // ── Import after mocks ───────────────────────────────────────────────────────
 
-import { FrameNode, policyToValue, valueToPolicy } from './FrameNode';
+import { FrameNode, policyToValue, valueToPolicy, contextModeToValue } from './FrameNode';
 import type { NodeProps } from '@xyflow/react';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ beforeEach(() => {
   mockDesktop.bringMentalToFront.mockClear();
   mockDesktop.settings = { modelPolicy: { mode: 'fixed' } };
   mockDesktop.setModelPolicy.mockClear();
+  mockDesktop.updateFrameData.mockClear();
   mockHarness.executionStatus = 'idle';
   mockHarness.compileCurrentCanvas.mockClear();
   mockHarness.compileCurrentCanvas.mockReturnValue({ rootStepId: 'root' });
@@ -307,6 +309,92 @@ describe('FrameNode — model-policy select', () => {
       fireEvent.pointerDown(select);
       fireEvent.click(select);
     }).not.toThrow();
+  });
+});
+
+// ── Context-mode select (Task U — Rosetta feedback-mode toggle) ────────────
+
+describe('FrameNode — context-mode select', () => {
+  it('renders the current mode, defaulting to "Blind (default)" when contextMode is unset', () => {
+    render(<FrameNode {...makeProps('f-context-default')} />);
+    const select = screen.getByTestId('pipeline-frame-context-mode-f-context-default');
+    expect(select).toHaveValue('blind');
+    expect(select).toHaveAttribute('aria-label', 'Context mode for this flow');
+  });
+
+  it('reflects contextMode:"feedback" already on the Frame data', () => {
+    render(<FrameNode {...makeProps('f-context-feedback', { contextMode: 'feedback' })} />);
+    expect(screen.getByTestId('pipeline-frame-context-mode-f-context-feedback')).toHaveValue('feedback');
+  });
+
+  it('reflects an explicit contextMode:"blind" the same as unset', () => {
+    render(<FrameNode {...makeProps('f-context-blind', { contextMode: 'blind' })} />);
+    expect(screen.getByTestId('pipeline-frame-context-mode-f-context-blind')).toHaveValue('blind');
+  });
+
+  it('offers exactly the two documented options, in order', () => {
+    render(<FrameNode {...makeProps('f-context-options')} />);
+    const select = screen.getByTestId('pipeline-frame-context-mode-f-context-options');
+    const labels = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
+    expect(labels).toEqual(['Blind (default)', 'Feedback']);
+  });
+
+  it('selecting "Feedback" calls updateFrameData(id, {contextMode:"feedback"})', () => {
+    render(<FrameNode {...makeProps('f-context-select-feedback')} />);
+    fireEvent.change(screen.getByTestId('pipeline-frame-context-mode-f-context-select-feedback'), {
+      target: { value: 'feedback' },
+    });
+    expect(mockDesktop.updateFrameData).toHaveBeenCalledWith('f-context-select-feedback', { contextMode: 'feedback' });
+  });
+
+  it('selecting "Blind (default)" calls updateFrameData(id, {contextMode:"blind"})', () => {
+    render(<FrameNode {...makeProps('f-context-select-blind', { contextMode: 'feedback' })} />);
+    fireEvent.change(screen.getByTestId('pipeline-frame-context-mode-f-context-select-blind'), {
+      target: { value: 'blind' },
+    });
+    expect(mockDesktop.updateFrameData).toHaveBeenCalledWith('f-context-select-blind', { contextMode: 'blind' });
+  });
+
+  it('does not call setModelPolicy or touch execution when the context mode changes (independent controls)', () => {
+    render(<FrameNode {...makeProps('f-context-independent')} />);
+    fireEvent.change(screen.getByTestId('pipeline-frame-context-mode-f-context-independent'), {
+      target: { value: 'feedback' },
+    });
+    expect(mockDesktop.setModelPolicy).not.toHaveBeenCalled();
+    expect(mockHarness.compileCurrentCanvas).not.toHaveBeenCalled();
+    expect(mockHarness.startExecution).not.toHaveBeenCalled();
+  });
+
+  it('sits inside a "nodrag" zone like the sibling Model-policy/Export/Run controls', () => {
+    render(<FrameNode {...makeProps('f-context-nodrag')} />);
+    const select = screen.getByTestId('pipeline-frame-context-mode-f-context-nodrag');
+    // xyflow's drag-init check is `event.target.closest('.nodrag')`.
+    expect(select.closest('.nodrag')).not.toBeNull();
+  });
+
+  it('does not throw when pointerdown/click are dispatched on the select (stopPropagation wiring present)', () => {
+    render(<FrameNode {...makeProps('f-context-events')} />);
+    const select = screen.getByTestId('pipeline-frame-context-mode-f-context-events');
+    expect(() => {
+      fireEvent.pointerDown(select);
+      fireEvent.click(select);
+    }).not.toThrow();
+  });
+});
+
+// ── Pure helpers: contextModeToValue ────────────────────────────────────────
+
+describe('FrameNode — contextModeToValue (pure)', () => {
+  it('maps undefined -> "blind" (absent ≡ blind default)', () => {
+    expect(contextModeToValue(undefined)).toBe('blind');
+  });
+
+  it('maps "blind" -> "blind"', () => {
+    expect(contextModeToValue('blind')).toBe('blind');
+  });
+
+  it('maps "feedback" -> "feedback"', () => {
+    expect(contextModeToValue('feedback')).toBe('feedback');
   });
 });
 

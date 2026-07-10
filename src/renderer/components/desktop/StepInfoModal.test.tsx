@@ -30,7 +30,7 @@
  *   5. "Why this model" routing-evidence card (WS2 smart routing).
  */
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDesktopStore } from '../../store/desktop-store';
 import { StepInfoModal } from './StepInfoModal';
@@ -59,6 +59,32 @@ function seedStep(overrides?: Partial<{ prompt: string; description: string }>) 
   });
   const stepData = (useDesktopStore.getState().mentalNodes.find((n) => n.id === stepId) as { data: StepNodeData }).data;
   return { stepId, stepData };
+}
+
+/**
+ * Seeds a Step nested inside a Frame (via `parentId`), optionally setting the
+ * Frame's `contextMode`. Only the Context-mode badge suite below needs an
+ * owning Frame — every other suite in this file uses the frame-less
+ * `seedStep()` above, which doubles as this feature's "no owning frame ⇒ no
+ * badge" case.
+ */
+function seedStepInFrame(contextMode?: 'blind' | 'feedback') {
+  const frameId = useDesktopStore.getState().addFrameNode({
+    position: { x: 0, y: 0 },
+    width: 400,
+    height: 300,
+    title: 'Test Flow',
+  });
+  const stepId = useDesktopStore.getState().addStepNode({
+    position: { x: 0, y: 0 },
+    title: 'Test Step',
+    parentId: frameId,
+  });
+  if (contextMode !== undefined) {
+    useDesktopStore.getState().updateFrameData(frameId, { contextMode });
+  }
+  const stepData = (useDesktopStore.getState().mentalNodes.find((n) => n.id === stepId) as { data: StepNodeData }).data;
+  return { stepId, stepData, frameId };
 }
 
 function renderModal(stepId: string, stepData: StepNodeData, opts?: {
@@ -311,5 +337,53 @@ describe('StepInfoModal — "Why this model" card', () => {
     const card = screen.getByTestId('step-info-why-model');
     expect(card).toHaveTextContent('opencode/claude-sonnet-4-6');
     expect(screen.queryByTestId('step-info-benchmarked-pill')).not.toBeInTheDocument();
+  });
+});
+
+// ── Context-mode badge (Task U — Rosetta feedback mode) ─────────────────────
+//
+// Full data-chain proof at the UI-consumption end: FrameNodeData.contextMode
+// (set here via the REAL desktop-store's `updateFrameData`, exactly like
+// FrameNode.tsx's toggle does) -> StepRunEvidence's `findOwningFrame` lookup
+// -> this badge. No harness-store mocking needed — contextMode is read
+// straight off desktop-store, never off `activeFlow`, so it's visible before
+// any compile/run.
+
+describe('StepInfoModal — Context mode badge (Rosetta feedback mode)', () => {
+  it('is absent for a step with no owning frame (every other suite in this file uses this frame-less fixture)', () => {
+    const { stepId, stepData } = seedStep();
+    renderModal(stepId, stepData);
+    expect(screen.queryByTestId('step-info-context-mode-card')).not.toBeInTheDocument();
+  });
+
+  it('is absent when the owning frame has no contextMode set (default/unset)', () => {
+    const { stepId, stepData } = seedStepInFrame();
+    renderModal(stepId, stepData);
+    expect(screen.queryByTestId('step-info-context-mode-card')).not.toBeInTheDocument();
+  });
+
+  it('is absent when the owning frame is explicitly "blind"', () => {
+    const { stepId, stepData } = seedStepInFrame('blind');
+    renderModal(stepId, stepData);
+    expect(screen.queryByTestId('step-info-context-mode-card')).not.toBeInTheDocument();
+  });
+
+  it('shows the "Feedback mode" badge when the owning frame is "feedback"', () => {
+    const { stepId, stepData } = seedStepInFrame('feedback');
+    renderModal(stepId, stepData);
+    expect(screen.getByTestId('step-info-context-mode-card')).toBeInTheDocument();
+    expect(screen.getByTestId('step-info-context-mode-badge')).toHaveTextContent('Feedback mode');
+  });
+
+  it('re-derives live off the store — flipping the owning frame from blind to feedback shows the badge with no remount', () => {
+    const { stepId, stepData, frameId } = seedStepInFrame('blind');
+    renderModal(stepId, stepData);
+    expect(screen.queryByTestId('step-info-context-mode-card')).not.toBeInTheDocument();
+
+    act(() => {
+      useDesktopStore.getState().updateFrameData(frameId, { contextMode: 'feedback' });
+    });
+
+    expect(screen.getByTestId('step-info-context-mode-card')).toBeInTheDocument();
   });
 });

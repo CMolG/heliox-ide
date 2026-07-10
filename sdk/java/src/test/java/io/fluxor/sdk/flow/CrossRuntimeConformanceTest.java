@@ -766,4 +766,146 @@ class CrossRuntimeConformanceTest {
             "Three imports of the same legacy value must produce exactly one warning, got: \""
                 + warning + "\"");
     }
+
+    // ---- Rosetta context-mode SDK downgrade (feedback -> blind, spec decision 2) -----------
+    //
+    // Frozen cross-runtime contract (orchestrator ruling 2026-07-10; canonical reference:
+    // docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md, decision 2, and
+    // AgenticFlow.contextMode in src/types/harness.ts):
+    //   1. contextMode === "feedback"   -> ONE warning ("feedback mode is not supported by this
+    //                                       runtime yet; downgrading to blind"); the flow still
+    //                                       executes in blind mode — this SDK has no
+    //                                       feedback-mode manifest/briefing machinery (v2
+    //                                       concern; the PF campaign runs on the TS runtime).
+    //   2. "blind", absent/null, or any -> silent: no downgrade warning, because there is
+    //      other value                     nothing to downgrade.
+    //   In every case contextMode is preserved verbatim on the parsed FlowDefinition — the
+    //   downgrade changes runtime behavior, never the recorded value. The warning fires once
+    //   per process, by the same channel/dedup idiom as the legacy-format shim (System.err).
+
+    /**
+     * Rule 1 — importing {@code conformance-feedback-mode.flow.json} (contextMode: "feedback")
+     * emits exactly one downgrade warning on {@code System.err} and preserves {@code
+     * contextMode} on the returned {@link FlowDefinition} verbatim (it is NOT cleared to
+     * {@code null} or rewritten to {@code "blind"} — only execution downgrades).
+     */
+    @Test
+    void feedbackContextModeDowngradesToBlindWithWarning() throws Exception {
+        FlowImport.resetContextModeWarningsForTests();
+        Path fixture = resolveConformanceFile("conformance-feedback-mode.flow.json");
+
+        FlowDefinition[] flowHolder = new FlowDefinition[1];
+        String warning = captureStderr(() -> flowHolder[0] = FlowImport.fromCanonicalFile(fixture));
+        FlowDefinition flow = flowHolder[0];
+
+        // The downgrade never affects structural parsing.
+        assertEquals("conformance-feedback-mode", flow.id());
+        assertEquals(1, flow.steps().size());
+        assertEquals("step-a", flow.steps().get(0).id());
+
+        // contextMode is preserved verbatim, not erased or rewritten to "blind".
+        assertEquals("feedback", flow.contextMode(),
+            "contextMode must be preserved verbatim on the imported FlowDefinition");
+
+        assertTrue(
+            warning.contains("feedback mode is not supported by this runtime yet; downgrading to blind"),
+            "Expected the exact downgrade warning message, got: \"" + warning + "\"");
+    }
+
+    /**
+     * Rule 2a — an explicit {@code "blind"} contextMode never warns, and is preserved verbatim
+     * (not defaulted to {@code null}).
+     */
+    @Test
+    void blindContextModeNeverWarns() throws Exception {
+        FlowImport.resetContextModeWarningsForTests();
+        String json = """
+            {
+              "version": "1",
+              "format": "fluxor-flow",
+              "id": "context-mode-blind",
+              "name": "Context Mode Blind",
+              "contextMode": "blind",
+              "rootStepId": "step-a",
+              "steps": [
+                { "id": "step-a", "type": "llm_call", "prompt": "Step A.", "dependsOn": [], "tools": [] }
+              ]
+            }
+            """;
+
+        FlowDefinition[] flowHolder = new FlowDefinition[1];
+        String warning = captureStderr(() -> flowHolder[0] = FlowImport.fromCanonicalJson(json));
+
+        assertEquals("", warning, "An explicit 'blind' contextMode must never warn");
+        assertEquals("blind", flowHolder[0].contextMode(),
+            "An explicit 'blind' contextMode must be preserved verbatim");
+    }
+
+    /**
+     * Rule 2b — a flow with no {@code contextMode} field at all (every flow predating Rosetta,
+     * and every blind-mode export per the wire-format doc) never warns, and {@code
+     * contextMode()} reads back {@code null}.
+     */
+    @Test
+    void absentContextModeNeverWarns() throws Exception {
+        FlowImport.resetContextModeWarningsForTests();
+        Path fixture = resolveFixture(); // conformance-chain.flow.json — no contextMode field.
+
+        FlowDefinition[] flowHolder = new FlowDefinition[1];
+        String warning = captureStderr(() -> flowHolder[0] = FlowImport.fromCanonicalFile(fixture));
+
+        assertEquals("", warning, "An absent contextMode must never warn");
+        assertNull(flowHolder[0].contextMode(), "An absent contextMode must read back as null");
+    }
+
+    /**
+     * Rule 2c — any value other than the literal {@code "feedback"} never warns, even an
+     * unrecognized string; the raw value is still preserved verbatim (this SDK does not
+     * validate the enum — only the TS IDE authoring surface does).
+     */
+    @Test
+    void unknownContextModeValueNeverWarns() throws Exception {
+        FlowImport.resetContextModeWarningsForTests();
+        String json = """
+            {
+              "version": "1",
+              "format": "fluxor-flow",
+              "id": "context-mode-unknown",
+              "name": "Context Mode Unknown",
+              "contextMode": "quantum",
+              "rootStepId": "step-a",
+              "steps": [
+                { "id": "step-a", "type": "llm_call", "prompt": "Step A.", "dependsOn": [], "tools": [] }
+              ]
+            }
+            """;
+
+        FlowDefinition[] flowHolder = new FlowDefinition[1];
+        String warning = captureStderr(() -> flowHolder[0] = FlowImport.fromCanonicalJson(json));
+
+        assertEquals("", warning, "An unrecognized contextMode value must never warn");
+        assertEquals("quantum", flowHolder[0].contextMode(),
+            "An unrecognized contextMode value must still be preserved verbatim");
+    }
+
+    /**
+     * Once-per-process dedup, mirroring {@code legacyWarningIsEmittedOncePerDistinctValue} —
+     * repeated imports of the same feedback-mode flow emit exactly one downgrade warning.
+     */
+    @Test
+    void feedbackDowngradeWarningIsEmittedOncePerProcess() throws Exception {
+        FlowImport.resetContextModeWarningsForTests();
+        Path fixture = resolveConformanceFile("conformance-feedback-mode.flow.json");
+
+        String warning = captureStderr(() -> {
+            FlowImport.fromCanonicalFile(fixture);
+            FlowImport.fromCanonicalFile(fixture);
+            FlowImport.fromCanonicalFile(fixture);
+        });
+
+        assertEquals(1,
+            countOccurrences(warning, "feedback mode is not supported by this runtime yet; downgrading to blind"),
+            "Three imports of the same feedback-mode flow must produce exactly one warning, got: \""
+                + warning + "\"");
+    }
 }

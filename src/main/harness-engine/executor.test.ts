@@ -1,3 +1,6 @@
+import { mkdtemp, readFile as nodeReadFile, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgenticFlow, AgenticStep } from '@/types/harness';
 import type { HarnessEventPayload } from '@/types/ipc-events';
@@ -825,5 +828,423 @@ describe('executeAgenticFlow — resolveConnection threading (Phase 6 provider c
     });
 
     expect(seenResolveConnection).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// contextMode: 'feedback' — Rosetta context system (spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md)
+// ---------------------------------------------------------------------------
+
+/** Minimal in-memory McpFileSystem — enough to back genesis, the model's own
+ * FS tools, and the guardrail's snapshotWorkspace walk, without touching disk. */
+function makeInMemoryFileSystem(): McpFileSystem & { files: Map<string, string> } {
+  const files = new Map<string, string>();
+  const dirs = new Set<string>(['/workspace']);
+
+  const normalize = (p: string) => p.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/';
+
+  return {
+    files,
+    mkdir: async (path: string) => {
+      dirs.add(normalize(path));
+    },
+    readdir: async (path: string) => {
+      const prefix = `${normalize(path)}/`;
+      const names = new Set<string>();
+      for (const p of files.keys()) {
+        if (p.startsWith(prefix)) names.add(p.slice(prefix.length).split('/')[0]);
+      }
+      for (const d of dirs) {
+        if (d.startsWith(prefix) && d !== prefix) names.add(d.slice(prefix.length).split('/')[0]);
+      }
+      return [...names];
+    },
+    readFile: async (path: string) => {
+      const content = files.get(normalize(path));
+      if (content === undefined) throw new Error(`ENOENT: no such file: ${path}`);
+      return content;
+    },
+    stat: async (path: string) => {
+      const norm = normalize(path);
+      const isDir = dirs.has(norm) || [...files.keys()].some((p) => p.startsWith(`${norm}/`));
+      const content = files.get(norm);
+      return {
+        isDirectory: () => isDir,
+        isFile: () => content !== undefined,
+        size: content !== undefined ? Buffer.byteLength(content, 'utf-8') : 0,
+      };
+    },
+    writeFile: async (path: string, content: string) => {
+      files.set(normalize(path), content);
+    },
+  };
+}
+
+function makeFeedbackFlow(
+  stepsRecord: Record<string, AgenticStep>,
+  rootStepId: string,
+): AgenticFlow {
+  return {
+    id: 'flow-feedback',
+    name: 'Feedback Flow',
+    rootStepId,
+    stepsRecord,
+    contextMode: 'feedback',
+  };
+}
+
+describe('executeAgenticFlow — contextMode: blind (default) has zero side effects', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  it('never touches the fileSystem for any .fluxor path when contextMode is absent', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow: AgenticFlow = {
+      id: 'flow-blind-check',
+      name: 'Blind Check',
+      rootStepId: 'root',
+      stepsRecord: { root: makeStep('root', [], []) },
+    };
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    expect([...fs.files.keys()].some((path) => path.includes('.fluxor'))).toBe(false);
+  });
+
+  it('never touches the fileSystem for any .fluxor path when contextMode is explicitly "blind"', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow: AgenticFlow = {
+      id: 'flow-blind-explicit',
+      name: 'Blind Explicit',
+      rootStepId: 'root',
+      stepsRecord: { root: makeStep('root', [], []) },
+      contextMode: 'blind',
+    };
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    expect([...fs.files.keys()].some((path) => path.includes('.fluxor'))).toBe(false);
+  });
+
+  it('a blind flow with NO fileSystem/rootDir at all runs exactly as before (no crash, no genesis)', async () => {
+    const flow: AgenticFlow = {
+      id: 'flow-blind-bare',
+      name: 'Blind Bare',
+      rootStepId: 'root',
+      stepsRecord: { root: makeStep('root', [], []) },
+    };
+
+    await expect(executeAgenticFlow(flow, {
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    })).resolves.toBeUndefined();
+  });
+});
+
+describe('executeAgenticFlow — contextMode: feedback — genesis', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  it('creates manifest.json + seeded step.*.md files under .fluxor/run-context/<runId>/ before any step runs', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow = makeFeedbackFlow(
+      {
+        root: makeStep('root', [], ['leaf']),
+        leaf: makeStep('leaf', ['root'], []),
+      },
+      'root',
+    );
+
+    const runId = 'run-genesis-1';
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId,
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    const manifestRaw = fs.files.get(`/workspace/.fluxor/run-context/${runId}/manifest.json`);
+    expect(manifestRaw).toBeDefined();
+    const manifest = JSON.parse(manifestRaw!);
+    expect(manifest.runId).toBe(runId);
+    expect(manifest.flowId).toBe('flow-feedback');
+    expect(manifest.contextMode).toBe('feedback');
+    expect(Object.keys(manifest.steps).sort()).toEqual(['leaf', 'root']);
+
+    expect(fs.files.get(`/workspace/.fluxor/run-context/${runId}/step.root.md`)).toContain('# Contexto para root');
+    expect(fs.files.get(`/workspace/.fluxor/run-context/${runId}/step.leaf.md`)).toContain('# Contexto para leaf');
+  });
+
+  it('uses the caller-supplied fileSystem for genesis when provided (no real disk touched)', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow = makeFeedbackFlow({ root: makeStep('root', [], []) }, 'root');
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId: 'run-genesis-2',
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    expect(fs.files.has('/workspace/.fluxor/run-context/run-genesis-2/manifest.json')).toBe(true);
+  });
+
+  it('with NO options.fileSystem, synthesizes a real-FS adapter and writes to a real rootDir on disk', async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), 'fluxor-context-genesis-'));
+    try {
+      const flow = makeFeedbackFlow({ root: makeStep('root', [], []) }, 'root');
+
+      await executeAgenticFlow(flow, {
+        rootDir: tmpDir,
+        runId: 'run-genesis-real-fs',
+        runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+      });
+
+      const manifestPath = join(tmpDir, '.fluxor', 'run-context', 'run-genesis-real-fs', 'manifest.json');
+      const manifestRaw = await nodeReadFile(manifestPath, 'utf-8');
+      const manifest = JSON.parse(manifestRaw);
+      expect(manifest.runId).toBe('run-genesis-real-fs');
+
+      const seedPath = join(tmpDir, '.fluxor', 'run-context', 'run-genesis-real-fs', 'step.root.md');
+      await expect(nodeReadFile(seedPath, 'utf-8')).resolves.toContain('# Contexto para root');
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('with NO options.rootDir either, defaults the real-FS adapter to process.cwd() — not guardrails.ts\'s independent "/workspace" default', async () => {
+    // Regression guard for the rootDir-default mismatch the spec calls out:
+    // guardrails.ts's snapshotWorkspace defaults to '/workspace' while the
+    // model's own FS tools (mcp-adapter.ts's normalizeRootDir) default to
+    // process.cwd() — genesis must agree with the LATTER. process.cwd() is
+    // mocked to a disposable temp dir so this test never touches the real
+    // repository working directory.
+    const tmpDir = await mkdtemp(join(tmpdir(), 'fluxor-context-cwd-default-'));
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    try {
+      const flow = makeFeedbackFlow({ root: makeStep('root', [], []) }, 'root');
+
+      await expect(executeAgenticFlow(flow, {
+        runId: 'run-genesis-cwd-default',
+        runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+      })).resolves.toBeUndefined();
+
+      // Landed under the mocked cwd, proving it did NOT fall back to '/workspace'.
+      const manifestPath = join(tmpDir, '.fluxor', 'run-context', 'run-genesis-cwd-default', 'manifest.json');
+      await expect(nodeReadFile(manifestPath, 'utf-8')).resolves.toContain('"runId"');
+    } finally {
+      cwdSpy.mockRestore();
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('executeAgenticFlow — contextMode: feedback — <flow_awareness> wiring', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  it('passes <flow_awareness> (topology + assigned file + writesTo) to the LLM-path step\'s systemPrompt', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow = makeFeedbackFlow(
+      {
+        root: makeStep('root', [], ['leaf']),
+        leaf: makeStep('leaf', ['root'], []),
+      },
+      'root',
+    );
+
+    const seenSystemPrompts: Record<string, string> = {};
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId: 'run-awareness-1',
+      runStep: async ({ step, systemPrompt }) => {
+        seenSystemPrompts[step.id] = systemPrompt;
+        return { text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] };
+      },
+    });
+
+    expect(seenSystemPrompts.root).toContain('<flow_awareness>');
+    expect(seenSystemPrompts.root).toContain('.fluxor/run-context/run-awareness-1/step.root.md');
+    expect(seenSystemPrompts.root).toContain('.fluxor/run-context/run-awareness-1/step.leaf.md');
+    // leaf is terminal — no writesTo, so no "write a briefing" targets, but it
+    // still gets the block (its own assigned file + topology).
+    expect(seenSystemPrompts.leaf).toContain('<flow_awareness>');
+    expect(seenSystemPrompts.leaf).toContain('.fluxor/run-context/run-awareness-1/step.leaf.md');
+  });
+
+  it('a retriever step never receives <flow_awareness> (its branch returns before the LLM path)', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow = makeFeedbackFlow(
+      {
+        root: makeStep('root', [], ['fetch']),
+        fetch: makeStep('fetch', ['root'], ['use']),
+        use: makeStep('use', ['fetch'], []),
+      },
+      'root',
+    );
+    flow.stepsRecord.fetch.type = 'retriever';
+
+    const seenSystemPrompts: Record<string, string> = {};
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId: 'run-awareness-retriever',
+      runStep: async ({ step, systemPrompt }) => {
+        seenSystemPrompts[step.id] = systemPrompt;
+        return { text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] };
+      },
+    });
+
+    // The retriever never calls runStep at all (its branch bypasses it), so
+    // it simply has no entry — proving the LLM path (and its
+    // <flow_awareness>) was never reached for it.
+    expect(seenSystemPrompts.fetch).toBeUndefined();
+    // Its seeded file still exists (genesis seeds every contextFile).
+    expect(fs.files.get('/workspace/.fluxor/run-context/run-awareness-retriever/step.fetch.md'))
+      .toContain('# Contexto para fetch');
+    // Downstream (non-exempt) steps are unaffected.
+    expect(seenSystemPrompts.use).toContain('<flow_awareness>');
+  });
+});
+
+describe('executeAgenticFlow — contextMode: feedback — guardrail enforces promised briefings', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  it('passes silently when the step writes a real briefing (beyond the seed) into its writesTo target', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow = makeFeedbackFlow(
+      {
+        root: makeStep('root', [], ['leaf']),
+        leaf: makeStep('leaf', ['root'], []),
+      },
+      'root',
+    );
+
+    const events: HarnessEventPayload[] = [];
+    harnessEventBus.on(HARNESS_EVENT_NAME, (e) => events.push(e));
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId: 'run-guardrail-pass',
+      guardrailMaxAttempts: 2,
+      runStep: async ({ step, tools }) => {
+        if (step.id === 'root') {
+          await tools.write_file.execute?.(
+            { path: '.fluxor/run-context/run-guardrail-pass/step.leaf.md', content: 'A real, detailed briefing for leaf that clearly exceeds the tiny seeded header in length.' },
+            { toolCallId: 'tool-1', messages: [] },
+          );
+        }
+        return { text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] };
+      },
+    });
+
+    const stepEvents = events.filter(
+      (e): e is Extract<HarnessEventPayload, { type: 'StepStatusChanged' }> => e.type === 'StepStatusChanged',
+    );
+    expect(stepEvents.some((e) => e.logs?.includes('breached contract'))).toBe(false);
+  });
+
+  it('retries then breaches when the step never writes into its writesTo target', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow = makeFeedbackFlow(
+      {
+        root: makeStep('root', [], ['leaf']),
+        leaf: makeStep('leaf', ['root'], []),
+      },
+      'root',
+    );
+
+    const events: HarnessEventPayload[] = [];
+    harnessEventBus.on(HARNESS_EVENT_NAME, (e) => events.push(e));
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId: 'run-guardrail-breach',
+      guardrailMaxAttempts: 2,
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    const stepEvents = events.filter(
+      (e): e is Extract<HarnessEventPayload, { type: 'StepStatusChanged' }> => e.type === 'StepStatusChanged',
+    );
+    expect(stepEvents.some((e) => e.stepId === 'root' && e.logs?.includes('breached contract'))).toBe(true);
+  });
+
+  it('a terminal step with no writesTo never activates the guardrail (no contract at all)', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow = makeFeedbackFlow({ root: makeStep('root', [], []) }, 'root');
+
+    const events: HarnessEventPayload[] = [];
+    harnessEventBus.on(HARNESS_EVENT_NAME, (e) => events.push(e));
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId: 'run-guardrail-terminal',
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    const stepEvents = events.filter(
+      (e): e is Extract<HarnessEventPayload, { type: 'StepStatusChanged' }> => e.type === 'StepStatusChanged',
+    );
+    expect(stepEvents.some((e) => e.logs?.includes('guardrail'))).toBe(false);
+  });
+});
+
+describe('executeAgenticFlow — contextMode: feedback — checkpoint contextFileSnapshot', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  it('attaches contextFileSnapshot (path + content) to each step\'s checkpoint', async () => {
+    const fs = makeInMemoryFileSystem();
+    const flow = makeFeedbackFlow({ root: makeStep('root', [], []) }, 'root');
+    const runId = 'run-checkpoint-ctx';
+
+    await executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId,
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    const checkpoints = listCheckpoints(runId);
+    const rootCheckpoint = checkpoints.find((c) => c.stepId === 'root');
+    expect(rootCheckpoint?.contextFileSnapshot?.path).toBe('.fluxor/run-context/run-checkpoint-ctx/step.root.md');
+    expect(rootCheckpoint?.contextFileSnapshot?.content).toContain('# Contexto para root');
+  });
+
+  it('omits contextFileSnapshot entirely for a blind-mode run\'s checkpoints', async () => {
+    const flow: AgenticFlow = {
+      id: 'flow-blind-checkpoint',
+      name: 'Blind Checkpoint',
+      rootStepId: 'root',
+      stepsRecord: { root: makeStep('root', [], []) },
+    };
+    const runId = 'run-checkpoint-blind';
+
+    await executeAgenticFlow(flow, {
+      runId,
+      runStep: async ({ step }) => ({ text: `output:${step.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    const checkpoints = listCheckpoints(runId);
+    expect('contextFileSnapshot' in checkpoints[0]).toBe(false);
   });
 });

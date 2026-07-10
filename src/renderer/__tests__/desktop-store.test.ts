@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { PipelineAssembly } from '@/types/meta-agent';
 import { LOOP_DEFAULT_MAX_ITERATIONS, LOOP_MAX_ITERATIONS_CAP } from '@/types/harness';
 import { useDesktopStore, getStepMentalAttachments } from '../store/desktop-store';
+import { compileFlowFromCanvas } from '../lib/harness-compiler';
 
 // Reset store to pristine state before each test
 beforeEach(() => {
@@ -1263,6 +1264,48 @@ describe('updateFrameData', () => {
 
     const afterNode = useDesktopStore.getState().mentalNodes.find((n: any) => n.id === stepId);
     expect(afterNode).toBe(beforeNode);
+  });
+
+  // ── Task U — Rosetta contextMode: the FULL data chain, end to end ──────────
+  //
+  // This is the same `updateFrameData(frameId, { contextMode: ... })` call
+  // FrameNode.tsx's context-mode <select> onChange handler makes (see
+  // FrameNode.test.tsx for proof the JSX wires that call correctly), chained
+  // directly into the REAL `compileFlowFromCanvas` (no mocks anywhere in this
+  // file) to prove the whole pipeline: toggle's store write ->
+  // FrameNodeData.contextMode -> harness-compiler's owning-frame lookup ->
+  // AgenticFlow.contextMode — the exact field the executor branches on.
+  it('contextMode set via updateFrameData survives into the compiled AgenticFlow (toggle -> FrameNodeData -> harness-compiler -> AgenticFlow.contextMode)', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({
+      position: { x: 0, y: 0 }, width: 300, height: 200, title: 'Feedback Flow', childIds: [],
+    });
+    store.addStepNode({ position: { x: 0, y: 0 }, title: 'Root step', parentId: frameId });
+
+    // The exact call FrameNode.tsx's handleContextModeChange makes when the
+    // user picks "Feedback" from the select.
+    store.updateFrameData(frameId, { contextMode: 'feedback' });
+
+    // Same no-options call `compileCurrentCanvas` (harness-store.ts) makes on
+    // "Run" — the single step with zero incoming edges auto-resolves as root.
+    const { mentalNodes, mentalEdges } = useDesktopStore.getState();
+    const flow = compileFlowFromCanvas(mentalNodes, mentalEdges);
+
+    expect(flow.contextMode).toBe('feedback');
+  });
+
+  it('a Frame with no contextMode toggled compiles with the field omitted (criterion 1: byte-identical to today)', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({
+      position: { x: 0, y: 0 }, width: 300, height: 200, title: 'Untouched Flow', childIds: [],
+    });
+    store.addStepNode({ position: { x: 0, y: 0 }, title: 'Root step', parentId: frameId });
+
+    const { mentalNodes, mentalEdges } = useDesktopStore.getState();
+    const flow = compileFlowFromCanvas(mentalNodes, mentalEdges);
+
+    expect(flow.contextMode).toBeUndefined();
+    expect('contextMode' in flow).toBe(false);
   });
 });
 

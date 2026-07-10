@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { loadDotEnv } from '../env';
+import { parseContextModeFlag, warnIfContextModeIsNoop } from '../context-mode-flag';
 import { runBench } from './bench-runner';
 import type { PFSuite } from '../types';
 
@@ -63,10 +64,12 @@ async function main(): Promise<void> {
   const repetitions = parseInt10('reps', 5);
   const baseSeed = parseInt10('seed', 1);
   const varySeeds = parseFlag('vary-seeds');
+  const contextMode = parseContextModeFlag(process.argv);
+  warnIfContextModeIsNoop(suite, contextMode);
 
-  console.log(`\n[pf:bench] Suite: ${suite}  Model: ${modelId}  Reps: ${repetitions}  Seed: ${baseSeed}${varySeeds ? '+i' : ''}\n`);
+  console.log(`\n[pf:bench] Suite: ${suite}  Model: ${modelId}  Reps: ${repetitions}  Seed: ${baseSeed}${varySeeds ? '+i' : ''}  ContextMode: ${contextMode ?? '(flow default)'}\n`);
 
-  const result = await runBench({ suite, modelId, repetitions, baseSeed, varySeeds });
+  const result = await runBench({ suite, modelId, repetitions, baseSeed, varySeeds, contextMode });
 
   const { finalScore: fs } = result;
   const halfWidth = (fs.ci95.upper - fs.ci95.lower) / 2;

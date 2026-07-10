@@ -170,6 +170,117 @@ describe('buildStepContext', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// <flow_awareness> — feedback-mode flow context (Rosetta, spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md)
+// ---------------------------------------------------------------------------
+
+describe('buildStepContext — flow_awareness (feedback mode)', () => {
+  it('blind (no flowAwareness option) produces byte-identical output whether the option key is omitted or explicitly undefined', async () => {
+    const step = makeStep({
+      mods: [
+        { id: 'security-first', name: 'SecurityFirst', type: 'pre_process', config: { inject: 'Never log secrets.' } },
+      ],
+      mentalContext: [{ id: 'idea-1', text: 'User prefers minimal UI.', relationToStep: 'incoming' }],
+    });
+
+    const omitted = await buildStepContext(step);
+    const explicitUndefined = await buildStepContext(step, { flowAwareness: undefined });
+
+    expect(explicitUndefined).toEqual(omitted);
+    expect(omitted.systemPrompt).not.toContain('<flow_awareness>');
+    expect(omitted.userPrompt).not.toContain('<flow_awareness>');
+  });
+
+  it('blind output matches an exact literal snapshot — proves no new bytes are ever introduced', async () => {
+    const context = await buildStepContext(makeStep({
+      roles: [{ id: 'architect', name: 'Architect', systemPrompt: 'Preserve system boundaries.' }],
+    }));
+
+    expect(context.systemPrompt).toBe(
+      '<role_heuristics>\n\n[Architect]\nPreserve system boundaries.\n\n</role_heuristics>',
+    );
+  });
+
+  it('renders <flow_awareness> in the SYSTEM prompt (never the user prompt), positioned after <execution_constraints>', async () => {
+    const context = await buildStepContext(makeStep({
+      mods: [
+        { id: 'security-first', name: 'SecurityFirst', type: 'pre_process', config: { inject: 'Never log secrets.' } },
+      ],
+    }), {
+      flowAwareness: {
+        topologyLines: ['- root: Kick off the chain.'],
+        assignedFile: '.fluxor/run-context/run-1/step.root.md',
+        writesTo: ['.fluxor/run-context/run-1/step.leaf.md'],
+      },
+    });
+
+    expect(context.systemPrompt).toContain('<flow_awareness>');
+    expect(context.systemPrompt).toContain('</flow_awareness>');
+    expect(context.userPrompt).not.toContain('<flow_awareness>');
+
+    const constraintsIndex = context.systemPrompt.indexOf('<execution_constraints>');
+    const awarenessIndex = context.systemPrompt.indexOf('<flow_awareness>');
+    expect(constraintsIndex).toBeGreaterThanOrEqual(0);
+    expect(awarenessIndex).toBeGreaterThan(constraintsIndex);
+  });
+
+  it('includes the topology summary, assigned file, and writesTo paths with a write instruction', async () => {
+    const context = await buildStepContext(makeStep(), {
+      flowAwareness: {
+        topologyLines: ['- root: Kick off the chain.', '- leaf: Wrap it up.'],
+        assignedFile: '.fluxor/run-context/run-1/step.root.md',
+        writesTo: ['.fluxor/run-context/run-1/step.leaf.md'],
+      },
+    });
+
+    expect(context.systemPrompt).toContain('- root: Kick off the chain.');
+    expect(context.systemPrompt).toContain('- leaf: Wrap it up.');
+    expect(context.systemPrompt).toContain('.fluxor/run-context/run-1/step.root.md');
+    expect(context.systemPrompt).toContain('.fluxor/run-context/run-1/step.leaf.md');
+    expect(context.systemPrompt.toLowerCase()).toContain('write_file');
+    expect(context.systemPrompt.toLowerCase()).toContain('read_file');
+  });
+
+  it('omits the "write a briefing" instruction when writesTo is empty (e.g. a terminal or exempt step)', async () => {
+    const context = await buildStepContext(makeStep(), {
+      flowAwareness: {
+        topologyLines: ['- solo: Do the whole thing alone.'],
+        assignedFile: '.fluxor/run-context/run-1/step.solo.md',
+        writesTo: [],
+      },
+    });
+
+    expect(context.systemPrompt).toContain('<flow_awareness>');
+    expect(context.systemPrompt).not.toContain('leave a');
+  });
+
+  it('presents flow_awareness as reference material, not a constraint', async () => {
+    const context = await buildStepContext(makeStep(), {
+      flowAwareness: {
+        topologyLines: ['- root: Kick off the chain.'],
+        assignedFile: '.fluxor/run-context/run-1/step.root.md',
+        writesTo: [],
+      },
+    });
+
+    expect(context.systemPrompt.toLowerCase()).toContain('not a constraint');
+  });
+
+  it('still renders <flow_awareness> even when there are no execution_constraints, right after <role_heuristics>', async () => {
+    const context = await buildStepContext(makeStep(), {
+      flowAwareness: {
+        topologyLines: ['- root: Kick off the chain.'],
+        assignedFile: '.fluxor/run-context/run-1/step.root.md',
+        writesTo: [],
+      },
+    });
+
+    expect(context.systemPrompt).not.toContain('<execution_constraints>');
+    expect(context.systemPrompt.indexOf('<role_heuristics>')).toBeLessThan(context.systemPrompt.indexOf('<flow_awareness>'));
+  });
+});
+
 describe('validateStepAtoms', () => {
   it('allows zero or exactly one role', () => {
     expect(() => validateStepAtoms(makeStep())).not.toThrow();

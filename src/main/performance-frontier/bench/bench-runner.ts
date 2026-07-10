@@ -1,7 +1,7 @@
 import { runPerformanceFrontier } from '../runner';
 import { summarize } from './statistics';
 import type { StatsSummary } from './statistics';
-import type { PFSuite } from '../types';
+import type { PFContextMode, PFSuite } from '../types';
 
 export interface BenchRunSample {
   finalScore: number;
@@ -34,10 +34,12 @@ export interface RunBenchOptions {
    * procedural case variant.
    */
   varySeeds?: boolean;
+  /** Forwarded verbatim to every repetition's `runPerformanceFrontier` call — see Step P1. */
+  contextMode?: PFContextMode;
 }
 
 export async function runBench(opts: RunBenchOptions): Promise<BenchResult> {
-  const { suite, modelId, repetitions } = opts;
+  const { suite, modelId, repetitions, contextMode } = opts;
   const baseSeed = opts.baseSeed ?? 1;
   const varySeeds = opts.varySeeds ?? false;
 
@@ -49,7 +51,7 @@ export async function runBench(opts: RunBenchOptions): Promise<BenchResult> {
     seeds.push(seed);
 
     try {
-      const result = await runPerformanceFrontier({ suite, modelId, seed });
+      const result = await runPerformanceFrontier({ suite, modelId, seed, contextMode });
       samples.push({
         finalScore: result.finalScore,
         verdict: result.verdict,

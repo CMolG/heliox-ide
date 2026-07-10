@@ -532,3 +532,144 @@ describe('performance frontier runner', () => {
     expect(ledger).toContain('"artifactsDir"');
   });
 });
+
+// Step P1/P2 (docs/superpowers/plans/2026-07-10-flow-context-modes.md): the
+// `contextMode` override forces every step's `AgenticFlow.contextMode` for
+// the run and is recorded in the ledger — additive, defaulting to 'blind'.
+describe('performance frontier runner — context mode override (Step P1/P2)', () => {
+  beforeEach(async () => {
+    outputDir = await mkdtemp(join(tmpdir(), 'fluxor-pf-run-ctx-'));
+  });
+
+  afterEach(async () => {
+    await rm(outputDir, { recursive: true, force: true });
+  });
+
+  const passingJudge = (score: number) => async (input: any) => ({
+    runId: input.runId,
+    caseId: input.caseId,
+    suite: input.suite,
+    modelUnderTest: input.modelUnderTest,
+    verdict: 'pass',
+    finalScore: score,
+    semanticScore: score - 5,
+    telemetryScore: 10,
+    evaluations: {},
+    criticalFailures: [],
+    telemetry: input.telemetry,
+  }) as any;
+
+  it('defaults to "blind" (no <flow_awareness> injected) and records contextMode:"blind" in the ledger', async () => {
+    let capturedSystemPrompt = '';
+    const result = await runPerformanceFrontier({
+      seed: 20,
+      outputDir,
+      modelId: 'fake/model',
+      // No `contextMode` passed — must default to whatever the flow carries
+      // (always absent/blind from case-factory.ts today).
+      runStep: async ({ systemPrompt, tools }) => {
+        capturedSystemPrompt = systemPrompt;
+        await tools.write_file.execute?.({ path: 'ok.txt', content: 'ok' }, { toolCallId: 't1', messages: [] });
+        return {
+          text: 'ok',
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          toolCalls: [{ toolName: 'write_file' }],
+          toolResults: [{}],
+        };
+      },
+      judge: passingJudge(80),
+    });
+
+    expect(capturedSystemPrompt).not.toContain('<flow_awareness>');
+    const ledger = await readFile(result.ledgerPath, 'utf-8');
+    expect(ledger).toContain('"contextMode":"blind"');
+  });
+
+  it('overrides contextMode to "feedback" and the executor actually injects <flow_awareness>', async () => {
+    let capturedSystemPrompt = '';
+    const result = await runPerformanceFrontier({
+      seed: 21,
+      outputDir,
+      modelId: 'fake/model',
+      contextMode: 'feedback',
+      runStep: async ({ systemPrompt, tools }) => {
+        capturedSystemPrompt = systemPrompt;
+        await tools.write_file.execute?.({ path: 'ok.txt', content: 'ok' }, { toolCallId: 't1', messages: [] });
+        return {
+          text: 'ok',
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          toolCalls: [{ toolName: 'write_file' }],
+          toolResults: [{}],
+        };
+      },
+      judge: passingJudge(88),
+    });
+
+    // Proves the override reaches the actual AgenticFlow the executor
+    // consumes — not just a cosmetic ledger field.
+    expect(capturedSystemPrompt).toContain('<flow_awareness>');
+    const ledger = await readFile(result.ledgerPath, 'utf-8');
+    expect(ledger).toContain('"contextMode":"feedback"');
+  });
+
+  it('applies the override to every epoch\'s flow for the progression suite', async () => {
+    const systemPromptsByStep: Record<string, string> = {};
+    const result = await runPerformanceFrontier({
+      suite: 'progression',
+      seed: 22,
+      outputDir,
+      modelId: 'fake/model',
+      contextMode: 'feedback',
+      runStep: async ({ step, systemPrompt, tools }) => {
+        systemPromptsByStep[step.id] = systemPrompt;
+        await tools.write_file.execute?.({ path: `${step.id}.txt`, content: 'ok' }, { toolCallId: `${step.id}-w`, messages: [] });
+        return {
+          text: 'ok',
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          toolCalls: [{ toolName: 'write_file' }],
+          toolResults: [{}],
+        };
+      },
+      judge: passingJudge(85),
+    });
+
+    expect(Object.keys(systemPromptsByStep)).toEqual(['epoch-1-root', 'epoch-2-root']);
+    expect(systemPromptsByStep['epoch-1-root']).toContain('<flow_awareness>');
+    expect(systemPromptsByStep['epoch-2-root']).toContain('<flow_awareness>');
+    const ledger = await readFile(result.ledgerPath, 'utf-8');
+    expect(ledger).toContain('"contextMode":"feedback"');
+  });
+
+  // Edge: "suite sin flow" — flow-assembler never calls executeAgenticFlow,
+  // so forcing contextMode is structurally inert; the ledger stays "blind"
+  // (recording "feedback" would misreport a run where nothing feedback-
+  // related happened) and nothing throws. The CLI layer (cli.ts/bench/cli.ts)
+  // is responsible for warning the caller — see context-mode-flag.test.ts.
+  it('is a no-op for the flow-assembler suite and still records "blind" in the ledger', async () => {
+    const result = await runPerformanceFrontier({
+      suite: 'flow-assembler',
+      seed: 23,
+      outputDir,
+      modelId: 'fake/model',
+      contextMode: 'feedback',
+      assemblePipeline: async (userIntent, assembleOptions) => {
+        assembleOptions?.onGeneration?.({
+          discoveredCatalog: { roles: [], mods: [] },
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          latencyMs: 5,
+        });
+        return {
+          frameTitle: 'Test Pipeline',
+          description: 'Test.',
+          missingCapabilitiesRequested: [],
+          steps: [{ id: 'a', prompt: 'do it', roleId: 'confident-executor', modIds: [], prevStepIds: [] }],
+        };
+      },
+      judge: passingJudge(90),
+    });
+
+    expect(result.suite).toBe('flow-assembler');
+    const ledger = await readFile(result.ledgerPath, 'utf-8');
+    expect(ledger).toContain('"contextMode":"blind"');
+  });
+});

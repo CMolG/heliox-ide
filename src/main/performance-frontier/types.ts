@@ -17,6 +17,16 @@ export type PFSuite =
   | 'from-scratch';
 
 /**
+ * Mirrors `AgenticFlow.contextMode` (src/types/harness.ts) — duplicated as a
+ * standalone alias here (rather than importing it) so the Performance
+ * Frontier's CLI/ledger/comparator layer has a name for the union without
+ * reaching into harness-engine's territory for a type that isn't otherwise
+ * exported on its own. Absent/undefined reads as `'blind'` everywhere in this
+ * subsystem (CLI defaults, ledger records written before this field existed).
+ */
+export type PFContextMode = 'blind' | 'feedback';
+
+/**
  * A single mutation epoch in a brownfield (progression) case. Each epoch runs
  * its own agentic flow against the SAME, non-destroyed VFS, so later epochs can
  * regress earlier work.
