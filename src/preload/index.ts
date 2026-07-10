@@ -7,7 +7,7 @@
  */
 // src/preload/index.ts — Secure IPC bridge between main and renderer
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import type { Flow, RunAgentParams, AgentEvent, HelioxAPI } from '../types';
+import type { Flow, RunAgentParams, AgentEvent, FluxorAPI } from '../types';
 import type { ContextMapNode, ContextMapEdge } from '../types/context-map';
 import type { AgenticFlow } from '../types/harness';
 import type {
@@ -24,63 +24,63 @@ import type {
 } from '../types/ipc-events';
 import type { BrowserAction } from '../types/browser';
 
-const helioxAPI: HelioxAPI = {
+const fluxorAPI: FluxorAPI = {
   initBaselines: (flows: Flow[]) =>
-    ipcRenderer.invoke('heliox:init-baselines', flows),
+    ipcRenderer.invoke('fluxor:init-baselines', flows),
 
   runAgent: (params: RunAgentParams) =>
-    ipcRenderer.invoke('heliox:run-agent', params),
+    ipcRenderer.invoke('fluxor:run-agent', params),
 
   startHarness: (flow: AgenticFlow, options?: { modelPolicy?: ModelPolicy; modelId?: string }) =>
-    ipcRenderer.invoke('heliox:start-harness', flow, options),
+    ipcRenderer.invoke('fluxor:start-harness', flow, options),
 
   exportFlow: (flow: AgenticFlow) =>
-    ipcRenderer.invoke('heliox:export-flow', flow),
+    ipcRenderer.invoke('fluxor:export-flow', flow),
 
   assemblePipeline: (userIntent: string) =>
-    ipcRenderer.invoke('heliox:assemble-pipeline', userIntent),
+    ipcRenderer.invoke('fluxor:assemble-pipeline', userIntent),
 
   approveDiff: (diffId: string) =>
-    ipcRenderer.invoke('heliox:approve-diff', diffId),
+    ipcRenderer.invoke('fluxor:approve-diff', diffId),
 
   rejectDiff: (diffId: string, feedback: string) =>
-    ipcRenderer.invoke('heliox:reject-diff', diffId, feedback),
+    ipcRenderer.invoke('fluxor:reject-diff', diffId, feedback),
 
   shutdown: () =>
-    ipcRenderer.invoke('heliox:shutdown'),
+    ipcRenderer.invoke('fluxor:shutdown'),
 
   onAgentEvent: (callback: (event: AgentEvent) => void) => {
     const handler = (_event: IpcRendererEvent, data: AgentEvent) => callback(data);
-    ipcRenderer.on('heliox:agent-event', handler);
-    return () => { ipcRenderer.removeListener('heliox:agent-event', handler); };
+    ipcRenderer.on('fluxor:agent-event', handler);
+    return () => { ipcRenderer.removeListener('fluxor:agent-event', handler); };
   },
 
   onHarnessEvent: (callback: (event: HarnessEventPayload) => void) => {
     const handler = (_event: IpcRendererEvent, data: HarnessEventPayload) => callback(data);
-    ipcRenderer.on('heliox:harness-event', handler);
-    return () => { ipcRenderer.removeListener('heliox:harness-event', handler); };
+    ipcRenderer.on('fluxor:harness-event', handler);
+    return () => { ipcRenderer.removeListener('fluxor:harness-event', handler); };
   },
 
   openFolderDialog: () =>
-    ipcRenderer.invoke('heliox:open-folder-dialog'),
+    ipcRenderer.invoke('fluxor:open-folder-dialog'),
 
   readDirectory: (dirPath: string) =>
-    ipcRenderer.invoke('heliox:read-dir', dirPath),
+    ipcRenderer.invoke('fluxor:read-dir', dirPath),
 
   checkCli: () =>
-    ipcRenderer.invoke('heliox:check-cli'),
+    ipcRenderer.invoke('fluxor:check-cli'),
 
   getProjectName: (projectPath: string) =>
-    ipcRenderer.invoke('heliox:get-project-name', projectPath),
+    ipcRenderer.invoke('fluxor:get-project-name', projectPath),
 
   readProjectConfig: (projectPath: string, filename: string) =>
-    ipcRenderer.invoke('heliox:read-project-config', projectPath, filename),
+    ipcRenderer.invoke('fluxor:read-project-config', projectPath, filename),
 
   writeProjectConfig: (projectPath: string, filename: string, content: string) =>
-    ipcRenderer.invoke('heliox:write-project-config', projectPath, filename, content),
+    ipcRenderer.invoke('fluxor:write-project-config', projectPath, filename, content),
 
   readFile: (filePath: string) =>
-    ipcRenderer.invoke('heliox:read-file', filePath),
+    ipcRenderer.invoke('fluxor:read-file', filePath),
 
   logResult: (projectPath: string, row: {
     commit: string;
@@ -90,37 +90,37 @@ const helioxAPI: HelioxAPI = {
     visualDiffPct: string;
     description: string;
   }) =>
-    ipcRenderer.invoke('heliox:log-result', projectPath, row),
+    ipcRenderer.invoke('fluxor:log-result', projectPath, row),
 
   gitStatus: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-status', cwd),
+    ipcRenderer.invoke('fluxor:git-status', cwd),
 
   gitStatusInfo: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-status-info', cwd),
+    ipcRenderer.invoke('fluxor:git-status-info', cwd),
 
   gitDiffSummary: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-diff-summary', cwd),
+    ipcRenderer.invoke('fluxor:git-diff-summary', cwd),
 
   gitCommit: (cwd: string, message: string) =>
-    ipcRenderer.invoke('heliox:git-commit', cwd, message),
+    ipcRenderer.invoke('fluxor:git-commit', cwd, message),
 
   gitReset: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-reset', cwd),
+    ipcRenderer.invoke('fluxor:git-reset', cwd),
 
   stopAgent: (agentId: string) =>
-    ipcRenderer.invoke('heliox:stop-agent', agentId),
+    ipcRenderer.invoke('fluxor:stop-agent', agentId),
 
   showNotification: (opts: { title: string; body: string }) =>
-    ipcRenderer.invoke('heliox:show-notification', opts),
+    ipcRenderer.invoke('fluxor:show-notification', opts),
 
   openFileDialog: (cwd: string) =>
-    ipcRenderer.invoke('heliox:open-file-dialog', cwd),
+    ipcRenderer.invoke('fluxor:open-file-dialog', cwd),
 
   listModels: () =>
-    ipcRenderer.invoke('heliox:list-models'),
+    ipcRenderer.invoke('fluxor:list-models'),
 
   invalidateModelsCache: () =>
-    ipcRenderer.invoke('heliox:invalidate-models-cache'),
+    ipcRenderer.invoke('fluxor:invalidate-models-cache'),
 
   // ── OpenCode providers ──────────────────────────────────────────
   opencodeListProviders: () =>
@@ -149,82 +149,82 @@ const helioxAPI: HelioxAPI = {
     ipcRenderer.invoke('provider-connections:test', request),
 
   getConfigDir: (projectPath: string) =>
-    ipcRenderer.invoke('heliox:get-config-dir', projectPath),
+    ipcRenderer.invoke('fluxor:get-config-dir', projectPath),
 
   listProjectFiles: (projectPath: string) =>
-    ipcRenderer.invoke('heliox:list-project-files', projectPath),
+    ipcRenderer.invoke('fluxor:list-project-files', projectPath),
 
   saveFile: (defaultPath: string, content: string) =>
-    ipcRenderer.invoke('heliox:save-file', defaultPath, content),
+    ipcRenderer.invoke('fluxor:save-file', defaultPath, content),
 
   gitDiff: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-diff', cwd),
+    ipcRenderer.invoke('fluxor:git-diff', cwd),
 
   gitDiffFiles: (cwd: string, files: string[]) =>
-    ipcRenderer.invoke('heliox:git-diff-files', cwd, files),
+    ipcRenderer.invoke('fluxor:git-diff-files', cwd, files),
 
   gitShowFile: (cwd: string, filePath: string) =>
-    ipcRenderer.invoke('heliox:git-show-file', cwd, filePath),
+    ipcRenderer.invoke('fluxor:git-show-file', cwd, filePath),
 
   gitBranches: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-branches', cwd),
+    ipcRenderer.invoke('fluxor:git-branches', cwd),
 
   gitCheckout: (cwd: string, branch: string, create?: boolean) =>
-    ipcRenderer.invoke('heliox:git-checkout', cwd, branch, create),
+    ipcRenderer.invoke('fluxor:git-checkout', cwd, branch, create),
 
   gitFetch: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-fetch', cwd),
+    ipcRenderer.invoke('fluxor:git-fetch', cwd),
 
   gitPull: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-pull', cwd),
+    ipcRenderer.invoke('fluxor:git-pull', cwd),
 
   gitFileStatuses: (cwd: string) =>
-    ipcRenderer.invoke('heliox:git-file-statuses', cwd),
+    ipcRenderer.invoke('fluxor:git-file-statuses', cwd),
 
   readMarketInventory: (projectPath: string) =>
-    ipcRenderer.invoke('heliox:read-market-inventory', projectPath),
+    ipcRenderer.invoke('fluxor:read-market-inventory', projectPath),
 
   readMarketPrompt: (projectPath: string, category: string, name: string) =>
-    ipcRenderer.invoke('heliox:read-market-prompt', projectPath, category, name),
+    ipcRenderer.invoke('fluxor:read-market-prompt', projectPath, category, name),
 
   readBacklog: (projectPath: string) =>
-    ipcRenderer.invoke('heliox:read-backlog', projectPath),
+    ipcRenderer.invoke('fluxor:read-backlog', projectPath),
 
   scanBacklogs: (projectsPath: string) =>
-    ipcRenderer.invoke('heliox:scan-backlogs', projectsPath),
+    ipcRenderer.invoke('fluxor:scan-backlogs', projectsPath),
 
   listProjectsWithoutBacklog: (projectsPath: string) =>
-    ipcRenderer.invoke('heliox:list-projects-without-backlog', projectsPath),
+    ipcRenderer.invoke('fluxor:list-projects-without-backlog', projectsPath),
 
   initBacklog: (projectPath: string) =>
-    ipcRenderer.invoke('heliox:init-backlog', projectPath),
+    ipcRenderer.invoke('fluxor:init-backlog', projectPath),
 
   updateBacklogCardStatus: (backlogDir: string, filename: string, newStatus: string) =>
-    ipcRenderer.invoke('heliox:update-backlog-card-status', backlogDir, filename, newStatus),
+    ipcRenderer.invoke('fluxor:update-backlog-card-status', backlogDir, filename, newStatus),
 
   updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number }>) =>
-    ipcRenderer.invoke('heliox:update-backlog-cards', backlogDir, updates),
+    ipcRenderer.invoke('fluxor:update-backlog-cards', backlogDir, updates),
 
   readBacklogDir: (backlogDir: string) =>
-    ipcRenderer.invoke('heliox:read-backlog-dir', backlogDir),
+    ipcRenderer.invoke('fluxor:read-backlog-dir', backlogDir),
 
   writeFile: (filePath: string, content: string) =>
-    ipcRenderer.invoke('heliox:write-file', filePath, content),
+    ipcRenderer.invoke('fluxor:write-file', filePath, content),
 
   createFile: (filePath: string) =>
-    ipcRenderer.invoke('heliox:create-file', filePath),
+    ipcRenderer.invoke('fluxor:create-file', filePath),
 
   createDirectory: (dirPath: string) =>
-    ipcRenderer.invoke('heliox:create-directory', dirPath),
+    ipcRenderer.invoke('fluxor:create-directory', dirPath),
 
   deleteFile: (filePath: string) =>
-    ipcRenderer.invoke('heliox:delete-file', filePath),
+    ipcRenderer.invoke('fluxor:delete-file', filePath),
 
   deleteDirectory: (dirPath: string) =>
-    ipcRenderer.invoke('heliox:delete-directory', dirPath),
+    ipcRenderer.invoke('fluxor:delete-directory', dirPath),
 
   renamePath: (oldPath: string, newPath: string) =>
-    ipcRenderer.invoke('heliox:rename-path', oldPath, newPath),
+    ipcRenderer.invoke('fluxor:rename-path', oldPath, newPath),
 
   // Context Map
   contextMapGetAll: (projectPath: string) =>
@@ -296,15 +296,15 @@ const helioxAPI: HelioxAPI = {
         affectedSessions?: string[];
       },
     ) => callback(data);
-    ipcRenderer.on('heliox:attachable-updated', handler);
+    ipcRenderer.on('fluxor:attachable-updated', handler);
     return () => {
-      ipcRenderer.removeListener('heliox:attachable-updated', handler);
+      ipcRenderer.removeListener('fluxor:attachable-updated', handler);
     };
   },
 
   // ── M1 Dev-server watcher ───────────────────────────────────────
   // Renderer calls startDevServerWatch when a project opens; the main process
-  // polls candidate ports and pushes 'heliox:dev-server-detected' events back.
+  // polls candidate ports and pushes 'fluxor:dev-server-detected' events back.
 
   startDevServerWatch: (projectPath: string) =>
     ipcRenderer.invoke('devserver:start-watch', projectPath),
@@ -315,8 +315,8 @@ const helioxAPI: HelioxAPI = {
   onDevServerDetected: (callback: (payload: { url: string; port: number }) => void) => {
     const handler = (_event: IpcRendererEvent, data: { url: string; port: number }) =>
       callback(data);
-    ipcRenderer.on('heliox:dev-server-detected', handler);
-    return () => { ipcRenderer.removeListener('heliox:dev-server-detected', handler); };
+    ipcRenderer.on('fluxor:dev-server-detected', handler);
+    return () => { ipcRenderer.removeListener('fluxor:dev-server-detected', handler); };
   },
 
   // ── M2 Browser control (native CDP via webContents.debugger) ────────────
@@ -404,14 +404,14 @@ const helioxAPI: HelioxAPI = {
 };
 
 // Menu events from main process
-ipcRenderer.on('heliox:menu-open-project', () => {
-  window.dispatchEvent(new CustomEvent('heliox:open-project'));
+ipcRenderer.on('fluxor:menu-open-project', () => {
+  window.dispatchEvent(new CustomEvent('fluxor:open-project'));
 });
-ipcRenderer.on('heliox:menu-close-project', () => {
-  window.dispatchEvent(new CustomEvent('heliox:close-project'));
+ipcRenderer.on('fluxor:menu-close-project', () => {
+  window.dispatchEvent(new CustomEvent('fluxor:close-project'));
 });
-ipcRenderer.on('heliox:menu-switch-project', () => {
-  window.dispatchEvent(new CustomEvent('heliox:switch-project'));
+ipcRenderer.on('fluxor:menu-switch-project', () => {
+  window.dispatchEvent(new CustomEvent('fluxor:switch-project'));
 });
 
 // ─── Storage API ─────────────────────────────────────────────────────────────
@@ -470,4 +470,4 @@ const storageAPI = {
     ipcRenderer.invoke('bridge:get-qr'),
 };
 
-contextBridge.exposeInMainWorld('helioxAPI', { ...helioxAPI, ...storageAPI });
+contextBridge.exposeInMainWorld('fluxorAPI', { ...fluxorAPI, ...storageAPI });

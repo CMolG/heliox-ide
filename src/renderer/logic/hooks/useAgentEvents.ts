@@ -7,7 +7,7 @@
  */
 // src/renderer/hooks/useAgentEvents.ts — Agent event listener hook extracted from App.tsx
 import { useEffect } from 'react';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { sysMsg } from '@/types';
 import type { AgentEvent, ChatMessage } from '@/types';
 import { playAgentCompleteSound, playAgentErrorSound } from '../sounds';
@@ -54,7 +54,7 @@ function getEventMessage(event: AgentEvent): string {
 }
 
 function handleDiffsReady(event: AgentEvent) {
-  const store = useHelioxStore.getState();
+  const store = useFluxorStore.getState();
   const projectPath = store.projectPath;
   if (event.error) {
     store.addSessionMessage(event.agentId, sysMsg('error', `Agent error: ${event.error}`));
@@ -71,10 +71,10 @@ function handleDiffsReady(event: AgentEvent) {
   store.updateAgentStatus(event.agentId, 'done');
   store.setIsRunningAgent(false);
 
-  if (window.helioxAPI && projectPath) {
+  if (window.fluxorAPI && projectPath) {
     const session = store.sessions.find(s => s.id === event.agentId);
     if (session) {
-      window.helioxAPI.contextMapUpsertSessionNode(projectPath, {
+      window.fluxorAPI.contextMapUpsertSessionNode(projectPath, {
         sessionId: session.id,
         label: session.description?.trim().length
           ? `Session #${session.number}: ${session.description}`
@@ -87,7 +87,7 @@ function handleDiffsReady(event: AgentEvent) {
 }
 
 function buildSessionSummary(event: AgentEvent): string {
-  const store = useHelioxStore.getState();
+  const store = useFluxorStore.getState();
   const session = store.sessions.find(s => s.id === event.agentId);
   if (!session) return '';
 
@@ -141,7 +141,7 @@ function buildSessionSummary(event: AgentEvent): string {
 }
 
 function handleResult(event: AgentEvent) {
-  const store = useHelioxStore.getState();
+  const store = useFluxorStore.getState();
   if (event.exitCode !== undefined) {
     // Build and add summary before setting final status
     const summary = buildSessionSummary(event);
@@ -158,20 +158,20 @@ function handleResult(event: AgentEvent) {
     if (event.exitCode === 0) playAgentCompleteSound();
     else playAgentErrorSound();
 
-    if (!document.hasFocus() && window.helioxAPI) {
+    if (!document.hasFocus() && window.fluxorAPI) {
       const session = store.sessions.find(s => s.id === event.agentId);
       const label = session ? `Session #${session.number}` : event.agentId;
-      window.helioxAPI.showNotification({
+      window.fluxorAPI.showNotification({
         title: event.exitCode === 0 ? 'Agent Complete' : 'Agent Failed',
         body: `${label} finished${event.exitCode !== 0 ? ` with exit code ${event.exitCode}` : ''}`,
       });
     }
 
     // If failure was caused by an invalid model, bust the cache and reload the list
-    if (event.exitCode !== 0 && hasModelError(event.agentId) && window.helioxAPI) {
-      console.warn('[Heliox] Model error detected — invalidating models cache');
-      window.helioxAPI.invalidateModelsCache().then(() =>
-        window.helioxAPI!.listModels()
+    if (event.exitCode !== 0 && hasModelError(event.agentId) && window.fluxorAPI) {
+      console.warn('[Fluxor] Model error detected — invalidating models cache');
+      window.fluxorAPI.invalidateModelsCache().then(() =>
+        window.fluxorAPI!.listModels()
       ).then((models) => {
         if (models?.length) store.setAvailableModels(models);
         store.addToast('Model list refreshed after error', 'info');
@@ -181,13 +181,13 @@ function handleResult(event: AgentEvent) {
     // Cleanup raw-output buffer for this agent
     rawOutputBuffer.delete(event.agentId);
 
-    // Save session summary to Heliox config dir
+    // Save session summary to Fluxor config dir
     saveSessionSummaryToFile(event);
 
-    if (window.helioxAPI && store.projectPath) {
+    if (window.fluxorAPI && store.projectPath) {
       const session = store.sessions.find(s => s.id === event.agentId);
       if (session) {
-        window.helioxAPI.contextMapUpsertSessionNode(store.projectPath, {
+        window.fluxorAPI.contextMapUpsertSessionNode(store.projectPath, {
           sessionId: session.id,
           label: session.description?.trim().length
             ? `Session #${session.number}: ${session.description}`
@@ -211,7 +211,7 @@ function handleResult(event: AgentEvent) {
 
 function handleMessageDelta(event: AgentEvent) {
   if (!event.content || !event.messageId) return;
-  const store = useHelioxStore.getState();
+  const store = useFluxorStore.getState();
   const session = store.sessions.find(s => s.id === event.agentId);
   const lastMsg = session?.messages[session.messages.length - 1];
   if (lastMsg && lastMsg.role === 'assistant' && lastMsg.id === `stream-${event.messageId}`) {
@@ -231,7 +231,7 @@ function handleMessageDelta(event: AgentEvent) {
 
 function handleMessage(event: AgentEvent) {
   if (!event.content || !event.messageId) return;
-  const store = useHelioxStore.getState();
+  const store = useFluxorStore.getState();
   const session = store.sessions.find(s => s.id === event.agentId);
   const streamId = `stream-${event.messageId}`;
   const streamIdx = session?.messages.findIndex(m => m.id === streamId) ?? -1;
@@ -250,12 +250,12 @@ function handleMessage(event: AgentEvent) {
 }
 
 async function saveSessionSummaryToFile(event: AgentEvent) {
-  const store = useHelioxStore.getState();
+  const store = useFluxorStore.getState();
   const session = store.sessions.find(s => s.id === event.agentId);
-  if (!session || !store.projectPath || !window.helioxAPI) return;
+  if (!session || !store.projectPath || !window.fluxorAPI) return;
 
   try {
-    const configDir = await window.helioxAPI.getConfigDir(store.projectPath);
+    const configDir = await window.fluxorAPI.getConfigDir(store.projectPath);
     const changedFiles = store.sessionChangedFiles[event.agentId] ?? [];
     const uniqueTools = getUniqueTools(session.messages);
     const duration = session.startedAt
@@ -281,7 +281,7 @@ async function saveSessionSummaryToFile(event: AgentEvent) {
     };
 
     const filename = `session-${session.number}-summary.json`;
-    await window.helioxAPI.writeProjectConfig(store.projectPath, filename, JSON.stringify(summaryJson, null, 2));
+    await window.fluxorAPI.writeProjectConfig(store.projectPath, filename, JSON.stringify(summaryJson, null, 2));
   } catch {
     // Non-critical — silently ignore summary save failures
   }
@@ -293,12 +293,12 @@ export function useAgentEvents() {
     addToast, addLogEntry, addSessionMessage, updateSessionStatus,
     setOpencodeSessionId, setSessionTokenUsage, addRawOutputLine,
     addSessionChangedFile, clearSessionChangedFiles,
-  } = useHelioxStore();
+  } = useFluxorStore();
 
   useEffect(() => {
-    if (!window.helioxAPI) return;
+    if (!window.fluxorAPI) return;
 
-    const unsubscribe = window.helioxAPI.onAgentEvent((event: AgentEvent) => {
+    const unsubscribe = window.fluxorAPI.onAgentEvent((event: AgentEvent) => {
       // Only log meaningful events — skip raw-output, message-delta, thinking-delta
       if (event.type !== 'message-delta' && event.type !== 'thinking-delta' && event.type !== 'raw-output') {
         addLogEntry({

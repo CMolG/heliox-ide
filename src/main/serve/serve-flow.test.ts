@@ -27,7 +27,7 @@ import type { LLMStepResult } from '../harness-engine/llm-runner';
 import type { HarnessStepRunnerInput } from '../harness-engine/executor';
 import { harnessEventBus, HARNESS_EVENT_NAME } from '../harness-engine/event-bus';
 import { executeAgenticFlow } from '../harness-engine/executor';
-import { importFlow, type HelioxFlowExport } from '../flow-export/heliox-flow';
+import { importFlow, type FluxorFlowExport } from '../flow-export/fluxor-flow';
 import { createFlowServer } from './serve-flow';
 
 // ---------------------------------------------------------------------------
@@ -39,9 +39,9 @@ const FIXTURE_PATH = resolve(
   '../../../sdk/conformance/conformance-chain.flow.json',
 );
 
-const exported: HelioxFlowExport = JSON.parse(
+const exported: FluxorFlowExport = JSON.parse(
   readFileSync(FIXTURE_PATH, 'utf-8'),
-) as HelioxFlowExport;
+) as FluxorFlowExport;
 
 // The scripted runner returns deterministic output for each step.
 function makeScriptedRunStep() {
@@ -432,7 +432,7 @@ describe('listen — host binding', () => {
 
 describe('createFlowServer — validation', () => {
   it('throws synchronously for a flow with an invalid rootStepId', () => {
-    const bad: HelioxFlowExport = {
+    const bad: FluxorFlowExport = {
       ...exported,
       rootStepId: 'nonexistent',
     };

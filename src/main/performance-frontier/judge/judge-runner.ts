@@ -19,6 +19,7 @@ import {
 } from './judge-schema';
 import { buildJudgePrompts } from './judge-prompt';
 import { resolveHarnessModel } from '../../harness-engine/llm-runner';
+import { readBrandEnv } from '../../lib/env-compat';
 
 /** Semantic max score per suite = sum of the maxima of its applicable dimensions. */
 const SUITE_SEMANTIC_MAX_SCORE: Record<PFSuite, number> = {
@@ -71,7 +72,7 @@ export interface RunJudgeOptions extends PFJudgeInput {
   model?: LanguageModel;
   generateObject?: GenerateObjectLike;
   generateText?: GenerateTextLike;
-  /** Maximum number of attempts to get a valid semantic evaluation. Defaults to 3. Can also be set via HELIOX_JUDGE_MAX_ATTEMPTS env var. */
+  /** Maximum number of attempts to get a valid semantic evaluation. Defaults to 3. Can also be set via FLUXOR_JUDGE_MAX_ATTEMPTS env var. */
   judgeMaxAttempts?: number;
 }
 
@@ -91,12 +92,13 @@ function resolveMimoJudgeModel(): LanguageModel {
 
 /**
  * Resolves the judge model.
- * If HELIOX_JUDGE_MODEL is set, routes through resolveHarnessModel (supports
+ * If FLUXOR_JUDGE_MODEL is set (legacy compat: HELIOX_JUDGE_MODEL,
+ * deprecated), routes through resolveHarnessModel (supports
  * anthropic/openai/openrouter/mimo providers) to avoid self-judging bias.
  * Otherwise falls back to the Mimo default (resolveMimoJudgeModel).
  */
 export function resolveJudgeModel(): LanguageModel {
-  const envModel = process.env.HELIOX_JUDGE_MODEL;
+  const envModel = readBrandEnv('FLUXOR_JUDGE_MODEL');
   if (envModel) {
     return resolveHarnessModel(envModel);
   }
@@ -305,8 +307,9 @@ export async function runJudge(options: RunJudgeOptions): Promise<PFJudgeResult>
   const generateText = options.generateText ?? aiGenerateText as unknown as GenerateTextLike;
   const model = options.model ?? resolveJudgeModel();
 
-  const envMaxAttempts = process.env.HELIOX_JUDGE_MAX_ATTEMPTS
-    ? parseInt(process.env.HELIOX_JUDGE_MAX_ATTEMPTS, 10)
+  const envJudgeMaxAttemptsRaw = readBrandEnv('FLUXOR_JUDGE_MAX_ATTEMPTS');
+  const envMaxAttempts = envJudgeMaxAttemptsRaw
+    ? parseInt(envJudgeMaxAttemptsRaw, 10)
     : undefined;
   const maxAttempts = options.judgeMaxAttempts ?? (envMaxAttempts && envMaxAttempts > 0 ? envMaxAttempts : 3);
 

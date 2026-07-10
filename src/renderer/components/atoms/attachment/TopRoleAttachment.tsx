@@ -47,7 +47,7 @@ function resolveColor(role: MarketRoleWithColor): string {
 
 // ─── Inline keyframe injection ───────────────────────────────────
 
-const ANIM_ID = 'heliox-role-pop';
+const ANIM_ID = 'fluxor-role-pop';
 
 function ensurePopAnimation() {
   if (typeof document === 'undefined') return;
@@ -55,14 +55,14 @@ function ensurePopAnimation() {
   const style = document.createElement('style');
   style.id = ANIM_ID;
   style.textContent = `
-    @keyframes helioxPopLetter {
+    @keyframes fluxorPopLetter {
       0% { opacity: 0; }
       40% { opacity: 1; }
       100% { opacity: 1; }
     }
-    .heliox-pop-letter {
+    .fluxor-pop-letter {
       opacity: 0;
-      animation: helioxPopLetter 0.4s ease-out forwards;
+      animation: fluxorPopLetter 0.4s ease-out forwards;
     }
   `;
   document.head.appendChild(style);
@@ -186,7 +186,7 @@ export function TopRoleAttachment({
             {activeTitle.split('').map((char, index) => (
               <span
                 key={`${activeRole.name}-${animKey}-${index}`}
-                className="heliox-pop-letter"
+                className="fluxor-pop-letter"
                 style={{ ...letterStyle, animationDelay: `${index * 40}ms` }}
               >
                 {char === ' ' ? '\u00A0' : char}

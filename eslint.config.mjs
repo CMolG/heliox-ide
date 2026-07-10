@@ -1,4 +1,4 @@
-// eslint.config.mjs — ESLint v10 flat config for the Heliox IDE.
+// eslint.config.mjs — ESLint v10 flat config for the Fluxor IDE.
 //
 // ESLint 10 dropped eslintrc + `--ext`; this is the flat-config replacement.
 // Non-type-checked TypeScript linting (fast, no tsconfig project wiring) — type
@@ -18,7 +18,7 @@ export default tseslint.config(
       'dist-bridge/**',
       'out/**',
       'node_modules/**',
-      '.heliox/**',
+      '.fluxor/**',
       'playwright-report/**',
       'test-results/**',
       'coverage/**',

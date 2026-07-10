@@ -60,7 +60,7 @@ export async function runInSandbox(options: SandboxRunOptions): Promise<SandboxR
     prepare,
   } = options;
 
-  const tempDir = await mkdtemp(join(tmpdir(), 'heliox-sb-'));
+  const tempDir = await mkdtemp(join(tmpdir(), 'fluxor-sb-'));
 
   try {
     // --- Materialize snapshot ---

@@ -122,7 +122,7 @@ describe('dev-server-watcher', () => {
     // from the initial tick() without triggering the interval again.
     await vi.advanceTimersByTimeAsync(0);
 
-    const detected = win.sent.filter(s => s.channel === 'heliox:dev-server-detected');
+    const detected = win.sent.filter(s => s.channel === 'fluxor:dev-server-detected');
     expect(detected).toHaveLength(1);
     expect(detected[0].payload).toMatchObject({ url: 'http://localhost:5173', port: 5173 });
   });
@@ -145,7 +145,7 @@ describe('dev-server-watcher', () => {
       await vi.advanceTimersByTimeAsync(2500);
     }
 
-    const detected = win.sent.filter(s => s.channel === 'heliox:dev-server-detected');
+    const detected = win.sent.filter(s => s.channel === 'fluxor:dev-server-detected');
     // Must still be 1 — never re-emits for the same up port
     expect(detected).toHaveLength(1);
   });
@@ -163,18 +163,18 @@ describe('dev-server-watcher', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     // First detection
-    expect(win.sent.filter(s => s.channel === 'heliox:dev-server-detected')).toHaveLength(1);
+    expect(win.sent.filter(s => s.channel === 'fluxor:dev-server-detected')).toHaveLength(1);
 
     // Bring port down; tick fires — liveness removed, no emit
     bringDown(3000);
     await vi.advanceTimersByTimeAsync(2500);
-    expect(win.sent.filter(s => s.channel === 'heliox:dev-server-detected')).toHaveLength(1);
+    expect(win.sent.filter(s => s.channel === 'fluxor:dev-server-detected')).toHaveLength(1);
 
     // Bring port back up; tick fires — re-detected → second emit
     bringUp(3000);
     await vi.advanceTimersByTimeAsync(2500);
 
-    const detected = win.sent.filter(s => s.channel === 'heliox:dev-server-detected');
+    const detected = win.sent.filter(s => s.channel === 'fluxor:dev-server-detected');
     expect(detected).toHaveLength(2);
     expect(detected[1].payload).toMatchObject({ port: 3000 });
   });
@@ -191,7 +191,7 @@ describe('dev-server-watcher', () => {
     await startDevServerWatch(win as any, '/proj/d');
     await vi.advanceTimersByTimeAsync(0);
 
-    const detected = win.sent.filter(s => s.channel === 'heliox:dev-server-detected');
+    const detected = win.sent.filter(s => s.channel === 'fluxor:dev-server-detected');
     expect(detected).toHaveLength(2);
     const ports = detected.map(d => (d.payload as { port: number }).port).sort((a, b) => a - b);
     expect(ports).toEqual([3000, 5173]);
@@ -210,7 +210,7 @@ describe('dev-server-watcher', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     // No ports up
-    expect(win.sent.filter(s => s.channel === 'heliox:dev-server-detected')).toHaveLength(0);
+    expect(win.sent.filter(s => s.channel === 'fluxor:dev-server-detected')).toHaveLength(0);
 
     stopDevServerWatch('/proj/e');
 
@@ -218,6 +218,6 @@ describe('dev-server-watcher', () => {
     bringUp(5173);
     await vi.advanceTimersByTimeAsync(2500 * 2);
 
-    expect(win.sent.filter(s => s.channel === 'heliox:dev-server-detected')).toHaveLength(0);
+    expect(win.sent.filter(s => s.channel === 'fluxor:dev-server-detected')).toHaveLength(0);
   });
 });

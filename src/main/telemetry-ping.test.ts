@@ -89,24 +89,24 @@ function capturedFetchCall(fetchMock: typeof fetch, callIndex = 0): CapturedFetc
 }
 
 describe('telemetry-ping', () => {
-  const originalEndpointEnv = process.env.HELIOX_TELEMETRY_ENDPOINT;
+  const originalEndpointEnv = process.env.FLUXOR_TELEMETRY_ENDPOINT;
 
   beforeEach(() => {
     resetSettings();
-    delete process.env.HELIOX_TELEMETRY_ENDPOINT;
+    delete process.env.FLUXOR_TELEMETRY_ENDPOINT;
   });
 
   afterEach(() => {
     if (originalEndpointEnv === undefined) {
-      delete process.env.HELIOX_TELEMETRY_ENDPOINT;
+      delete process.env.FLUXOR_TELEMETRY_ENDPOINT;
     } else {
-      process.env.HELIOX_TELEMETRY_ENDPOINT = originalEndpointEnv;
+      process.env.FLUXOR_TELEMETRY_ENDPOINT = originalEndpointEnv;
     }
   });
 
   describe('default-off', () => {
     it('does not fetch when telemetryOptIn is false, even with an endpoint configured', async () => {
-      process.env.HELIOX_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
+      process.env.FLUXOR_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
       const fetchMock = makeFetchMock();
 
       await sendTelemetryLaunchPing(fetchMock);
@@ -129,7 +129,7 @@ describe('telemetry-ping', () => {
   describe('opt-in + endpoint fires', () => {
     it('POSTs the minimal payload to the env-configured endpoint', async () => {
       setSetting('telemetryOptIn', true);
-      process.env.HELIOX_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
+      process.env.FLUXOR_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
       const fetchMock = makeFetchMock();
 
       await sendTelemetryLaunchPing(fetchMock);
@@ -164,7 +164,7 @@ describe('telemetry-ping', () => {
     it('prefers the env var over the settings-key endpoint when both are set', async () => {
       setSetting('telemetryOptIn', true);
       setSetting('telemetryEndpoint', 'https://self-hosted.example/ping');
-      process.env.HELIOX_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
+      process.env.FLUXOR_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
       const fetchMock = makeFetchMock();
 
       await sendTelemetryLaunchPing(fetchMock);
@@ -174,7 +174,7 @@ describe('telemetry-ping', () => {
 
     it('generates the anonymous id once and reuses it on subsequent pings', async () => {
       setSetting('telemetryOptIn', true);
-      process.env.HELIOX_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
+      process.env.FLUXOR_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
       const fetchMock = makeFetchMock();
 
       await sendTelemetryLaunchPing(fetchMock);
@@ -188,7 +188,7 @@ describe('telemetry-ping', () => {
 
     it('swallows fetch rejections silently (offline, timeout, etc.)', async () => {
       setSetting('telemetryOptIn', true);
-      process.env.HELIOX_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
+      process.env.FLUXOR_TELEMETRY_ENDPOINT = 'https://telemetry.example/ping';
       const fetchMock = vi.fn(async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
 
       await expect(sendTelemetryLaunchPing(fetchMock)).resolves.toBeUndefined();

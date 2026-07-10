@@ -1,7 +1,7 @@
-# Heliox SDK for Java
+# Fluxor SDK for Java
 
-`heliox-sdk-java` is the async inference & execution runtime for the cognitive flows
-designed in **Heliox IDE**. It runs a flow's steps outside the IDE on any JVM, with these
+`fluxor-sdk-java` is the async inference & execution runtime for the cognitive flows
+designed in **Fluxor IDE**. It runs a flow's steps outside the IDE on any JVM, with these
 guarantees:
 
 1. **Async / non-blocking** — every execution returns a `CompletableFuture<T>`.
@@ -9,7 +9,7 @@ guarantees:
    from your expected Java type.
 3. **Self-correction** — when the model's output fails validation, the failing fields are
    injected back as a system message and the step is retried up to *n* times.
-4. **Native tool calling** — annotate Java methods with `@HelioxTool`; the SDK advertises them
+4. **Native tool calling** — annotate Java methods with `@FluxorTool`; the SDK advertises them
    to the model, executes the requested calls via reflection, and threads results back.
 5. **DAG orchestration** — a flow is a graph; independent nodes run concurrently and dependent
    nodes wait on their parents, accumulating parent outputs into the child's context.
@@ -25,13 +25,13 @@ no Retrofit, no Apache HttpClient, no third-party JSON Schema validator.
 ## Quick start
 
 ```java
-import io.heliox.sdk.HelioxRuntime;
-import io.heliox.sdk.provider.MimoProvider;
+import io.fluxor.sdk.FluxorRuntime;
+import io.fluxor.sdk.provider.MimoProvider;
 import java.util.concurrent.CompletableFuture;
 
 record AuditResult(String verdict, int riskScore, java.util.List<String> findings) {}
 
-HelioxRuntime runtime = HelioxRuntime.builder()
+FluxorRuntime runtime = FluxorRuntime.builder()
     .llmProvider(new MimoProvider("API_KEY"))   // or new OpenAiProvider("sk-...")
     .build();
 
@@ -53,17 +53,17 @@ Annotate methods, register the holder object, and the model can call them mid-st
 
 ```java
 public final class WeatherService {
-    @HelioxTool(name = "get_weather", description = "Clima actual de una ciudad")
+    @FluxorTool(name = "get_weather", description = "Clima actual de una ciudad")
     public String getWeather(String city) { /* ... call your backend ... */ }
 }
 
-HelioxRuntime runtime = HelioxRuntime.builder()
+FluxorRuntime runtime = FluxorRuntime.builder()
     .llmProvider(new MimoProvider("API_KEY"))
     .registerTool(new WeatherService())
     .build();
 ```
 
-`ToolRegistry` scans `@HelioxTool` methods, derives each tool's parameter schema by reusing
+`ToolRegistry` scans `@FluxorTool` methods, derives each tool's parameter schema by reusing
 `SchemaExtractor`, and binds the model's JSON arguments back to parameters by name (compiled
 with `-parameters`). While the model emits `tool_calls`, `StepExecutor` pauses final-schema
 validation, invokes the tools, appends `tool` messages, and replays the conversation — all async.
@@ -90,7 +90,7 @@ disjoint keys with happens-before guaranteed by the future graph.
 ## How it works
 
 ```
-HelioxRuntime ─► FlowExecution (fluent) ─► FlowExecutor (DAG) ─► StepExecutor ─► LlmProvider
+FluxorRuntime ─► FlowExecution (fluent) ─► FlowExecutor (DAG) ─► StepExecutor ─► LlmProvider
                                                                       │  ▲
                                             SchemaExtractor ──────────┤  │ tool loop
                                             SchemaValidator ──────────┘  └── ToolRegistry (reflection)

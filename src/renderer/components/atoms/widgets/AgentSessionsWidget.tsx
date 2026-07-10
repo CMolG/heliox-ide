@@ -12,7 +12,7 @@
  * - Does NOT own: session orchestration, IPC, or persistence.
  */
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { useHelioxStore } from '../../../store';
+import { useFluxorStore } from '../../../store';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { RunningBars } from '../plugins/RunningBars';
 import { TickSvg } from '../plugins/TickSvg';
@@ -51,10 +51,10 @@ function StatusIcon({ status }: { status: SessionStatus }) {
 // ─── Component ───────────────────────────────────────────────────
 
 export function AgentSessionsWidget() {
-  const sessions = useHelioxStore(s => s.sessions);
-  const projectPath = useHelioxStore(s => s.projectPath);
-  const updateSessionStatus = useHelioxStore(s => s.updateSessionStatus);
-  const setSelectedSessionId = useHelioxStore(s => s.setSelectedSessionId);
+  const sessions = useFluxorStore(s => s.sessions);
+  const projectPath = useFluxorStore(s => s.projectPath);
+  const updateSessionStatus = useFluxorStore(s => s.updateSessionStatus);
+  const setSelectedSessionId = useFluxorStore(s => s.setSelectedSessionId);
   const addWindow = useDesktopStore(s => s.addWindow);
   const focusWindow = useDesktopStore(s => s.focusWindow);
   const windows = useDesktopStore(s => s.windows);

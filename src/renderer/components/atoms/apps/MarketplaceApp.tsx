@@ -152,7 +152,7 @@ function ProductSheet({ plugin, inventory, onBack, onDeploy, backButtonRef, addB
           >
             {badge.label}
           </span>
-          <span className="text-xs text-[#555]">by {plugin.author ?? 'Heliox'}</span>
+          <span className="text-xs text-[#555]">by {plugin.author ?? 'Fluxor'}</span>
         </div>
       </div>
 

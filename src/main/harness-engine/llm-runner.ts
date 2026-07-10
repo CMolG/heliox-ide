@@ -12,14 +12,15 @@ import { logProviderHeaders, normalizeProviderHeaders } from '../performance-fro
 import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/collector';
 import type { PFCognitiveTraceEntry } from '../performance-frontier/types';
 import type { ConnectionResolver } from '../../types/ipc-events';
+import { readBrandEnv } from '../lib/env-compat';
 
 const DEFAULT_MODEL_ID = 'openai/gpt-4o-mini';
-const DEFAULT_MAX_STEPS = Number(process.env.HELIOX_HARNESS_MAX_STEPS) || 5;
+const DEFAULT_MAX_STEPS = Number(readBrandEnv('FLUXOR_HARNESS_MAX_STEPS')) || 5;
 const DEFAULT_TIMEOUT_MS = 120_000;
 // Explicit output budget. Reasoning models (e.g. Mimo) otherwise spend the
 // provider-default cap on reasoning tokens and emit empty content / zero tool
 // calls — the "wrote nothing" stall. A generous floor keeps them productive.
-const DEFAULT_MAX_OUTPUT_TOKENS = Number(process.env.HELIOX_HARNESS_MAX_OUTPUT_TOKENS) || 16_000;
+const DEFAULT_MAX_OUTPUT_TOKENS = Number(readBrandEnv('FLUXOR_HARNESS_MAX_OUTPUT_TOKENS')) || 16_000;
 
 export interface LLMStepResult {
   text: string;
@@ -185,7 +186,7 @@ function timeoutSignal(timeoutMs: number): AbortSignal | undefined {
  * user-defined connection profiles (Settings → Connections). `resolveConnection`
  * is injected (rather than importing `provider-connections.ts` directly) so
  * this module stays unit-testable in isolation — the ipc/executor boundary
- * (`heliox:start-harness`) is the one place that actually reads the
+ * (`fluxor:start-harness`) is the one place that actually reads the
  * connection-profile store and decrypts a token, once per run, closing over
  * the result in a plain synchronous lookup.
  */
@@ -212,7 +213,7 @@ function resolveConnectionModel(modelId: string, resolveConnection: ConnectionRe
 }
 
 export function resolveHarnessModel(
-  modelId = process.env.HELIOX_HARNESS_MODEL ?? DEFAULT_MODEL_ID,
+  modelId = readBrandEnv('FLUXOR_HARNESS_MODEL') ?? DEFAULT_MODEL_ID,
   resolveConnection?: ConnectionResolver,
 ): LanguageModel {
   if (modelId.startsWith('conn:')) return resolveConnectionModel(modelId, resolveConnection);
@@ -236,11 +237,11 @@ export function resolveHarnessModel(
       apiKey,
       baseURL: 'https://openrouter.ai/api/v1',
       name: 'openrouter',
-      // OpenRouter attribution headers — surface Heliox on the OpenRouter
+      // OpenRouter attribution headers — surface Fluxor on the OpenRouter
       // dashboard/leaderboards. Both are optional and overridable via env.
       headers: {
-        'HTTP-Referer': process.env.OPENROUTER_APP_URL ?? 'https://heliox.dev',
-        'X-Title': process.env.OPENROUTER_APP_TITLE ?? 'Heliox Arena',
+        'HTTP-Referer': process.env.OPENROUTER_APP_URL ?? 'https://fluxoride.com',
+        'X-Title': process.env.OPENROUTER_APP_TITLE ?? 'Fluxor Arena',
       },
     })(modelName);
   }

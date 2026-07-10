@@ -9,7 +9,7 @@ import { EventEmitter } from 'events';
 import type { BrowserWindow } from 'electron';
 import type { HarnessEventPayload } from '../../types/ipc-events';
 
-export const HARNESS_EVENT_CHANNEL = 'heliox:harness-event' as const;
+export const HARNESS_EVENT_CHANNEL = 'fluxor:harness-event' as const;
 export const HARNESS_EVENT_NAME = 'harness-event' as const;
 
 type HarnessEventWindow = Pick<BrowserWindow, 'webContents'> & {

@@ -2,8 +2,8 @@
  * ConnectionsSection.test.tsx — Component tests for the DBeaver-style connection manager
  *
  * Strategy:
- * - Mount <ConnectionsSection /> with a mocked `window.helioxAPI.providerConnections*`
- *   surface (same `Object.defineProperty(window, 'helioxAPI', ...)` pattern as
+ * - Mount <ConnectionsSection /> with a mocked `window.fluxorAPI.providerConnections*`
+ *   surface (same `Object.defineProperty(window, 'fluxorAPI', ...)` pattern as
  *   TimeTravelPanel.test.tsx).
  * - Assertions target `data-testid` attributes rather than CSS classes.
  *
@@ -41,7 +41,7 @@ const CONN_A: ProviderConnection = {
   lastTestOk: true,
 };
 
-// ── Mock `window.helioxAPI` ───────────────────────────────────────────────────
+// ── Mock `window.fluxorAPI` ───────────────────────────────────────────────────
 
 function setupMockAPI(overrides?: {
   list?: ProviderConnection[];
@@ -75,7 +75,7 @@ function setupMockAPI(overrides?: {
     data: { result: { ok: true, models: ['m1', 'm2', 'm3'] } },
   } as ConnectionTestResponse)));
 
-  Object.defineProperty(window, 'helioxAPI', {
+  Object.defineProperty(window, 'fluxorAPI', {
     value: {
       providerConnectionsList,
       providerConnectionsCreate,

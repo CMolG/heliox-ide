@@ -1,5 +1,6 @@
 {
   "version": "1",
+  "format": "fluxor-flow",
   "id": "conformance-contract",
   "name": "Conformance Contract",
   "rootStepId": "step-a",

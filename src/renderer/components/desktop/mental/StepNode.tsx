@@ -20,7 +20,7 @@ import type { StepNodeData } from '@/types/desktop';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
 import { LucideIcon } from '../LucideIcon';
-import { HelioxSpinner } from '../../brand/HelioxSpinner';
+import { FluxorSpinner } from '../../brand/FluxorSpinner';
 import { kebabToTitle } from '../attachable-helpers';
 import { stepTypeMeta } from './step-type-meta';
 import { StepThinkingPopover } from './StepThinkingPopover';
@@ -32,7 +32,7 @@ function roleColor(role: MarketRole): string {
 
 // Non-color status glyph shown before the inline Run button — status must
 // never be color-only (a11y). "running" is special-cased to the branded
-// HelioxSpinner (mirrors FrameNode's header Run control); "idle" renders
+// FluxorSpinner (mirrors FrameNode's header Run control); "idle" renders
 // nothing at all.
 const STEP_STATUS_GLYPH: Record<string, { icon: string; label: string }> = {
   compiling: { icon: 'Loader2', label: 'Compiling' },
@@ -312,7 +312,7 @@ export const StepNode = React.memo(function StepNode({ id, data }: NodeProps) {
                 aria-label="Running"
                 title="Running"
               >
-                <HelioxSpinner size={11} speed={1.4} />
+                <FluxorSpinner size={11} speed={1.4} />
               </span>
             ) : executionStatus && STEP_STATUS_GLYPH[executionStatus] ? (
               <span

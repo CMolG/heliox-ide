@@ -33,7 +33,7 @@ const MOD_COLOR = '#4285F4';
 
 // ─── Inline keyframe injection ───────────────────────────────────
 
-const ANIM_ID = 'heliox-mod-attach-anim';
+const ANIM_ID = 'fluxor-mod-attach-anim';
 
 function ensureModAnimation() {
   if (typeof document === 'undefined') return;
@@ -41,12 +41,12 @@ function ensureModAnimation() {
   const style = document.createElement('style');
   style.id = ANIM_ID;
   style.textContent = `
-    @keyframes helioxModSlideIn {
+    @keyframes fluxorModSlideIn {
       0% { opacity: 0; transform: translateY(-6px); }
       100% { opacity: 1; transform: translateY(0); }
     }
-    .heliox-mod-tab {
-      animation: helioxModSlideIn 0.25s ease-out forwards;
+    .fluxor-mod-tab {
+      animation: fluxorModSlideIn 0.25s ease-out forwards;
     }
   `;
   document.head.appendChild(style);

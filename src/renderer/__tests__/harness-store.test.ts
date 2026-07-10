@@ -7,7 +7,7 @@ describe('useHarnessStore', () => {
   beforeEach(() => {
     useDesktopStore.setState(useDesktopStore.getInitialState(), true);
     useHarnessStore.setState(useHarnessStore.getInitialState(), true);
-    delete window.helioxAPI;
+    delete window.fluxorAPI;
   });
 
   it('compiles the current desktop canvas into activeFlow', () => {
@@ -65,7 +65,7 @@ describe('useHarnessStore', () => {
     desktop.addStepNode({ id: 'step-root', title: 'Root' });
     const flow = useHarnessStore.getState().compileCurrentCanvas();
     const startHarness = vi.fn().mockResolvedValue({ success: true });
-    window.helioxAPI = {
+    window.fluxorAPI = {
       startHarness,
       onHarnessEvent: vi.fn(() => vi.fn()),
     } as any;
@@ -86,7 +86,7 @@ describe('useHarnessStore', () => {
     const flow = useHarnessStore.getState().compileCurrentCanvas();
 
     const startHarness = vi.fn().mockResolvedValue({ success: true });
-    window.helioxAPI = {
+    window.fluxorAPI = {
       startHarness,
       onHarnessEvent: vi.fn(() => vi.fn()),
     } as any;
@@ -108,7 +108,7 @@ describe('useHarnessStore', () => {
     desktop.addMentalEdge(midId, leafId);
 
     const startHarness = vi.fn().mockResolvedValue({ success: true });
-    window.helioxAPI = {
+    window.fluxorAPI = {
       startHarness,
       onHarnessEvent: vi.fn(() => vi.fn()),
     } as any;
@@ -139,7 +139,7 @@ describe('useHarnessStore', () => {
     desktop.addMentalEdge(midId, branchId);
 
     const startHarness = vi.fn().mockResolvedValue({ success: true });
-    window.helioxAPI = {
+    window.fluxorAPI = {
       startHarness,
       onHarnessEvent: vi.fn(() => vi.fn()),
     } as any;
@@ -164,7 +164,7 @@ describe('useHarnessStore', () => {
   it('runStep fails softly on an unknown stepId without invoking startHarness', async () => {
     useDesktopStore.getState().addStepNode({ id: 'step-root', title: 'Root' });
     const startHarness = vi.fn().mockResolvedValue({ success: true });
-    window.helioxAPI = {
+    window.fluxorAPI = {
       startHarness,
       onHarnessEvent: vi.fn(() => vi.fn()),
     } as any;
@@ -179,7 +179,7 @@ describe('useHarnessStore', () => {
   it('runFromStep fails softly on an unknown stepId without invoking startHarness', async () => {
     useDesktopStore.getState().addStepNode({ id: 'step-root', title: 'Root' });
     const startHarness = vi.fn().mockResolvedValue({ success: true });
-    window.helioxAPI = {
+    window.fluxorAPI = {
       startHarness,
       onHarnessEvent: vi.fn(() => vi.fn()),
     } as any;
@@ -194,7 +194,7 @@ describe('useHarnessStore', () => {
   it('subscribes once to harness events and tracks per-step status', () => {
     const callbacks: Array<(event: HarnessEventPayload) => void> = [];
     const unsubscribe = vi.fn();
-    window.helioxAPI = {
+    window.fluxorAPI = {
       onHarnessEvent: vi.fn((callback: (event: HarnessEventPayload) => void) => {
         callbacks.push(callback);
         return unsubscribe;
@@ -204,7 +204,7 @@ describe('useHarnessStore', () => {
     useHarnessStore.getState().subscribeToHarnessEvents();
     useHarnessStore.getState().subscribeToHarnessEvents();
 
-    const api = window.helioxAPI!;
+    const api = window.fluxorAPI!;
     expect(api.onHarnessEvent).toHaveBeenCalledTimes(1);
 
     callbacks[0]({
@@ -241,7 +241,7 @@ describe('useHarnessStore', () => {
   describe('stepIterations', () => {
     function subscribeAndCapture(): Array<(event: HarnessEventPayload) => void> {
       const callbacks: Array<(event: HarnessEventPayload) => void> = [];
-      window.helioxAPI = {
+      window.fluxorAPI = {
         onHarnessEvent: vi.fn((callback: (event: HarnessEventPayload) => void) => {
           callbacks.push(callback);
           return vi.fn();
@@ -364,7 +364,7 @@ describe('useHarnessStore', () => {
   describe('stepModels', () => {
     function subscribeAndCapture(): Array<(event: HarnessEventPayload) => void> {
       const callbacks: Array<(event: HarnessEventPayload) => void> = [];
-      window.helioxAPI = {
+      window.fluxorAPI = {
         onHarnessEvent: vi.fn((callback: (event: HarnessEventPayload) => void) => {
           callbacks.push(callback);
           return vi.fn();
@@ -505,7 +505,7 @@ describe('useHarnessStore', () => {
       const desktop = useDesktopStore.getState();
       desktop.addStepNode({ id: 'step-root', title: 'Root' });
       useHarnessStore.getState().compileCurrentCanvas();
-      delete window.helioxAPI; // no bridge — executeFlow's first guard
+      delete window.fluxorAPI; // no bridge — executeFlow's first guard
 
       await useHarnessStore.getState().startExecution();
 

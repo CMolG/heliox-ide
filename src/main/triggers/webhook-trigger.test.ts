@@ -27,7 +27,7 @@ import { TriggerRegistry } from './trigger-registry';
 import type { TriggerDef } from './trigger-types';
 
 // ---------------------------------------------------------------------------
-// Fixture: write a minimal HelioxFlowExport JSON to a temp file
+// Fixture: write a minimal FluxorFlowExport JSON to a temp file
 // ---------------------------------------------------------------------------
 
 function makeFlowFixture(dir: string): string {
@@ -135,7 +135,7 @@ let flowPath: string;
 
 beforeEach(async () => {
   harnessEventBus.removeAllListeners();
-  tmpDir = join(tmpdir(), `heliox-trigger-test-${randomUUID()}`);
+  tmpDir = join(tmpdir(), `fluxor-trigger-test-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
   testServer = await makeTestServer();
   flowPath = makeFlowFixture(tmpDir);
@@ -201,7 +201,7 @@ describe('webhook secret validation', () => {
     });
 
     const { status } = await post(`${testServer.baseUrl}/triggers/test`, {}, {
-      'x-heliox-secret': 'wrongsecret',
+      'x-fluxor-secret': 'wrongsecret',
     });
     expect(status).toBe(401);
   });
@@ -234,7 +234,7 @@ describe('sync mode', () => {
     const { status, body } = await post(
       `${testServer.baseUrl}/triggers/sync`,
       {},
-      { 'x-heliox-secret': 'tok' },
+      { 'x-fluxor-secret': 'tok' },
     );
     expect(status).toBe(200);
     const b = body as Record<string, unknown>;
@@ -249,7 +249,7 @@ describe('sync mode', () => {
     harnessEventBus.on(HARNESS_EVENT_NAME, (e: HarnessEventPayload) => collected.push(e));
     registerWebhookTrigger(def, testServer.registrar, { runStep: makeScriptedRunStep() });
 
-    await post(`${testServer.baseUrl}/triggers/events`, {}, { 'x-heliox-secret': 'ev' });
+    await post(`${testServer.baseUrl}/triggers/events`, {}, { 'x-fluxor-secret': 'ev' });
 
     expect(collected.some((e) => e.type === 'FlowStarted')).toBe(true);
     expect(collected.some((e) => e.type === 'FlowCompleted')).toBe(true);
@@ -292,7 +292,7 @@ describe('async mode', () => {
     const { status, body } = await post(
       `${testServer.baseUrl}/triggers/async`,
       {},
-      { 'x-heliox-secret': 'as' },
+      { 'x-fluxor-secret': 'as' },
     );
     expect(status).toBe(202);
     expect(typeof (body as Record<string, unknown>).runId).toBe('string');
@@ -310,7 +310,7 @@ describe('async mode', () => {
     });
     registerWebhookTrigger(def, testServer.registrar, { runStep: scriptedRunStep });
 
-    await post(`${testServer.baseUrl}/triggers/async-exec`, {}, { 'x-heliox-secret': 'bg' });
+    await post(`${testServer.baseUrl}/triggers/async-exec`, {}, { 'x-fluxor-secret': 'bg' });
 
     // Wait for background execution to complete.
     await new Promise<void>((r) => setTimeout(r, 150));
@@ -361,7 +361,7 @@ describe('TriggerRegistry', () => {
     const { status } = await post(
       `${testServer.baseUrl}/triggers/lifecycle`,
       {},
-      { 'x-heliox-secret': 'lc' },
+      { 'x-fluxor-secret': 'lc' },
     );
     expect(status).toBe(200);
 
@@ -404,7 +404,7 @@ describe('TriggerRegistry', () => {
     const { status } = await post(
       `${testServer.baseUrl}/triggers/boot`,
       {},
-      { 'x-heliox-secret': 'boot' },
+      { 'x-fluxor-secret': 'boot' },
     );
     expect(status).toBe(200);
   });
@@ -427,7 +427,7 @@ describe('TriggerRegistry', () => {
     // Route should not be mounted — expect 404.
     const res = await fetch(`${testServer.baseUrl}/triggers/disabled`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-heliox-secret': 'dis' },
+      headers: { 'Content-Type': 'application/json', 'x-fluxor-secret': 'dis' },
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(404);

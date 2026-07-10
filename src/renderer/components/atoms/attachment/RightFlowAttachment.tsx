@@ -39,7 +39,7 @@ const FLOW_COLOR = '#A78BFA';
 
 // ─── Inline keyframe injection ───────────────────────────────────
 
-const ANIM_ID = 'heliox-flow-attach-anim';
+const ANIM_ID = 'fluxor-flow-attach-anim';
 
 function ensureFlowAttachAnimation() {
   if (typeof document === 'undefined') return;
@@ -47,19 +47,19 @@ function ensureFlowAttachAnimation() {
   const style = document.createElement('style');
   style.id = ANIM_ID;
   style.textContent = `
-    @keyframes helioxFlowSlideIn {
+    @keyframes fluxorFlowSlideIn {
       0% { opacity: 0; transform: translateX(-8px); }
       100% { opacity: 1; transform: translateX(0); }
     }
-    @keyframes helioxFlowPulse {
+    @keyframes fluxorFlowPulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(167,139,250,0); }
       50% { box-shadow: 0 0 12px 2px rgba(167,139,250,0.25); }
     }
-    .heliox-flow-ribbon {
-      animation: helioxFlowSlideIn 0.3s ease-out forwards;
+    .fluxor-flow-ribbon {
+      animation: fluxorFlowSlideIn 0.3s ease-out forwards;
     }
-    .heliox-flow-ribbon[data-running="true"] {
-      animation: helioxFlowSlideIn 0.3s ease-out forwards, helioxFlowPulse 2s ease-in-out infinite 0.3s;
+    .fluxor-flow-ribbon[data-running="true"] {
+      animation: fluxorFlowSlideIn 0.3s ease-out forwards, fluxorFlowPulse 2s ease-in-out infinite 0.3s;
     }
   `;
   document.head.appendChild(style);
@@ -184,7 +184,7 @@ export function RightFlowAttachment({ flow, onDetach, onClickFlow }: RightFlowAt
       aria-label={`Attached flow: ${displayName}`}
     >
       <div
-        className="heliox-flow-ribbon"
+        className="fluxor-flow-ribbon"
         style={{ ...ribbonStyle, cursor: onClickFlow ? 'pointer' : 'default' }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}

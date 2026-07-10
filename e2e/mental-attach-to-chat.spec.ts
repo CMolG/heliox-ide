@@ -30,7 +30,7 @@ test.beforeAll(async () => {
   await page.waitForURL(/^(?!about:blank)/, { timeout: 20_000 });
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(
-    () => !!(window as any).__DESKTOP_STORE__ && !!(window as any).__HELIOX_STORE__,
+    () => !!(window as any).__DESKTOP_STORE__ && !!(window as any).__FLUXOR_STORE__,
     { timeout: 30_000 },
   );
   await page.evaluate(() => {
@@ -76,11 +76,11 @@ test('attach selection to chat → chip row appears with correct label', async (
   // Open a chat window + create a session for it
   const winId = await page.evaluate((seed) => {
     const desktop = (window as any).__DESKTOP_STORE__.getState();
-    const heliox = (window as any).__HELIOX_STORE__.getState();
-    // Heliox needs a projectPath set so chat windows mount the full
+    const fluxor = (window as any).__FLUXOR_STORE__.getState();
+    // Fluxor needs a projectPath set so chat windows mount the full
     // AgenticChatApp tree (renders the chip row).
-    heliox.setProjectPath('/tmp/heliox-e2e-mental');
-    const sessionId = heliox.addSession();
+    fluxor.setProjectPath('/tmp/fluxor-e2e-mental');
+    const sessionId = fluxor.addSession();
     const winId = desktop.addWindow('chat', { sessionId, title: 'Chat-1' });
     desktop.focusWindow(winId);
     return winId;
@@ -122,9 +122,9 @@ test('whole-map attachment shows "whole map" chip label', async () => {
   const winId = await page.evaluate(() => {
     const s = (window as any).__DESKTOP_STORE__.getState();
     s.addMentalNode({ position: { x: 0, y: 0 }, width: 200, height: 100, text: 'X', color: '#EDE9FE', shape: 'square' });
-    const heliox = (window as any).__HELIOX_STORE__.getState();
-    heliox.setProjectPath('/tmp/heliox-e2e-mental');
-    const sessionId = heliox.addSession();
+    const fluxor = (window as any).__FLUXOR_STORE__.getState();
+    fluxor.setProjectPath('/tmp/fluxor-e2e-mental');
+    const sessionId = fluxor.addSession();
     const winId = s.addWindow('chat', { sessionId, title: 'Chat-Whole' });
     s.focusWindow(winId);
     return winId;
@@ -145,9 +145,9 @@ test('multiple attachments render as multiple chips in stable order', async () =
     const s = (window as any).__DESKTOP_STORE__.getState();
     const a = s.addMentalNode({ position: { x: 0, y: 0 }, width: 200, height: 100, text: 'A', color: '#EDE9FE', shape: 'square' });
     const b = s.addMentalNode({ position: { x: 0, y: 0 }, width: 200, height: 100, text: 'B', color: '#EDE9FE', shape: 'square' });
-    const heliox = (window as any).__HELIOX_STORE__.getState();
-    heliox.setProjectPath('/tmp/heliox-e2e-mental');
-    const sessionId = heliox.addSession();
+    const fluxor = (window as any).__FLUXOR_STORE__.getState();
+    fluxor.setProjectPath('/tmp/fluxor-e2e-mental');
+    const sessionId = fluxor.addSession();
     const winId = s.addWindow('chat', { sessionId, title: 'Chat-Multi' });
     s.focusWindow(winId);
     return { winId, a, b };

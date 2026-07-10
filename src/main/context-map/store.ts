@@ -2,8 +2,10 @@
  * store.ts — Main process context-map persistence
  *
  * Responsibility:
- * - Read/write `.heliox/context-map.json` per project.
- * - Keep gitignore default behavior (`.heliox/`) on first creation.
+ * - Read/write `.fluxor/context-map.json` per project.
+ * - Keep gitignore default behavior (`.fluxor/`) on first creation.
+ * - Legacy compat: migrate a pre-Fluxor `.heliox/` dir (context-map.json +
+ *   performance-frontier/) to `.fluxor/` the first time a project is touched.
  */
 import { createHash, randomUUID } from 'crypto';
 import { dirname, join } from 'path';
@@ -18,6 +20,7 @@ import type {
   ContextMapSessionStatus,
 } from '../../types/context-map';
 import { isAttachableNode } from '../../types/context-map';
+import { migrateLegacyDirectories } from '../lib/legacy-migration';
 
 const MAP_VERSION = 1 as const;
 
@@ -30,7 +33,7 @@ function hashProjectId(projectPath: string): string {
 }
 
 function mapPathFor(projectPath: string): string {
-  return join(projectPath, '.heliox', 'context-map.json');
+  return join(projectPath, '.fluxor', 'context-map.json');
 }
 
 function isContextMap(value: unknown): value is ContextMap {
@@ -62,6 +65,9 @@ export async function ensureContextMap(projectPath: string): Promise<ContextMap>
   if (!projectPath || projectPath.trim().length === 0) {
     throw new Error('[context-map] projectPath is required');
   }
+  // Legacy compat: rename this project's pre-Fluxor heliox/.heliox dirs (if
+  // present) before touching anything else — best-effort, never blocks.
+  migrateLegacyDirectories(projectPath);
   const filePath = mapPathFor(projectPath);
   await mkdir(dirname(filePath), { recursive: true });
   await ensureGitignoreDefault(projectPath);
@@ -240,10 +246,14 @@ async function ensureGitignoreDefault(projectPath: string): Promise<void> {
     // No gitignore yet; create one.
   }
   const entries = current.split('\n').map(l => l.trim());
-  if (entries.includes('.heliox/') || entries.includes('.heliox/context-map.json')) return;
+  // Legacy compat: a project migrated from Heliox may still list the old
+  // `.heliox/` entry — harmless to leave, but `.fluxor/` (the current dir)
+  // must be present too, so this checks for `.fluxor/` specifically rather
+  // than treating an old-only entry as "already handled".
+  if (entries.includes('.fluxor/') || entries.includes('.fluxor/context-map.json')) return;
   const next = current.trimEnd().length > 0
-    ? `${current.trimEnd()}\n\n.heliox/\n`
-    : '.heliox/\n';
+    ? `${current.trimEnd()}\n\n.fluxor/\n`
+    : '.fluxor/\n';
   await writeFile(gitignorePath, next, 'utf-8');
 }
 

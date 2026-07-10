@@ -1,5 +1,5 @@
 /**
- * model-fetcher.ts — Heliox Arena model discovery
+ * model-fetcher.ts — Fluxor Arena model discovery
  *
  * Discovers candidate models for the Arena from the OpenRouter catalog. Every
  * 100%-free model (prompt and completion priced at "0") is included, plus a set

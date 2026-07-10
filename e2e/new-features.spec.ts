@@ -34,7 +34,7 @@ test.beforeAll(async () => {
   await page.waitForURL(/^(?!about:blank)/, { timeout: 20_000 });
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
   await page.evaluate(() => {
@@ -57,7 +57,7 @@ async function ensureDesktop() {
   const desktop = page.locator('[data-testid="seamless-desktop"]');
   if (!(await desktop.isVisible({ timeout: 2_000 }).catch(() => false))) {
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().setProjectPath('/tmp/test-project');
     });
     await desktop.waitFor({ state: 'visible', timeout: 10_000 });
@@ -321,7 +321,7 @@ test.describe('Window focus z-order', () => {
     // Open two chat windows via store
     const { winA, winB } = await page.evaluate(() => {
       const ds = (window as any).__DESKTOP_STORE__.getState();
-      const hs = (window as any).__HELIOX_STORE__.getState();
+      const hs = (window as any).__FLUXOR_STORE__.getState();
       hs.setProjectPath('/tmp/test-zorder');
       const sA = hs.addSession();
       const sB = hs.addSession();
@@ -374,7 +374,7 @@ test.describe('Mental topLayer toggle', () => {
   test('focusWindow switches topLayer to "windows"', async () => {
     const winId = await page.evaluate(() => {
       const ds = (window as any).__DESKTOP_STORE__.getState();
-      const hs = (window as any).__HELIOX_STORE__.getState();
+      const hs = (window as any).__FLUXOR_STORE__.getState();
       hs.setProjectPath('/tmp/test-toplayer');
       const sid = hs.addSession();
       return ds.addWindow('chat', { sessionId: sid, title: 'TopLayer-Win', position: { x: 100, y: 100 } });
@@ -439,7 +439,7 @@ test.describe('Flow attachment right-click context menu', () => {
     // via assemblePipeline (main-process meta-agent), which is not available in the
     // isolated E2E environment without a real model. The store-side state for
     // flow attachments (attachFlow, detachFlow) is covered by unit tests.
-    // This test can be enabled once an E2E-safe mock for helioxAPI.assemblePipeline
+    // This test can be enabled once an E2E-safe mock for fluxorAPI.assemblePipeline
     // is wired into the test environment.
   });
 });

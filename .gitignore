@@ -12,16 +12,20 @@ out/
 .backlog/
 .garbage/
 .recommendations/
-heliox-results.tsv
+fluxor-results.tsv
 results.tsv
 
 .claude/
-.heliox/
+.fluxor/
 .tech_proposals/
 e2e/.e2e-user-data-dir
 playwright-report/
 test-results/
 /.env
+
+# Legacy compat: artefactos pre-Fluxor en máquinas de dev
+heliox-results.tsv
+.heliox/
 
 # Java SDK (sdk/java) build output
 sdk/java/target/

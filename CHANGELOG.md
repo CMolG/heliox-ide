@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Heliox IDE are documented in this file.
+All notable changes to Fluxor IDE are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -29,10 +29,10 @@ See `docs/RELEASE_CHECKLIST.md` for how a version graduates from this
   to OpenRouter's `openrouter/auto` and records the model actually served).
   Every routing decision is recorded with a human-readable reason.
 - Export Flow: the canvas compiles to a portable `*.flow.json`
-  (`HelioxFlowExport` v1) via a Frame header Export button — the same format
-  `heliox serve` and the SDKs consume; `contract`, `model`, and `loops`
+  (`FluxorFlowExport` v1) via a Frame header Export button — the same format
+  `fluxor serve` and the SDKs consume; `contract`, `model`, and `loops`
   round-trip.
-- `heliox serve`: flows as an HTTP service (Bearer auth, loopback bind by
+- `fluxor serve`: flows as an HTTP service (Bearer auth, loopback bind by
   default), cron/webhook triggers with an overlap guard, local RAG (vector
   store + ingestion + a `retriever` step), and time-travel checkpoints/replay.
 - MCP client support (stdio/HTTP/SSE transports) with a curated server
@@ -42,7 +42,7 @@ See `docs/RELEASE_CHECKLIST.md` for how a version graduates from this
 - Arena: visual benchmarking dashboard with per-model average latency.
 - Java SDK (`sdk/java`, bumped to **0.2.0**): dedicated tool executor,
   multi-sink DAG, per-node telemetry — joined by a new **Python SDK**
-  (`sdk/python`, `heliox-sdk` **0.2.0**) as the third cross-runtime
+  (`sdk/python`, `fluxor-sdk` **0.2.0**) as the third cross-runtime
   conformance implementation, enforced by a new CI workflow
   (`.github/workflows/sdk-conformance.yml`: mvn + pytest + the flow-export
   vitest slice).
@@ -68,6 +68,15 @@ See `docs/RELEASE_CHECKLIST.md` for how a version graduates from this
   `docs/RELEASE_CHECKLIST.md`.
 
 ### Changed
+- **Rebranding: Heliox → Fluxor.** The project is renamed end-to-end: repo
+  (`CMolG/fluxor-ide`), product name (**Fluxor IDE**), CLI/package
+  (`fluxor-ide`), preload API (`window.fluxorAPI`), IPC channels (`fluxor:*`),
+  env vars (`FLUXOR_*`), the flow export format (`fluxor-flow`), and the
+  `fluxor`/`.fluxor` project and config directories. **Migration:** uninstall
+  Heliox IDE, install Fluxor IDE. `HELIOX_*` env vars still work (deprecated,
+  logging a one-time warning) until v0.4.0; existing `heliox`/`.heliox`
+  project directories migrate to `fluxor`/`.fluxor` automatically on first
+  run; legacy `heliox-flow` exports still import (with a warning).
 - ESLint migrated to flat config (ESLint 10).
 - `release.yml` now runs `npm ci` (was `npm install`) for reproducible builds,
   and produces a **draft** GitHub Release per tag instead of publishing
@@ -87,4 +96,4 @@ See `docs/RELEASE_CHECKLIST.md` for how a version graduates from this
   defaults to off and requires both explicit opt-in and a configured
   endpoint before it ever sends a request.
 
-[Unreleased]: https://github.com/CMolG/heliox-ide/commits/main
+[Unreleased]: https://github.com/CMolG/fluxor-ide/commits/main

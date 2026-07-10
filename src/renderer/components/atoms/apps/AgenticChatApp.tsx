@@ -14,7 +14,7 @@
  */
 // src/renderer/components/desktop/ChatWindow.tsx — Chat content adapted for desktop windows
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { useHelioxStore } from '../../../store';
+import { useFluxorStore } from '../../../store';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { ChatMessage, sysMsg } from '@/types';
 import { ChatMessageItem, renderMessageContent } from '../../chat/MessageRenderer';
@@ -23,7 +23,7 @@ import { handleSlashCommand } from '../../chat/SlashCommandHandler';
 import { INFINITY_LOOP_PROMPT } from '../../../logic/flow-prompts';
 import { theme } from '../../../logic/theme';
 import { LucideIcon } from '../../desktop/LucideIcon';
-import { HelioxDropdown } from '../../ui/HelioxDropdown';
+import { FluxorDropdown } from '../../ui/FluxorDropdown';
 import { FlowQuickRail } from './FlowQuickRail';
 import { MentalAttachmentChips } from './MentalAttachmentChips';
 import {
@@ -79,23 +79,23 @@ interface ChatWindowProps {
 }
 
 export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
-  const session = useHelioxStore(s => s.sessions.find(ss => ss.id === sessionId));
-  const addSessionMessage = useHelioxStore(s => s.addSessionMessage);
-  const updateSessionStatus = useHelioxStore(s => s.updateSessionStatus);
-  const updateSessionDescription = useHelioxStore(s => s.updateSessionDescription);
-  const setOpencodeSessionId = useHelioxStore(s => s.setOpencodeSessionId);
-  const setSessionModel = useHelioxStore(s => s.setSessionModel);
-  const setSessionTokenUsage = useHelioxStore(s => s.setSessionTokenUsage);
-  const addLogEntry = useHelioxStore(s => s.addLogEntry);
-  const addToast = useHelioxStore(s => s.addToast);
-  const projectPath = useHelioxStore(s => s.projectPath);
-  const flows = useHelioxStore(s => s.flows);
-  const roles = useHelioxStore(s => s.roles);
-  const appSettings = useHelioxStore(s => s.appSettings);
-  const projectFiles = useHelioxStore(s => s.projectFiles);
-  const addRawOutputLine = useHelioxStore(s => s.addRawOutputLine);
-  const availableModels = useHelioxStore(s => s.availableModels);
-  const sessionChangedFiles = useHelioxStore(s => s.sessionChangedFiles);
+  const session = useFluxorStore(s => s.sessions.find(ss => ss.id === sessionId));
+  const addSessionMessage = useFluxorStore(s => s.addSessionMessage);
+  const updateSessionStatus = useFluxorStore(s => s.updateSessionStatus);
+  const updateSessionDescription = useFluxorStore(s => s.updateSessionDescription);
+  const setOpencodeSessionId = useFluxorStore(s => s.setOpencodeSessionId);
+  const setSessionModel = useFluxorStore(s => s.setSessionModel);
+  const setSessionTokenUsage = useFluxorStore(s => s.setSessionTokenUsage);
+  const addLogEntry = useFluxorStore(s => s.addLogEntry);
+  const addToast = useFluxorStore(s => s.addToast);
+  const projectPath = useFluxorStore(s => s.projectPath);
+  const flows = useFluxorStore(s => s.flows);
+  const roles = useFluxorStore(s => s.roles);
+  const appSettings = useFluxorStore(s => s.appSettings);
+  const projectFiles = useFluxorStore(s => s.projectFiles);
+  const addRawOutputLine = useFluxorStore(s => s.addRawOutputLine);
+  const availableModels = useFluxorStore(s => s.availableModels);
+  const sessionChangedFiles = useFluxorStore(s => s.sessionChangedFiles);
 
   const win = useDesktopStore(s => s.windows.find(w => w.id === windowId));
   const updateWindowTitle = useDesktopStore(s => s.updateWindowTitle);
@@ -103,7 +103,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
   const installedPlugins = useDesktopStore(s => s.installedPlugins);
   const marketInventory = useDesktopStore(s => s.marketInventory);
 
-  const totalPremiumRequests = useHelioxStore(s => s.totalPremiumRequests);
+  const totalPremiumRequests = useFluxorStore(s => s.totalPremiumRequests);
 
   // Effective cwd: child project path (if selected) or parent project path
   const effectiveCwd = win?.childProjectPath || projectPath;
@@ -174,7 +174,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
     });
   }, [messages.length, streamingContent, streamingThinking]);
 
-  // Focus chat input on heliox:focus-chat if this is the active window
+  // Focus chat input on fluxor:focus-chat if this is the active window
   useEffect(() => {
     const handler = () => {
       const activeId = useDesktopStore.getState().activeWindowId;
@@ -182,17 +182,17 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
         textareaRef.current?.focus();
       }
     };
-    window.addEventListener('heliox:focus-chat', handler);
-    return () => window.removeEventListener('heliox:focus-chat', handler);
+    window.addEventListener('fluxor:focus-chat', handler);
+    return () => window.removeEventListener('fluxor:focus-chat', handler);
   }, [windowId]);
 
   // Load branches on mount and when project changes
   useEffect(() => {
-    if (!window.helioxAPI || !effectiveCwd) return;
+    if (!window.fluxorAPI || !effectiveCwd) return;
     let cancelled = false;
     (async () => {
       try {
-        const result = await window.helioxAPI!.gitBranches(effectiveCwd);
+        const result = await window.fluxorAPI!.gitBranches(effectiveCwd);
         if (!cancelled) {
           setCurrentBranch(result.current);
           setBranches(result.branches);
@@ -215,8 +215,8 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
   }, []);
 
   useEffect(() => {
-    if (!window.helioxAPI) return;
-    const unsubscribe = window.helioxAPI.onAgentEvent((event: any) => {
+    if (!window.fluxorAPI) return;
+    const unsubscribe = window.fluxorAPI.onAgentEvent((event: any) => {
       if (event.agentId !== sessionId) return;
       switch (event.type) {
         case 'thinking-delta':
@@ -293,7 +293,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
       const supported = getEffortLevels(session.model, currentAdapter);
       if (supported.length === 0 || !supported.includes(appSettings.effort)) {
         if (supported.length > 0) {
-          useHelioxStore.getState().updateAppSettings({effort: supported[supported.length - 1]});
+          useFluxorStore.getState().updateAppSettings({effort: supported[supported.length - 1]});
         }
       }
     }
@@ -321,7 +321,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
 
   // Check if any OTHER window is running on same project+different branch
   const allWindows = useDesktopStore(s => s.windows);
-  const sessions = useHelioxStore(s => s.sessions);
+  const sessions = useFluxorStore(s => s.sessions);
   const isAnyOtherRunning = useMemo(() => {
     return allWindows.some(w => {
       if (w.id === windowId || w.type !== 'chat' || !w.sessionId) return false;
@@ -331,7 +331,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
   }, [allWindows, sessions, windowId]);
 
   const handleBranchChange = useCallback(async (newBranch: string) => {
-    if (!window.helioxAPI || !effectiveCwd || newBranch === currentBranch) return;
+    if (!window.fluxorAPI || !effectiveCwd || newBranch === currentBranch) return;
 
     // Block branch switch if any agent is running on this project (no worktree)
     if (isAnyOtherRunning) {
@@ -342,7 +342,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
     setBranchLoading(true);
     setBranchError(null);
     try {
-      const result = await window.helioxAPI.gitCheckout(effectiveCwd, newBranch);
+      const result = await window.fluxorAPI.gitCheckout(effectiveCwd, newBranch);
       if (result.success) {
         setCurrentBranch(newBranch);
       } else {
@@ -356,11 +356,11 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
 
   const handleSend = useCallback(async () => {
     const text = inputRef.current.trim();
-    if (!text || isRunning || !window.helioxAPI || !effectiveCwd) return;
+    if (!text || isRunning || !window.fluxorAPI || !effectiveCwd) return;
 
     // Slash command
     if (text.startsWith('/')) {
-      const store = useHelioxStore.getState();
+      const store = useFluxorStore.getState();
       const handled = handleSlashCommand(text, sessionId, {
         setSessionModel: store.setSessionModel,
         addSessionMessage: store.addSessionMessage,
@@ -396,8 +396,8 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
     setInput('');
     updateSessionStatus(sessionId, 'running');
 
-    if (window.helioxAPI && projectPath && session) {
-      window.helioxAPI.contextMapUpsertSessionNode(projectPath, {
+    if (window.fluxorAPI && projectPath && session) {
+      window.fluxorAPI.contextMapUpsertSessionNode(projectPath, {
         sessionId,
         label: `Session #${session.number}: ${text.slice(0, 80)}${text.length > 80 ? '…' : ''}`,
         status: 'running',
@@ -411,7 +411,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
 
     if (fileRefs.length > 0) {
       const contents = await Promise.all(fileRefs.map(async (f) => {
-        const content = await window.helioxAPI!.readFile(`${effectiveCwd}/${f}`);
+        const content = await window.fluxorAPI!.readFile(`${effectiveCwd}/${f}`);
         return content ? `--- ${f} ---\n${content}\n--- end ${f} ---` : null;
       }));
       const fileBlock = contents.filter(Boolean).join('\n\n');
@@ -421,7 +421,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
     // Prepend flow prompt from market .md (if connected)
     if (win?.flowId && projectPath) {
       try {
-        const flowPrompt = await window.helioxAPI.readMarketPrompt(projectPath, 'flows', win.flowId);
+        const flowPrompt = await window.fluxorAPI.readMarketPrompt(projectPath, 'flows', win.flowId);
         if (flowPrompt) instruction = `[Flow: ${win.flowId}]\n${flowPrompt}\n\n${instruction}`;
       } catch { /* flow prompt not found, continue */ }
     }
@@ -432,7 +432,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
       const marketRole = marketInventory?.roles.find(r => r.name === win.roleId);
       if (marketRole) {
         try {
-          rolePrompt = await window.helioxAPI.readMarketPrompt(projectPath, 'roles', win.roleId) ?? undefined;
+          rolePrompt = await window.fluxorAPI.readMarketPrompt(projectPath, 'roles', win.roleId) ?? undefined;
         } catch { /* fallback to plugin */ }
       }
     }
@@ -446,7 +446,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
     for (const modId of (win?.modifierIds ?? [])) {
       if (marketModNames.has(modId) && projectPath) {
         try {
-          const modPrompt = await window.helioxAPI.readMarketPrompt(projectPath, 'mods', modId);
+          const modPrompt = await window.fluxorAPI.readMarketPrompt(projectPath, 'mods', modId);
           if (modPrompt) { modPrompts.push(modPrompt); continue; }
         } catch { /* fallback to plugin */ }
       }
@@ -490,7 +490,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
       let projectDigest = '';
       if (projectPath) {
         try {
-          projectDigest = await window.helioxAPI.contextMapExportText(projectPath, {
+          projectDigest = await window.fluxorAPI.contextMapExportText(projectPath, {
             roleId: win?.roleId,
             sessionId,
             limit: 10,
@@ -501,7 +501,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
     }
 
     try {
-      await window.helioxAPI.runAgent({
+      await window.fluxorAPI.runAgent({
         agentId: sessionId,
         instruction,
         flows,
@@ -559,8 +559,8 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
   }, []);
 
   const handleStop = useCallback(() => {
-    if (window.helioxAPI && session) {
-      window.helioxAPI.stopAgent(sessionId);
+    if (window.fluxorAPI && session) {
+      window.fluxorAPI.stopAgent(sessionId);
       updateSessionStatus(sessionId, 'stopped');
       resetStreaming();
     }
@@ -719,7 +719,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
           {session && session.messages.length > 0 && !isRunning && (
             <button
               onClick={() => {
-                useHelioxStore.getState().clearConversation(sessionId);
+                useFluxorStore.getState().clearConversation(sessionId);
                 setInput('');
                 setStreamingContent('');
                 setStreamingThinking('');
@@ -792,7 +792,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
         {/* Streaming response — this IS the chat bubble */}
         {streamingContent && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontFamily: theme.fontInter, fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.06em', color: theme.textGhost }}>Heliox</span>
+            <span style={{ fontFamily: theme.fontInter, fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.06em', color: theme.textGhost }}>Fluxor</span>
             <div style={{
               padding: 14, borderRadius: '0 18px 18px 18px',
               background: theme.surfaceHover, outline: `1px solid ${theme.border}`, outlineOffset: '-1px',
@@ -931,7 +931,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
           {branches.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               <LucideIcon name="GitBranch" size={11} style={{ color: '#a0a0a8' }} />
-              <HelioxDropdown
+              <FluxorDropdown
                 value={currentBranch}
                 options={branches.map(b => ({ value: b, label: b }))}
                 onChange={handleBranchChange}
@@ -957,7 +957,7 @@ export function AgenticChatApp({ windowId, sessionId }: ChatWindowProps) {
           {getEffortLevels(session?.model ?? 'opencode/claude-sonnet-4-6', currentAdapter).map(e => (
             <button
               key={e}
-              onClick={() => useHelioxStore.getState().updateAppSettings({ effort: e })}
+              onClick={() => useFluxorStore.getState().updateAppSettings({ effort: e })}
               aria-pressed={appSettings.effort === e}
               aria-label={`Effort: ${e}`}
               style={{

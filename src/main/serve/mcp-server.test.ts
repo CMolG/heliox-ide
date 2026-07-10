@@ -20,7 +20,7 @@ import type { LLMStepResult } from '../harness-engine/llm-runner';
 import type { HarnessStepRunnerInput } from '../harness-engine/executor';
 import { harnessEventBus, HARNESS_EVENT_NAME } from '../harness-engine/event-bus';
 import { executeAgenticFlow } from '../harness-engine/executor';
-import { importFlow, type HelioxFlowExport } from '../flow-export/heliox-flow';
+import { importFlow, type FluxorFlowExport } from '../flow-export/fluxor-flow';
 import { createMcpFlowServer, createInProcessMcpClient } from './mcp-server';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpFlowServer } from './mcp-server';
@@ -34,9 +34,9 @@ const FIXTURE_PATH = resolve(
   '../../../sdk/conformance/conformance-chain.flow.json',
 );
 
-const exported: HelioxFlowExport = JSON.parse(
+const exported: FluxorFlowExport = JSON.parse(
   readFileSync(FIXTURE_PATH, 'utf-8'),
-) as HelioxFlowExport;
+) as FluxorFlowExport;
 
 // Scripted runner that returns deterministic output per step.
 function makeScriptedRunStep() {
@@ -199,7 +199,7 @@ describe('callTool — parity', () => {
 
 describe('createMcpFlowServer — validation', () => {
   it('throws synchronously for a flow with an invalid rootStepId', () => {
-    const bad: HelioxFlowExport = {
+    const bad: FluxorFlowExport = {
       ...exported,
       rootStepId: 'nonexistent-step',
     };

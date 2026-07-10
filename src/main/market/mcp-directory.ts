@@ -2,7 +2,7 @@
  * mcp-directory.ts — Curated, demand-ranked directory of recommended MCP servers
  *
  * Provides a vetted list of external MCP servers that users can attach to a
- * Heliox step in one click via the ARCH-066 `tool_provider` mod.
+ * Fluxor step in one click via the ARCH-066 `tool_provider` mod.
  *
  * Design principles:
  * - The directory is **curated metadata** only. The mod (mcp-client-mod.ts) is

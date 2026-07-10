@@ -18,7 +18,7 @@
  *   passed in matches what StepInspector would actually hand down.
  * - `harness-store` IS mocked (hoisted fixture for `stepIterations`/
  *   `stepModels`, both read by StepRunEvidence) since the real
- *   implementation dispatches through IPC/`window.helioxAPI`, which isn't
+ *   implementation dispatches through IPC/`window.fluxorAPI`, which isn't
  *   available in this environment.
  *
  * Scenarios covered:

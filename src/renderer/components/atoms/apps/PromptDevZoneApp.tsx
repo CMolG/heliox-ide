@@ -24,10 +24,10 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { AiComposer, resolveMarketPrompt, resolveMarketPrompts } from '../../../logic/ai';
-import { useHelioxStore } from '../../../store';
+import { useFluxorStore } from '../../../store';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { theme } from '../../../logic/theme';
-import { HelioxDropdown } from '../../ui/HelioxDropdown';
+import { FluxorDropdown } from '../../ui/FluxorDropdown';
 import { LucideIcon } from '../../desktop/LucideIcon';
 import { CodeEditor } from '../../ui/CodeEditor';
 
@@ -36,9 +36,9 @@ interface PromptDevZoneAppProps {
 }
 
 export function PromptDevZoneApp({ windowId }: PromptDevZoneAppProps) {
-  const roles = useHelioxStore(s => s.roles);
-  const flows = useHelioxStore(s => s.flows);
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const roles = useFluxorStore(s => s.roles);
+  const flows = useFluxorStore(s => s.flows);
+  const projectPath = useFluxorStore(s => s.projectPath);
   const marketInventory = useDesktopStore(s => s.marketInventory);
 
   // ── Local state for composing prompts ──────────────────────────
@@ -231,7 +231,7 @@ export function PromptDevZoneApp({ windowId }: PromptDevZoneAppProps) {
           {/* Role */}
           <div style={sectionStyle}>
             <span style={labelStyle}>Role</span>
-            <HelioxDropdown
+            <FluxorDropdown
               value={selectedRoleId}
               options={[
                 { value: '', label: 'None' },

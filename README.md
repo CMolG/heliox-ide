@@ -1,11 +1,11 @@
 <div align="center">
-  <img src="assets/heliox-logo.png" alt="Heliox IDE" width="160" />
-  <h1>Heliox IDE</h1>
+  <img src="assets/fluxor-logo.png" alt="Fluxor IDE" width="160" />
+  <h1>Fluxor IDE</h1>
 
   <p>
-    <a href="https://github.com/CMolG/heliox-ide/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/CMolG/heliox-ide/ci.yml?label=CI" alt="CI status" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/github/license/CMolG/heliox-ide" alt="License: Apache-2.0" /></a>
-    <a href="https://github.com/CMolG/heliox-ide/releases"><img src="https://img.shields.io/github/v/release/CMolG/heliox-ide?include_prereleases&label=release" alt="Latest release" /></a>
+    <a href="https://github.com/CMolG/fluxor-ide/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/CMolG/fluxor-ide/ci.yml?label=CI" alt="CI status" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/CMolG/fluxor-ide" alt="License: Apache-2.0" /></a>
+    <a href="https://github.com/CMolG/fluxor-ide/releases"><img src="https://img.shields.io/github/v/release/CMolG/fluxor-ide?include_prereleases&label=release" alt="Latest release" /></a>
     <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome" /></a>
   </p>
 
@@ -31,12 +31,12 @@
 
 ---
 
-## Why Heliox?
+## Why Fluxor?
 
-Most AI coding tools are chat windows bolted onto editors. Heliox is different:
+Most AI coding tools are chat windows bolted onto editors. Fluxor is different:
 
 - **Spatial canvas** — Arrange agent sessions, file explorers, and Kanban boards as windows on an infinite, pannable desktop. Connect them visually. Drag roles and mods onto sessions like a design tool.
-- **Snapshot-verified agents** — Every agent run is validated against Playwright E2E snapshots and Core Web Vitals. If a change causes visual regression or metric degradation, Heliox auto-corrects up to 3 times before reverting.
+- **Snapshot-verified agents** — Every agent run is validated against Playwright E2E snapshots and Core Web Vitals. If a change causes visual regression or metric degradation, Fluxor auto-corrects up to 3 times before reverting.
 - **OpenCode-backed** — A single [OpenCode](https://opencode.ai) adapter drives every model — Anthropic, OpenAI, or any provider in OpenCode's own catalog — through one settings picker instead of juggling separate CLI integrations.
 - **Market system** — A built-in library of flows (autonomous loops), roles (specialized personas), mods (constraint layers), and steps (reusable step templates) that compose together on the canvas.
 
@@ -93,7 +93,7 @@ A split-pane file manager with a tabbed Monaco editor.
 - Drag a tab out of the window to spawn a standalone file viewer
 - Context menu: create, rename, delete, refresh
 - Save with `Cmd+S` / `Ctrl+S`
-- Monaco configured with Heliox dark theme, `Liberation Mono` / `JetBrains Mono` font
+- Monaco configured with Fluxor dark theme, `Liberation Mono` / `JetBrains Mono` font
 
 ### E2E Snapshot Engine
 
@@ -138,7 +138,7 @@ A pipeline is a DAG of steps inside a Frame window — build one by dragging ste
 - **Loop-back edges** — drag a connection from a later step back to an earlier one to form a bounded loop: a dashed amber edge with an editable ×N badge (1–50, default 3). The compiler keeps the forward graph an acyclic DAG; loops are tracked separately and the executor schedules bounded per-iteration instances. The auto flow-generator can also emit loops (`loopBackTo`).
 - **Smart model routing** — an opt-in, per-flow **Model policy**: **Fixed** (default, uses the flow's configured model), **Smart (Local)** (routes only among Arena-**Benchmarked** models, by best-score/cheapest/fastest/best-value), or **Smart (External)** (delegates the pick to OpenRouter's `openrouter/auto` and records the model actually served). Every routed decision is recorded with a human-readable reason (e.g. `"best-score winner: score 92 at $0.004/run"`) — routing never blocks a run; it fails open to the flow's own model.
 - **Time-travel checkpoints** — an immutable snapshot is recorded after every step completes, enabling rewind → edit → fork debugging of a run
-- **Export Flow** — the Frame header's Export button compiles the canvas to a portable `*.flow.json` (`HelioxFlowExport` v1), the same format `heliox serve` and all three SDKs consume; `contract`, `model`, and `loops` round-trip intact
+- **Export Flow** — the Frame header's Export button compiles the canvas to a portable `*.flow.json` (`FluxorFlowExport` v1), the same format `fluxor serve` and all three SDKs consume; `contract`, `model`, and `loops` round-trip intact
 
 ### Arena Leaderboard
 
@@ -146,7 +146,7 @@ A sortable, filterable dashboard of AI model benchmark results, opened from the 
 
 - Run benchmarks with `npm run pf:arena`; the dashboard reads results read-only over the `arena:read-leaderboard` IPC channel
 - Per-model score, average latency, and cost — the same evidence Smart (Local) routing uses to pick a model
-- A model only earns the **Benchmarked** seal after it completes an Arena run — Heliox records benchmark results, it never claims a model is "verified"
+- A model only earns the **Benchmarked** seal after it completes an Arena run — Fluxor records benchmark results, it never claims a model is "verified"
 
 ### Mental Graph
 
@@ -174,11 +174,11 @@ Centralized notification system with OS-level integration.
 - Mark all as read / clear all
 - Native OS notifications via Electron
 
-### heliox serve, Triggers & MCP
+### fluxor serve, Triggers & MCP
 
 Flows exported from the canvas run outside the IDE too.
 
-- **`heliox serve <flow.json>`** (`npm run heliox:serve`) runs an exported flow as an HTTP service on port 7878, bound to `127.0.0.1` by default (pass `--host` to expose it further). `/run` and `/flow` require a Bearer token (`--token`, else `HELIOX_SERVE_TOKEN`, else a random token generated and printed at startup); `/health` does not. Pass `--mcp` to expose the flow as an MCP server over stdio instead of HTTP, or `--select best-score|cheapest|fastest|best-value` to resolve the model from the latest Arena leaderboard instead of hardcoding one.
+- **`fluxor serve <flow.json>`** (`npm run fluxor:serve`) runs an exported flow as an HTTP service on port 7878, bound to `127.0.0.1` by default (pass `--host` to expose it further). `/run` and `/flow` require a Bearer token (`--token`, else `FLUXOR_SERVE_TOKEN`, else a random token generated and printed at startup); `/health` does not. Pass `--mcp` to expose the flow as an MCP server over stdio instead of HTTP, or `--select best-score|cheapest|fastest|best-value` to resolve the model from the latest Arena leaderboard instead of hardcoding one.
 - **Triggers** — cron (5-field) and webhook triggers can fire a served flow on a schedule or on an inbound request, with an overlap guard so a slow-running trigger can't double-fire.
 - **MCP client** — attach external MCP servers (stdio or HTTP/SSE) to a step as tool providers, picked from a curated directory. A spawn allowlist blocks any stdio command that isn't in the curated set or explicitly approved by the user, closing an arbitrary-command-execution surface.
 
@@ -235,7 +235,7 @@ Flows exported from the canvas run outside the IDE too.
 | Visual Diff | pixelmatch + PNG.js |
 | Performance | PerformanceObserver API + Chrome DevTools Protocol |
 | AI Backend | [OpenCode](https://opencode.ai) adapter — single CLI, multi-provider catalog |
-| SDKs | TypeScript (in-repo), Python (`sdk/python`, `heliox-sdk` 0.2.0), Java (`sdk/java`, 0.2.0) |
+| SDKs | TypeScript (in-repo), Python (`sdk/python`, `fluxor-sdk` 0.2.0), Java (`sdk/java`, 0.2.0) |
 | Icons | react-icons — Lucide (`lu`) + Material Design (`md`) sets, via `LucideIcon.tsx` |
 | Drag & Drop | dnd-kit (core, sortable, modifiers) |
 | Build | Electron Forge (Squirrel, DMG, DEB, RPM) |
@@ -248,28 +248,28 @@ Flows exported from the canvas run outside the IDE too.
 
 - **Node.js** 24+
 - **Git**
-- The [OpenCode CLI](https://opencode.ai/docs/installation) (`opencode`) installed and on `PATH` — Heliox shells out to it for every agent run; without it, the IDE loads but agent commands fail
+- The [OpenCode CLI](https://opencode.ai/docs/installation) (`opencode`) installed and on `PATH` — Fluxor shells out to it for every agent run; without it, the IDE loads but agent commands fail
 
 ### Install and Run
 
 ```bash
-git clone https://github.com/CMolG/heliox-ide.git
-cd heliox-ide
+git clone https://github.com/CMolG/fluxor-ide.git
+cd fluxor-ide
 npm install
 npm start
 ```
 
 The IDE opens with a guided quick tour on first launch.
 
-### Initialize Heliox for a Project
+### Initialize Fluxor for a Project
 
-Open any project folder from the IDE, then initialize the Heliox config:
+Open any project folder from the IDE, then initialize the Fluxor config:
 
 ```bash
-npm run heliox:init
+npm run fluxor:init
 ```
 
-This creates a `heliox/` directory with:
+This creates a `fluxor/` directory with:
 
 - `flows.json` — E2E flow definitions (pages, clicks, screenshots)
 - `metrics.config.json` — Performance thresholds and regression policy
@@ -376,20 +376,20 @@ Flows, roles, mods, and steps compose together: drag a role onto a chat window, 
 
 ## E2E Snapshot Validation
 
-Heliox validates agent changes against visual snapshots and performance metrics. This is the core feedback loop that prevents regressions.
+Fluxor validates agent changes against visual snapshots and performance metrics. This is the core feedback loop that prevents regressions.
 
 ### How It Works
 
 ```
 1.  Agent receives a task
 2.  Agent makes code changes
-3.  Heliox runs E2E flows (Playwright)
+3.  Fluxor runs E2E flows (Playwright)
 4.  Captures screenshots + Core Web Vitals
 5.  Compares against baseline snapshots (pixelmatch)
 6.  If regression detected:
     a.  Auto-correct (up to 3 attempts)
     b.  If all attempts fail → revert changes
-7.  If pass → commit and log to heliox-results.tsv
+7.  If pass → commit and log to fluxor-results.tsv
 ```
 
 ### Metrics Thresholds
@@ -414,7 +414,7 @@ Heliox validates agent changes against visual snapshots and performance metrics.
 
 ### Results Log
 
-Every agent run is logged to `heliox-results.tsv`:
+Every agent run is logged to `fluxor-results.tsv`:
 
 ```
 commit      target                  status    lcp_delta  visual_diff  description
@@ -447,7 +447,7 @@ a4010b98    metrics-collector       merged    n/a        0.0%         Implement 
 ## Project Structure
 
 ```
-heliox-ide/
+fluxor-ide/
 ├── src/
 │   ├── main/                    # Electron main process
 │   │   ├── index.ts             # App entry, storage bootstrap, window lifecycle
@@ -458,10 +458,10 @@ heliox-ide/
 │   │   ├── agent-manager.ts     # Agent orchestration with auto-correction
 │   │   └── file-patcher.ts      # Unified diff application
 │   ├── preload/
-│   │   └── index.ts             # Context-isolated bridge (Heliox + storage APIs)
+│   │   └── index.ts             # Context-isolated bridge (Fluxor + storage APIs)
 │   ├── renderer/
 │   │   ├── App.tsx              # Root component
-│   │   ├── index.css            # Tailwind + Heliox design tokens
+│   │   ├── index.css            # Tailwind + Fluxor design tokens
 │   │   ├── store/               # Zustand stores (app + desktop + harness)
 │   │   └── components/
 │   │       ├── desktop/         # Canvas, windows, dock, snap guides, step/loop nodes
@@ -481,13 +481,13 @@ heliox-ide/
 │   ├── mods/                    # Constraint mod prompt definitions
 │   └── steps/                   # Reusable step-template prompt definitions
 ├── sdk/
-│   ├── python/                  # heliox-sdk (Python runtime), 0.2.0
-│   ├── java/                    # heliox-sdk-java (Java runtime), 0.2.0
+│   ├── python/                  # fluxor-sdk (Python runtime), 0.2.0
+│   ├── java/                    # fluxor-sdk-java (Java runtime), 0.2.0
 │   └── conformance/             # Shared golden fixtures for TS/Java/Python parity
 ├── e2e/                         # Playwright E2E tests (14 suites)
 ├── assets/
-│   ├── heliox-logo.png
-│   └── heliox-templates/        # Project init templates
+│   ├── fluxor-logo.png
+│   └── fluxor-templates/        # Project init templates
 ├── forge.config.ts              # Electron Forge packaging config
 ├── vite.main.config.ts
 ├── vite.preload.config.ts

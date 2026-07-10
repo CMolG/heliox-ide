@@ -22,7 +22,7 @@ const ROLE_PLUGIN: Plugin = {
   description: 'Builds accessible, performant UI with React and strict TypeScript.',
   iconName: 'MdWeb',
   category: 'roles',
-  author: 'Heliox Market',
+  author: 'Fluxor Market',
   installed: true,
 };
 
@@ -32,7 +32,7 @@ const MOD_PLUGIN: Plugin = {
   description: 'Enforces zero-warning lint output before any commit.',
   iconName: 'MdBuild',
   category: 'modifiers',
-  author: 'Heliox Market',
+  author: 'Fluxor Market',
   installed: true,
 };
 
@@ -42,7 +42,7 @@ const FLOW_PLUGIN: Plugin = {
   description: 'An autonomous, self-correcting execution loop for large refactors.',
   iconName: 'MdBolt',
   category: 'flows',
-  author: 'Heliox Market',
+  author: 'Fluxor Market',
   installed: true,
 };
 
@@ -132,7 +132,7 @@ describe('MarketplaceApp — card click opens the product sheet', () => {
     fireEvent.click(screen.getByTestId(`plugin-card-${ROLE_PLUGIN.id}`));
 
     expect(screen.getByText('Role')).toBeInTheDocument();
-    expect(screen.getByText(/by Heliox Market/)).toBeInTheDocument();
+    expect(screen.getByText(/by Fluxor Market/)).toBeInTheDocument();
     expect(screen.getByText('react')).toBeInTheDocument();
     expect(screen.getByText('accessibility')).toBeInTheDocument();
   });

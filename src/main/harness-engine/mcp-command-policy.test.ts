@@ -2,7 +2,7 @@
  * mcp-command-policy.test.ts — MCP stdio command allowlist (audit 1.4)
  *
  * Covers the four required scenarios: curated allowed, unapproved blocked,
- * approved-then-allowed, and the HELIOX_MCP_ALLOW_ALL env escape hatch.
+ * approved-then-allowed, and the FLUXOR_MCP_ALLOW_ALL env escape hatch.
  *
  * settings-store is mocked with an in-memory array standing in for
  * electron-store — electron-store calls electron's app.getPath() internally,
@@ -52,18 +52,18 @@ import {
 } from './mcp-command-policy';
 
 describe('mcp-command-policy', () => {
-  const originalAllowAll = process.env.HELIOX_MCP_ALLOW_ALL;
+  const originalAllowAll = process.env.FLUXOR_MCP_ALLOW_ALL;
 
   beforeEach(() => {
     resetStore();
-    delete process.env.HELIOX_MCP_ALLOW_ALL;
+    delete process.env.FLUXOR_MCP_ALLOW_ALL;
   });
 
   afterEach(() => {
     if (originalAllowAll === undefined) {
-      delete process.env.HELIOX_MCP_ALLOW_ALL;
+      delete process.env.FLUXOR_MCP_ALLOW_ALL;
     } else {
-      process.env.HELIOX_MCP_ALLOW_ALL = originalAllowAll;
+      process.env.FLUXOR_MCP_ALLOW_ALL = originalAllowAll;
     }
   });
 
@@ -142,20 +142,20 @@ describe('mcp-command-policy', () => {
     });
   });
 
-  describe('HELIOX_MCP_ALLOW_ALL escape hatch', () => {
+  describe('FLUXOR_MCP_ALLOW_ALL escape hatch', () => {
     it('bypasses the allowlist and logs a loud warning when set to "1"', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      process.env.HELIOX_MCP_ALLOW_ALL = '1';
+      process.env.FLUXOR_MCP_ALLOW_ALL = '1';
 
       expect(() => assertMcpCommandAllowed('anything-goes', ['--whatever'])).not.toThrow();
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('HELIOX_MCP_ALLOW_ALL=1'));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('FLUXOR_MCP_ALLOW_ALL=1'));
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('anything-goes --whatever'));
 
       warnSpy.mockRestore();
     });
 
     it('does not bypass the allowlist for any other value', () => {
-      process.env.HELIOX_MCP_ALLOW_ALL = 'true';
+      process.env.FLUXOR_MCP_ALLOW_ALL = 'true';
       expect(() => assertMcpCommandAllowed('still-blocked', [])).toThrow(MCPCommandBlockedError);
     });
   });

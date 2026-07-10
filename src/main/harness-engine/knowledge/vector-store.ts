@@ -145,7 +145,7 @@ function blobToEmbedding(blob: Buffer): number[] {
  *
  * @example
  *   import Database from 'better-sqlite3';
- *   const db = new Database('heliox.db');
+ *   const db = new Database('fluxor.db');
  *   const store = new SqliteVectorStore(db);
  */
 export class SqliteVectorStore implements VectorStore {
@@ -218,7 +218,7 @@ let activeStore: VectorStore = new InMemoryVectorStore();
  * @example
  *   import Database from 'better-sqlite3';
  *   import { SqliteVectorStore, setVectorStore } from './knowledge/vector-store';
- *   setVectorStore(new SqliteVectorStore(new Database('heliox.db')));
+ *   setVectorStore(new SqliteVectorStore(new Database('fluxor.db')));
  */
 export function setVectorStore(store: VectorStore): void {
   activeStore = store;

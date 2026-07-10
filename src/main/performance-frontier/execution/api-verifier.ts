@@ -81,7 +81,7 @@ async function materializeSnapshot(
   vfsSnapshot: Record<string, string>,
   rootPrefix = '/workspace',
 ): Promise<string> {
-  const tempDir = await mkdtemp(join(tmpdir(), 'heliox-api-'));
+  const tempDir = await mkdtemp(join(tmpdir(), 'fluxor-api-'));
   const prefix = rootPrefix.endsWith('/') ? rootPrefix : `${rootPrefix}/`;
 
   for (const [vfsPath, content] of Object.entries(vfsSnapshot)) {

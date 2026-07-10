@@ -248,8 +248,8 @@ async function serveStaticPWA(pathname: string, res: ServerResponse): Promise<vo
     if (pathname === '/manifest.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        name: 'Heliox Remote',
-        short_name: 'Heliox',
+        name: 'Fluxor Remote',
+        short_name: 'Fluxor',
         start_url: '/',
         display: 'standalone',
         background_color: '#0a0a0f',
@@ -357,7 +357,7 @@ function getCompanionHTML(): string {
   <meta name="theme-color" content="#0a0a0f" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Heliox Remote</title>
+  <title>Fluxor Remote</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
@@ -445,7 +445,7 @@ function getCompanionHTML(): string {
 <body>
   <!-- Auth View -->
   <div class="card" id="auth-view">
-    <h1>🔗 Heliox Remote</h1>
+    <h1>🔗 Fluxor Remote</h1>
     <p class="subtitle">Enter the PIN shown in your IDE</p>
     <input
       class="pin-input"
@@ -465,7 +465,7 @@ function getCompanionHTML(): string {
   <!-- Connected View -->
   <div class="card connected-view" id="connected-view">
     <h1><span class="dot green"></span>Connected</h1>
-    <p class="subtitle" id="device-info">Heliox Remote Session</p>
+    <p class="subtitle" id="device-info">Fluxor Remote Session</p>
     <div id="state-container">
       <div class="state-item">
         <span class="state-label">Project</span>

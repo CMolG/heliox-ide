@@ -43,7 +43,7 @@ These fail CI (`npm test`) if the architecture is violated again:
 
 - **`ConfidentExecutor` (flaw #6)** stays a *code role* because it carries runtime config (model, temperature, token budget) that a market role `.md` does not capture. It is now correctly located in the engine layer. **Recommendation:** if we want it user-facing, split it into a `market/roles/confident-executor.md` (persona) + a thin code binding for the runtime params, and extend the loader with `getMarketRole()`. Low priority.
 - **`team-work` bespoke inline roles** (`landing-content-planner`, etc.) live in `case-factory.ts`. These are **eval scaffolding**, not marketplace resources, so code is acceptable — but they could reference market roles for consistency.
-- **Market path resolution:** the engine loader reads `<cwd>/market` (override `HELIOX_MARKET_DIR`). This is correct for the dev/CLI/eval context where the PF engine runs. The packaged Electron app resolves the market via `appRoot` in `ipc-handlers.ts`; the two contexts are intentionally separate.
+- **Market path resolution:** the engine loader reads `<cwd>/market` (override `FLUXOR_MARKET_DIR`, falling back to the deprecated `HELIOX_MARKET_DIR` with a warning). This is correct for the dev/CLI/eval context where the PF engine runs. The packaged Electron app resolves the market via `appRoot` in `ipc-handlers.ts`; the two contexts are intentionally separate.
 - **Future guardrail:** consider broadening guardrail #4 to forbid any `src/main → src/renderer` import, once confirmed there are no legitimate cross-imports.
 
 ---

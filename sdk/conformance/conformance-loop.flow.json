@@ -1,5 +1,6 @@
 {
   "version": "1",
+  "format": "fluxor-flow",
   "id": "conformance-loop",
   "name": "Conformance Loop",
   "rootStepId": "step-a",

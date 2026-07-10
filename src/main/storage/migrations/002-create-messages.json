@@ -1,7 +1,7 @@
 {
   "id": "002-create-messages",
   "version": 2,
-  "author": "heliox",
+  "author": "fluxor",
   "description": "Create messages table for chat history",
   "created": "2026-04-02",
   "up": [

@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
+import { readBrandEnv } from '../lib/env-compat';
 import { executeAgenticFlow } from '../harness-engine/executor';
 import { runLLMStep } from '../harness-engine/llm-runner';
 import {
@@ -89,8 +90,8 @@ export async function runPerformanceFrontier(
 ): Promise<PFRunResult> {
   const seed = options.seed ?? Number(process.env.PF_SEED ?? 1);
   const suite = options.suite ?? 'architecture';
-  const modelId = options.modelId ?? process.env.HELIOX_PF_MODEL ?? 'mimo/mimo-v2.5-pro';
-  const outputDir = options.outputDir ?? join(process.cwd(), '.heliox', 'performance-frontier');
+  const modelId = options.modelId ?? readBrandEnv('FLUXOR_PF_MODEL') ?? 'mimo/mimo-v2.5-pro';
+  const outputDir = options.outputDir ?? join(process.cwd(), '.fluxor', 'performance-frontier');
   const stepTimeoutMs = options.stepTimeoutMs
     ?? Number(process.env.PF_STEP_TIMEOUT_MS ?? (SUITE_STEP_TIMEOUT_MS[suite] ?? DEFAULT_STEP_TIMEOUT_MS));
   const reportsDir = join(outputDir, 'reports');
@@ -140,7 +141,7 @@ export async function runPerformanceFrontier(
     };
     conversation.push({
       role: 'system',
-      content: 'Heliox Meta-Agent assembled a pipeline AST from a discovered Roles/Mods catalog.',
+      content: 'Fluxor Meta-Agent assembled a pipeline AST from a discovered Roles/Mods catalog.',
     });
     conversation.push({ role: 'user', content: testCase.prompt });
     conversation.push({ role: 'assistant', content: JSON.stringify(generatedAst, null, 2) });

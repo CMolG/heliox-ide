@@ -4,18 +4,18 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>io.heliox</groupId>
-  <artifactId>heliox-sdk-java</artifactId>
+  <groupId>io.fluxor</groupId>
+  <artifactId>fluxor-sdk-java</artifactId>
   <version>0.2.0</version>
   <packaging>jar</packaging>
 
-  <name>Heliox SDK for Java</name>
+  <name>Fluxor SDK for Java</name>
   <description>
     Async-first inference and execution runtime for the cognitive flows designed
-    in Heliox IDE. Forces structured outputs against a reflected JSON Schema and
+    in Fluxor IDE. Forces structured outputs against a reflected JSON Schema and
     self-corrects via a retry loop. Depends only on Jackson and the JDK HTTP client.
   </description>
-  <url>https://github.com/heliox/heliox-ide</url>
+  <url>https://github.com/CMolG/fluxor-ide</url>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>

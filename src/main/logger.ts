@@ -36,7 +36,7 @@ class SafeLogger {
   private write(level: LogLevel, args: unknown[]): void {
     if (LEVEL_ORDER[level] < LEVEL_ORDER[this.minLevel]) return;
 
-    const prefix = `[Heliox][${level.toUpperCase()}]`;
+    const prefix = `[Fluxor][${level.toUpperCase()}]`;
     const message = args.map(a =>
       typeof a === 'string' ? a : (a instanceof Error ? a.stack ?? a.message : JSON.stringify(a)),
     ).join(' ');
@@ -97,7 +97,7 @@ class SafeLogger {
       }
 
       fs.mkdirSync(dir, { recursive: true });
-      this.fileSinkPath = path.join(dir, 'heliox.log');
+      this.fileSinkPath = path.join(dir, 'fluxor.log');
       return this.fileSinkPath;
     } catch {
       return null;

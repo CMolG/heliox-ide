@@ -18,7 +18,7 @@ import { createPortal } from 'react-dom';
 import { useDroppable } from '@dnd-kit/core';
 import { useDesktopStore, GRID_PADDING, GRID_GAP } from '../../store/desktop-store';
 import { CanvasSizeContext } from './SeamlessCanvas';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
 import { AttachmentInfoModal } from './AttachmentInfoModal';
 import type { AttachmentModalInfo } from './AttachmentInfoModal';
@@ -79,11 +79,11 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
   const isGridSnapped = !!win?.gridId;
 
   // Project name for titlebar
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const projectPath = useFluxorStore(s => s.projectPath);
   const projectName = projectPath?.split('/').pop() ?? null;
 
   // Check if this window's session has a running agent
-  const session = useHelioxStore(s =>
+  const session = useFluxorStore(s =>
     win?.sessionId ? s.sessions.find(ss => ss.id === win.sessionId) : undefined
   );
   const isAgentRunning = session?.status === 'running';
@@ -409,7 +409,7 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
               droppedWin.position.y < w.position.y + w.size.height
             );
             if (explorer) {
-              window.dispatchEvent(new CustomEvent('heliox:absorb-file-viewer', {
+              window.dispatchEvent(new CustomEvent('fluxor:absorb-file-viewer', {
                 detail: { explorerId: explorer.id, filePath: droppedWin.filePath },
               }));
               removeWindow(windowId);
@@ -421,7 +421,7 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
             const centerX = droppedWin.position.x + droppedWin.size.width / 2;
             const centerY = droppedWin.position.y + droppedWin.size.height / 2;
             const pan = state.canvasPan;
-            window.dispatchEvent(new CustomEvent('heliox:canvas-wave', {
+            window.dispatchEvent(new CustomEvent('fluxor:canvas-wave', {
               detail: { x: centerX + pan.x, y: centerY + pan.y },
             }));
           }

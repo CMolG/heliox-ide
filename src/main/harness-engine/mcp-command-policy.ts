@@ -14,8 +14,9 @@
  *       prefix window must match exactly), OR
  *   (b) the exact command+args was previously approved by the user and
  *       persisted via settings-store (`approvedMcpCommands`), OR
- *   (c) HELIOX_MCP_ALLOW_ALL=1 is set — an escape hatch for local dev/tests
- *       only; every use is logged loudly.
+ *   (c) FLUXOR_MCP_ALLOW_ALL=1 is set (legacy compat: HELIOX_MCP_ALLOW_ALL,
+ *       deprecated) — an escape hatch for local dev/tests only; every use is
+ *       logged loudly.
  *
  * Enforcement lives in the main process (mcp-adapter.ts), so it cannot be
  * bypassed from the renderer — the renderer only ever reaches this through the
@@ -24,6 +25,7 @@
 import { ipcMain } from 'electron';
 import { getMcpDirectory } from '../market/mcp-directory';
 import { settingsGet, settingsSet } from '../storage/settings-store';
+import { readBrandEnv } from '../lib/env-compat';
 
 // ---------------------------------------------------------------------------
 // Typed rejection error
@@ -47,7 +49,7 @@ export class MCPCommandBlockedError extends Error {
     super(
       `MCP server command blocked: "${formatCommand(command, args)}" is not in the curated MCP ` +
       'directory and has not been approved. Approve it via the mcp:approveCommand IPC channel ' +
-      '(Settings > MCP Servers), or set HELIOX_MCP_ALLOW_ALL=1 for local dev/testing only.',
+      '(Settings > MCP Servers), or set FLUXOR_MCP_ALLOW_ALL=1 for local dev/testing only.',
     );
     this.name = 'MCPCommandBlockedError';
     this.command = command;
@@ -78,7 +80,7 @@ export function matchesCuratedDirectory(command: string, args: string[]): boolea
 }
 
 function isAllowAllEscapeHatchEnabled(): boolean {
-  return process.env.HELIOX_MCP_ALLOW_ALL === '1';
+  return readBrandEnv('FLUXOR_MCP_ALLOW_ALL') === '1';
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +135,7 @@ export function revokeMcpCommand(command: string, args: string[] = []): Approved
 export function assertMcpCommandAllowed(command: string, args: string[] = []): void {
   if (isAllowAllEscapeHatchEnabled()) {
     console.warn(
-      `[mcp-command-policy] HELIOX_MCP_ALLOW_ALL=1 — bypassing the MCP command allowlist for ` +
+      `[mcp-command-policy] FLUXOR_MCP_ALLOW_ALL=1 — bypassing the MCP command allowlist for ` +
       `"${formatCommand(command, args)}". This escape hatch is for local dev/tests only and must ` +
       'never be set in a distributed build.',
     );

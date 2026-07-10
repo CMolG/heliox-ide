@@ -1,9 +1,9 @@
 /**
- * mcp-server.ts — Expose a loaded HelioxFlowExport as an MCP server tool.
+ * mcp-server.ts — Expose a loaded FluxorFlowExport as an MCP server tool.
  *
  * Wraps the ARCH-063 execution core (`executeAgenticFlow`) behind the
  * Model Context Protocol so any MCP-compatible client (Claude Desktop, IDEs,
- * other agents) can discover and invoke a Heliox flow as a single tool.
+ * other agents) can discover and invoke a Fluxor flow as a single tool.
  *
  * Transport:
  *   - stdio  — default; suitable for local subprocess / pipe invocations.
@@ -21,7 +21,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { z } from 'zod';
-import { importFlow, type HelioxFlowExport } from '../flow-export/heliox-flow';
+import { importFlow, type FluxorFlowExport } from '../flow-export/fluxor-flow';
 import { executeAgenticFlow, type ExecuteAgenticFlowOptions } from '../harness-engine/executor';
 import { harnessEventBus, HARNESS_EVENT_NAME } from '../harness-engine/event-bus';
 import type { HarnessEventPayload } from '../../types/ipc-events';
@@ -54,7 +54,7 @@ export interface McpFlowServer {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function buildDescription(exported: HelioxFlowExport): string {
+function buildDescription(exported: FluxorFlowExport): string {
   const stepSummary = exported.steps.map((s) => s.id).join(' → ');
   return `${exported.name} — steps: ${stepSummary}`;
 }
@@ -64,7 +64,7 @@ function buildDescription(exported: HelioxFlowExport): string {
  * as a JSON string suitable for an MCP text content block.
  */
 async function runFlow(
-  exported: HelioxFlowExport,
+  exported: FluxorFlowExport,
   options: McpFlowServerOptions,
 ): Promise<string> {
   const flow = importFlow(exported);
@@ -110,7 +110,7 @@ async function runFlow(
  * if the export is malformed before a transport is connected.
  */
 export function createMcpFlowServer(
-  exported: HelioxFlowExport,
+  exported: FluxorFlowExport,
   options: McpFlowServerOptions = {},
 ): McpFlowServer {
   // Validate upfront — importFlow reconstructs the DAG but does not throw on
@@ -123,7 +123,7 @@ export function createMcpFlowServer(
   }
 
   const server = new McpServer(
-    { name: `heliox-flow-${exported.id}`, version: '1.0.0' },
+    { name: `fluxor-flow-${exported.id}`, version: '1.0.0' },
     { capabilities: { tools: {} } },
   );
 
@@ -180,14 +180,14 @@ export function createMcpFlowServer(
  * Useful for tests and programmatic invocations inside the same Node process.
  */
 export async function createInProcessMcpClient(
-  exported: HelioxFlowExport,
+  exported: FluxorFlowExport,
   options: McpFlowServerOptions = {},
 ): Promise<{ client: Client; mcpServer: McpFlowServer }> {
   const mcpServer = createMcpFlowServer(exported, options);
   const { clientTransport } = await mcpServer.connectInMemory();
 
   const client = new Client(
-    { name: 'heliox-test-client', version: '1.0.0' },
+    { name: 'fluxor-test-client', version: '1.0.0' },
     { capabilities: {} },
   );
 

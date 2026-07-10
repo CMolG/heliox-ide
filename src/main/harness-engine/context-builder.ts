@@ -146,7 +146,7 @@ function buildSystemPrompt(
 ): string {
   const roleLines = step.roles.length > 0
     ? step.roles.map((role) => `[${role.name}]\n${role.systemPrompt}`).join('\n\n')
-    : 'No explicit roles were attached. Use Heliox default engineering judgment.';
+    : 'No explicit roles were attached. Use Fluxor default engineering judgment.';
 
   const systemMods = step.mods
     .filter((mod) => mod.type === 'system_override')

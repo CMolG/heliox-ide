@@ -5,12 +5,12 @@
  * This file follows the explanatory style used across the codebase:
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
-// src/renderer/store/index.ts — Zustand store for Heliox IDE state
+// src/renderer/store/index.ts — Zustand store for Fluxor IDE state
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   Flow, FlowStep, SnapshotDiff, AgentConfig, DiffDecision, DiffRecord,
-  ChatMessage, Session, SessionStatus, NavTab, DiffViewMode, Role, LogEntry, HelioxAPI, AppSettings, BottomPanel,
+  ChatMessage, Session, SessionStatus, NavTab, DiffViewMode, Role, LogEntry, FluxorAPI, AppSettings, BottomPanel,
   GitStatusInfo,
 } from '@/types';
 
@@ -65,7 +65,7 @@ const DEFAULT_ROLES: Role[] = [
   },
 ];
 
-interface HelioxState {
+interface FluxorState {
   // Project
   projectPath: string | null;
   recentProjects: string[];
@@ -215,7 +215,7 @@ interface HelioxState {
   clearBridgeState: () => void;
 }
 
-export const useHelioxStore = create<HelioxState>()(
+export const useFluxorStore = create<FluxorState>()(
   persist(
     (set, get) => ({
       // ─── Project ────────────────────────────────────────
@@ -524,42 +524,42 @@ export const useHelioxStore = create<HelioxState>()(
       // ─── Project Config Sync ────────────────────────────
       loadProjectConfig: async () => {
         const { projectPath } = get();
-        if (!projectPath || !window.helioxAPI) return;
+        if (!projectPath || !window.fluxorAPI) return;
         try {
-          const flowsJson = await window.helioxAPI.readProjectConfig(projectPath, 'flows.json');
+          const flowsJson = await window.fluxorAPI.readProjectConfig(projectPath, 'flows.json');
           if (flowsJson) {
             const flows = JSON.parse(flowsJson);
             if (Array.isArray(flows)) set({ flows });
           }
         } catch (err) {
-          console.warn('[Heliox] Failed to load flows.json:', err);
+          console.warn('[Fluxor] Failed to load flows.json:', err);
         }
         try {
-          const rolesJson = await window.helioxAPI.readProjectConfig(projectPath, 'roles.json');
+          const rolesJson = await window.fluxorAPI.readProjectConfig(projectPath, 'roles.json');
           if (rolesJson) {
             const roles = JSON.parse(rolesJson);
             if (Array.isArray(roles)) set({ roles });
           }
         } catch (err) {
-          console.warn('[Heliox] Failed to load roles.json:', err);
+          console.warn('[Fluxor] Failed to load roles.json:', err);
         }
       },
       saveFlowsToProject: async () => {
         const { projectPath, flows } = get();
-        if (!projectPath || !window.helioxAPI) return;
+        if (!projectPath || !window.fluxorAPI) return;
         try {
-          await window.helioxAPI.writeProjectConfig(projectPath, 'flows.json', JSON.stringify(flows, null, 2));
+          await window.fluxorAPI.writeProjectConfig(projectPath, 'flows.json', JSON.stringify(flows, null, 2));
         } catch (err) {
-          console.error('[Heliox] Failed to save flows.json:', err);
+          console.error('[Fluxor] Failed to save flows.json:', err);
         }
       },
       saveRolesToProject: async () => {
         const { projectPath, roles } = get();
-        if (!projectPath || !window.helioxAPI) return;
+        if (!projectPath || !window.fluxorAPI) return;
         try {
-          await window.helioxAPI.writeProjectConfig(projectPath, 'roles.json', JSON.stringify(roles, null, 2));
+          await window.fluxorAPI.writeProjectConfig(projectPath, 'roles.json', JSON.stringify(roles, null, 2));
         } catch (err) {
-          console.error('[Heliox] Failed to save roles.json:', err);
+          console.error('[Fluxor] Failed to save roles.json:', err);
         }
       },
 
@@ -640,7 +640,7 @@ export const useHelioxStore = create<HelioxState>()(
       }),
     }),
     {
-      name: 'heliox-store-v3',
+      name: 'fluxor-store-v3',
       partialize: (state) => ({
         projectPath: state.projectPath,
         recentProjects: state.recentProjects,

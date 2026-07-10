@@ -37,13 +37,13 @@ test.beforeAll(async () => {
   await page.waitForLoadState('domcontentloaded');
 
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 
   // Set project path
   await page.evaluate(() => {
-    const store = (window as any).__HELIOX_STORE__;
+    const store = (window as any).__FLUXOR_STORE__;
     if (store) store.getState().setProjectPath('/tmp/test-project');
   });
   await page.waitForTimeout(500);
@@ -62,33 +62,33 @@ test.afterAll(async () => {
 // ─── Bridge API Type Tests ──────────────────────────────────────
 
 test.describe('Remote Control Bridge', () => {
-  test('bridgeStatus IPC method exists on helioxAPI', async () => {
+  test('bridgeStatus IPC method exists on fluxorAPI', async () => {
     const hasBridge = await page.evaluate(() => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       return typeof api?.bridgeStatus === 'function';
     });
     expect(hasBridge).toBe(true);
   });
 
-  test('bridgeStart IPC method exists on helioxAPI', async () => {
+  test('bridgeStart IPC method exists on fluxorAPI', async () => {
     const hasStart = await page.evaluate(() => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       return typeof api?.bridgeStart === 'function';
     });
     expect(hasStart).toBe(true);
   });
 
-  test('bridgeStop IPC method exists on helioxAPI', async () => {
+  test('bridgeStop IPC method exists on fluxorAPI', async () => {
     const hasStop = await page.evaluate(() => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       return typeof api?.bridgeStop === 'function';
     });
     expect(hasStop).toBe(true);
   });
 
-  test('bridgeGetQR IPC method exists on helioxAPI', async () => {
+  test('bridgeGetQR IPC method exists on fluxorAPI', async () => {
     const hasQR = await page.evaluate(() => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       return typeof api?.bridgeGetQR === 'function';
     });
     expect(hasQR).toBe(true);
@@ -130,7 +130,7 @@ test.describe('Remote Control Bridge', () => {
     );
 
     // Verify PWA has essential elements
-    expect(serverContent).toContain('Heliox Remote');
+    expect(serverContent).toContain('Fluxor Remote');
     expect(serverContent).toContain('apple-mobile-web-app-capable');
     expect(serverContent).toContain('bridge-pin-input');
     expect(serverContent).toContain('bridge-connect-btn');

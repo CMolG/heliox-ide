@@ -23,9 +23,9 @@ export async function resolveMarketPrompt(
   category: MarketCategory,
   name: string,
 ): Promise<string | null> {
-  if (!window.helioxAPI) return null;
+  if (!window.fluxorAPI) return null;
   try {
-    return await window.helioxAPI.readMarketPrompt(projectPath, category, name);
+    return await window.fluxorAPI.readMarketPrompt(projectPath, category, name);
   } catch {
     return null;
   }

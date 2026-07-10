@@ -39,7 +39,7 @@ interface WebviewHTMLAttributes extends React.HTMLAttributes<HTMLElement> {
   httpreferrer?: string;
   /** User-agent override. */
   useragent?: string;
-  /** Disable the guest page's web security (never set to true in Heliox). */
+  /** Disable the guest page's web security (never set to true in Fluxor). */
   disablewebsecurity?: boolean;
   /** Node integration in the guest (always false — we use contextIsolation). */
   nodeintegration?: boolean;

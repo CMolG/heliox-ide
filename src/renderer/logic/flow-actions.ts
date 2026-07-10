@@ -8,11 +8,11 @@
  *   FlowInspector actions row) without duplicating the logic.
  * - `exportActiveFlow` is byte-for-byte the same behavior FrameNode has always
  *   had: compile the current canvas, then hand the result to
- *   `window.helioxAPI.exportFlow` (the portable heliox-flow.json interchange
- *   format — src/main/flow-export/heliox-flow.ts).
+ *   `window.fluxorAPI.exportFlow` (the portable fluxor-flow.json interchange
+ *   format — src/main/flow-export/fluxor-flow.ts).
  * - `exportActiveFlowMarkdown` mirrors that same shape but renders the
  *   compiled flow to Markdown (`lib/flow-markdown.ts`) and saves it via the
- *   generic `window.helioxAPI.saveFile` dialog instead.
+ *   generic `window.fluxorAPI.saveFile` dialog instead.
  *
  * Both functions pull the compiler off `harness-store` via `getState()`
  * rather than accepting it as a parameter — they are plain async functions,
@@ -32,7 +32,7 @@ import { flowToMarkdown } from '../lib/flow-markdown';
 type AddToast = (message: string, type?: 'success' | 'error' | 'info') => void;
 
 /**
- * Compile the current canvas and export it to the portable heliox-flow.json
+ * Compile the current canvas and export it to the portable fluxor-flow.json
  * interchange format via a native save dialog. Identical behavior to
  * FrameNode's original inline `handleExport`:
  *   - Compile failure (or an empty/invalid canvas) -> error toast, no IPC call.
@@ -47,7 +47,7 @@ export async function exportActiveFlow(addToast: AddToast): Promise<void> {
     addToast('Fix compile errors before exporting this flow.', 'error');
     return;
   }
-  const api = window.helioxAPI;
+  const api = window.fluxorAPI;
   if (!api?.exportFlow) {
     addToast('Cannot export because the IPC bridge is unavailable.', 'error');
     return;
@@ -74,7 +74,7 @@ export async function exportActiveFlow(addToast: AddToast): Promise<void> {
  *   - Missing IPC bridge -> error toast, `saveFile` never called.
  *   - Saved -> success toast naming the default filename.
  *   - `saveFile` resolves `false` -> silent. Unlike `exportFlow`,
- *     `heliox:save-file`'s main-process handler collapses "user canceled the
+ *     `fluxor:save-file`'s main-process handler collapses "user canceled the
  *     dialog" and "write failed" into the same boolean `false` (no
  *     `canceled`/`error` discriminant is round-tripped) — treating it as a
  *     silent cancel, the more common case, avoids crying "error" on a plain
@@ -86,7 +86,7 @@ export async function exportActiveFlowMarkdown(addToast: AddToast): Promise<void
     addToast('Fix compile errors before exporting this flow.', 'error');
     return;
   }
-  const api = window.helioxAPI;
+  const api = window.fluxorAPI;
   if (!api?.saveFile) {
     addToast('Cannot export because the IPC bridge is unavailable.', 'error');
     return;

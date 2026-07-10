@@ -38,12 +38,12 @@ test.beforeAll(async () => {
   await page.waitForLoadState('domcontentloaded');
 
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 
   await page.evaluate(() => {
-    const store = (window as any).__HELIOX_STORE__;
+    const store = (window as any).__FLUXOR_STORE__;
     if (store) store.getState().setProjectPath('/tmp/test-project');
   });
   await page.waitForTimeout(500);
@@ -65,7 +65,7 @@ test.describe('Safe Logger', () => {
     // Triggering list-models invokes console.info paths that were
     // previously direct console.* calls. After P10, these use the safe logger.
     const models = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api?.listModels) return null;
       try {
         return await api.listModels();
@@ -76,7 +76,7 @@ test.describe('Safe Logger', () => {
 
     // The important thing: the app is still alive
     const stillAlive = await page.evaluate(() => {
-      return !!(window as any).__HELIOX_STORE__;
+      return !!(window as any).__FLUXOR_STORE__;
     });
     expect(stillAlive).toBe(true);
 
@@ -89,7 +89,7 @@ test.describe('Safe Logger', () => {
   test('repeated model list operations do not crash', async () => {
     // Call list-models multiple times rapidly to stress logging paths
     const results = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api?.listModels) return { calls: 0, alive: true };
 
       let calls = 0;
@@ -118,7 +118,7 @@ test.describe('Safe Logger', () => {
 test.describe('DiffRecord Persistence', () => {
   test('DiffRecord type supports beforeThumb and afterThumb', async () => {
     const result = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return { error: 'no store' };
 
       // The DiffRecord interface should accept thumb fields
@@ -148,7 +148,7 @@ test.describe('DiffRecord Persistence', () => {
 
   test('diffHistory is capped at 50 entries', async () => {
     const result = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return { error: 'no store' };
 
       // Directly set 60 diffHistory entries via Zustand setState
@@ -177,7 +177,7 @@ test.describe('DiffRecord Persistence', () => {
       store.setState({ diffHistory: store.getState().diffHistory });
 
       // Check localStorage for the capped version
-      const stored = localStorage.getItem('heliox-storage');
+      const stored = localStorage.getItem('fluxor-storage');
       let persistedCount = -1;
       if (stored) {
         try {
@@ -207,13 +207,13 @@ test.describe('DiffRecord Persistence', () => {
     // before/after from diffHistory entries. We test this by checking
     // what would be persisted.
     const result = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return { error: 'no store' };
 
       // Check if partialize is configured by looking at the persist config
       // We can't directly inspect persist config, but we can check that
       // localStorage doesn't contain full base64 diffs
-      const stored = localStorage.getItem('heliox-storage');
+      const stored = localStorage.getItem('fluxor-storage');
       if (!stored) return { hasStorage: false };
 
       try {
@@ -249,7 +249,7 @@ test.describe('Dev Session Logger', () => {
     // In dev mode (ELECTRON_IS_DEV=1), the logger should be active
     // We test by checking that the log path creation doesn't crash
     const alive = await page.evaluate(() => {
-      return !!(window as any).__HELIOX_STORE__;
+      return !!(window as any).__FLUXOR_STORE__;
     });
     expect(alive).toBe(true);
   });
@@ -262,7 +262,7 @@ test.describe('IPC Responsiveness', () => {
     const start = Date.now();
 
     const result = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api) return { error: 'no api' };
 
       // Run a few file operations to test IPC responsiveness
@@ -284,7 +284,7 @@ test.describe('IPC Responsiveness', () => {
 
   test('git status IPC does not block excessively', async () => {
     const result = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api?.gitStatus) return { available: false };
 
       const t0 = performance.now();

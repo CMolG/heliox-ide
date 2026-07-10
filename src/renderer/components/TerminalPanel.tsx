@@ -14,12 +14,12 @@
  */
 // src/renderer/components/TerminalPanel.tsx — Agent conversation / reasoning viewer
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { useHelioxStore } from '../store';
+import { useFluxorStore } from '../store';
 import { theme } from '../logic/theme';
 
 export function TerminalPanel() {
-  const rawOutputLines = useHelioxStore((s) => s.rawOutputLines);
-  const clearRawOutput = useHelioxStore((s) => s.clearRawOutput);
+  const rawOutputLines = useFluxorStore((s) => s.rawOutputLines);
+  const clearRawOutput = useFluxorStore((s) => s.clearRawOutput);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const prevCountRef = useRef(rawOutputLines.length);

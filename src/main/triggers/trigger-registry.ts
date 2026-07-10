@@ -1,5 +1,5 @@
 /**
- * trigger-registry.ts — Lifecycle manager for Heliox flow triggers.
+ * trigger-registry.ts — Lifecycle manager for Fluxor flow triggers.
  *
  * Responsibilities:
  *   - Persist TriggerDef[] as JSON to a configurable directory.
@@ -52,7 +52,7 @@ function saveDefs(dataDir: string, defs: TriggerDef[]): void {
 export interface TriggerRegistryOptions {
   /**
    * Directory where trigger definitions are persisted.
-   * Defaults to the OS temp dir + '/heliox-triggers' — override in tests.
+   * Defaults to the OS temp dir + '/fluxor-triggers' — override in tests.
    */
   dataDir?: string;
   /**
@@ -91,7 +91,7 @@ export class TriggerRegistry {
     this.dataDir = options.dataDir ?? join(
       // Use OS temp in production; tests always supply dataDir.
       process.env['TMPDIR'] ?? '/tmp',
-      'heliox-triggers',
+      'fluxor-triggers',
     );
     this.routeRegistrar = options.routeRegistrar;
     this.webhookRunStep = options.webhookRunStep;

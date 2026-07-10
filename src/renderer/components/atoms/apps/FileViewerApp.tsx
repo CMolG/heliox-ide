@@ -14,7 +14,7 @@
  */
 // src/renderer/components/atoms/apps/FileViewerApp.tsx — Standalone single-file Monaco viewer (spawned from tab drag-out)
 import React, { useState, useEffect, useCallback } from 'react';
-import { useHelioxStore } from '../../../store';
+import { useFluxorStore } from '../../../store';
 import { detectLanguage } from '../../../logic/monaco-config';
 import { theme } from '../../../logic/theme';
 import { LucideIcon } from '../../desktop/LucideIcon';
@@ -26,7 +26,7 @@ interface FileViewerAppProps {
 }
 
 export function FileViewerApp({ windowId, filePath }: FileViewerAppProps) {
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const projectPath = useFluxorStore(s => s.projectPath);
   const [content, setContent] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -40,7 +40,7 @@ export function FileViewerApp({ windowId, filePath }: FileViewerAppProps) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    window.helioxAPI?.readFile(filePath).then(data => {
+    window.fluxorAPI?.readFile(filePath).then(data => {
       if (cancelled) return;
       setContent(data);
       setEditContent(data ?? '');
@@ -53,7 +53,7 @@ export function FileViewerApp({ windowId, filePath }: FileViewerAppProps) {
   const handleSave = useCallback(async () => {
     if (!dirty || saving) return;
     setSaving(true);
-    const ok = await window.helioxAPI?.writeFile(filePath, editContent);
+    const ok = await window.fluxorAPI?.writeFile(filePath, editContent);
     if (ok) {
       setContent(editContent);
       setDirty(false);

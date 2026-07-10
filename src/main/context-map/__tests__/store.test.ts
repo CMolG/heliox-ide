@@ -16,7 +16,7 @@ describe('context-map store', () => {
   let projectPath = '';
 
   beforeEach(async () => {
-    projectPath = await mkdtemp(join(tmpdir(), 'heliox-cm-'));
+    projectPath = await mkdtemp(join(tmpdir(), 'fluxor-cm-'));
   });
 
   afterEach(async () => {
@@ -27,7 +27,7 @@ describe('context-map store', () => {
     const map = await ensureContextMap(projectPath);
     expect(map.version).toBe(1);
     const gitignore = await readFile(join(projectPath, '.gitignore'), 'utf-8');
-    expect(gitignore).toContain('.heliox/');
+    expect(gitignore).toContain('.fluxor/');
   });
 
   it('supports node/edge CRUD and cascades edge delete when node removed', async () => {

@@ -5,7 +5,7 @@
  * This file follows the explanatory style used across the codebase:
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
-// src/types/index.ts — Heliox IDE shared types
+// src/types/index.ts — Fluxor IDE shared types
 import type { AgenticFlow } from './harness';
 import type { HarnessEventPayload, ModelPolicy } from './ipc-events';
 import type { PipelineAssembly } from './meta-agent';
@@ -334,7 +334,7 @@ export interface GitStatusInfo {
   untracked: number;
 }
 
-export interface HelioxAPI {
+export interface FluxorAPI {
   initBaselines: (flows: Flow[]) => Promise<IpcResult>;
   runAgent: (params: RunAgentParams) => Promise<IpcResult>;
   /**
@@ -609,7 +609,7 @@ export interface FsDirectoryEntry {
 }
 
 /**
- * Storage API exposed on window.helioxAPI for renderer → main storage operations.
+ * Storage API exposed on window.fluxorAPI for renderer → main storage operations.
  * Follows the {layer}:{action} IPC naming convention.
  */
 export interface StorageAPI {
@@ -646,6 +646,6 @@ export interface StorageAPI {
 // Global Window augmentation — single source of truth
 declare global {
   interface Window {
-    helioxAPI?: HelioxAPI & StorageAPI;
+    fluxorAPI?: FluxorAPI & StorageAPI;
   }
 }

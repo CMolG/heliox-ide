@@ -25,6 +25,7 @@ import { join, basename, relative } from 'path';
 import { promisify } from 'util';
 import { createHash } from 'crypto';
 import { log } from './logger';
+import { readBrandEnv } from './lib/env-compat';
 import {
   listProviders, listModels as opencodeListModels, saveProviderCredential,
   removeProviderCredential, opencodeStatus,
@@ -35,7 +36,7 @@ import {
 } from './provider-connections';
 import { testConnection } from './provider-connection-tester';
 import { executeAgenticFlow } from './harness-engine/executor';
-import { exportFlow } from './flow-export/heliox-flow';
+import { exportFlow } from './flow-export/fluxor-flow';
 import { setHarnessEventWindow } from './harness-engine/event-bus';
 import { assemblePipeline } from './meta-agent/pipeline-generator';
 import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
@@ -153,7 +154,7 @@ const VALID_MODEL_POLICY_MODES = new Set(['fixed', 'smart-local', 'smart-externa
 const VALID_SELECTION_STRATEGIES = new Set(['best-score', 'cheapest', 'fastest', 'best-value']);
 
 /**
- * Loose IPC-boundary validation for `heliox:start-harness`'s `options.modelPolicy`.
+ * Loose IPC-boundary validation for `fluxor:start-harness`'s `options.modelPolicy`.
  * Renderer input is `unknown` by construction (crossed the context bridge) —
  * anything that doesn't shape up as a real `ModelPolicy` is dropped back to
  * `undefined` rather than thrown on, matching this IPC layer's convention of
@@ -193,7 +194,7 @@ async function buildConnectionResolver(): Promise<ConnectionResolver> {
     const byId = new Map(entries);
     return (id: string) => byId.get(id);
   } catch (err) {
-    log.warn('[Heliox Harness] failed to load provider connections for model resolution:', errMsg(err));
+    log.warn('[Fluxor Harness] failed to load provider connections for model resolution:', errMsg(err));
     return () => undefined;
   }
 }
@@ -229,11 +230,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcHandlersRegistered = true;
 
   // ── Agent lifecycle and streaming bridge ─────────────────────────────────────
-  ipcMain.handle('heliox:init-baselines', async (_event, flows: Flow[]) => {
+  ipcMain.handle('fluxor:init-baselines', async (_event, flows: Flow[]) => {
     // Audit 1.7 — surfaces the one-time "downloading Chromium" progress (if
     // any) emitted from AgentManager#initialize while baselines are computed.
     const onProgress = (data: { message: string }) => {
-      sendToRenderer('heliox:agent-event', { type: 'snapshot-browser-progress', ...data });
+      sendToRenderer('fluxor:agent-event', { type: 'snapshot-browser-progress', ...data });
     };
     agentManager.on('snapshot-browser-progress', onProgress);
     try {
@@ -244,12 +245,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:run-agent', async (_event, params: RunAgentParams) => {
+  ipcMain.handle('fluxor:run-agent', async (_event, params: RunAgentParams) => {
     const listeners = new Map<AgentEventName, (...args: any[]) => void>();
 
     for (const eventName of AGENT_EVENTS) {
       const handler = (data: any) => {
-        sendToRenderer('heliox:agent-event', {
+        sendToRenderer('fluxor:agent-event', {
           type: EVENT_TYPE_MAP[eventName],
           ...data,
         });
@@ -270,7 +271,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:start-harness', async (
+  ipcMain.handle('fluxor:start-harness', async (
     _event,
     flow: AgenticFlow,
     options?: { modelPolicy?: unknown; modelId?: unknown },
@@ -292,14 +293,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     setTimeout(() => {
       void executeAgenticFlow(flow, { modelPolicy, modelId, resolveConnection }).catch((err) => {
         const message = errMsg(err);
-        log.error(`[Heliox Harness] execution failed: ${message}`);
+        log.error(`[Fluxor Harness] execution failed: ${message}`);
       });
     }, 0);
 
     return { success: true };
   });
 
-  ipcMain.handle('heliox:assemble-pipeline', async (_event, userIntent: string) => {
+  ipcMain.handle('fluxor:assemble-pipeline', async (_event, userIntent: string) => {
     if (typeof userIntent !== 'string' || userIntent.trim().length === 0) {
       return { success: false, error: 'A non-empty user intent is required.' };
     }
@@ -312,10 +313,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:approve-diff', async (_event, diffId: string) => {
+  ipcMain.handle('fluxor:approve-diff', async (_event, diffId: string) => {
     try {
       agentManager.emit('diff-approved', { diffId });
-      sendToRenderer('heliox:agent-event', {
+      sendToRenderer('fluxor:agent-event', {
         type: 'file-changed',
         agentId: 'system',
         path: `approved:${diffId}`,
@@ -327,10 +328,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:reject-diff', async (_event, diffId: string, feedback: string) => {
+  ipcMain.handle('fluxor:reject-diff', async (_event, diffId: string, feedback: string) => {
     try {
       agentManager.emit('diff-rejected', { diffId, feedback });
-      sendToRenderer('heliox:agent-event', {
+      sendToRenderer('fluxor:agent-event', {
         type: 'file-changed',
         agentId: 'system',
         path: `rejected:${diffId}`,
@@ -342,13 +343,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:shutdown', async () => {
+  ipcMain.handle('fluxor:shutdown', async () => {
     await agentManager.shutdown();
     return { success: true };
   });
 
   // ── Project and filesystem helpers ──────────────────────────────────────────
-  ipcMain.handle('heliox:open-folder-dialog', async () => {
+  ipcMain.handle('fluxor:open-folder-dialog', async () => {
     const options: OpenDialogOptions = {
       properties: ['openDirectory'],
       title: 'Open Project',
@@ -360,7 +361,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return result.filePaths[0] ?? null;
   });
 
-  ipcMain.handle('heliox:read-dir', async (_event, dirPath: string): Promise<FileEntry[]> => {
+  ipcMain.handle('fluxor:read-dir', async (_event, dirPath: string): Promise<FileEntry[]> => {
     try {
       const entries = await readdir(dirPath);
       const results: FileEntry[] = [];
@@ -382,7 +383,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:check-cli', async (): Promise<CliStatus> => {
+  ipcMain.handle('fluxor:check-cli', async (): Promise<CliStatus> => {
     const NONE: CliStatus = { opencodeInstalled: false, opencodeVersion: null, nodeInstalled: false, gitInstalled: false };
     const check = async (cmd: string, args: string[]): Promise<boolean> => {
       try {
@@ -441,7 +442,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Replaces the old opencode-backed provider-picker UI (see ConnectionsSection.tsx).
   // Tokens never cross this boundary in plaintext — profiles only carry
   // `hasToken`; `getDecryptedToken` is called main-side only, here and from
-  // the `resolveConnection` closure built for `heliox:start-harness` below.
+  // the `resolveConnection` closure built for `fluxor:start-harness` below.
   ipcMain.handle('provider-connections:list', async () => {
     try {
       return { success: true, data: await listConnections() };
@@ -519,7 +520,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:get-project-name', async (_event, projectPath: string): Promise<string> => {
+  ipcMain.handle('fluxor:get-project-name', async (_event, projectPath: string): Promise<string> => {
     try {
       return basename(projectPath);
     } catch {
@@ -528,7 +529,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Project config file I/O (stored in user data directory, not project)
-  ipcMain.handle('heliox:read-project-config', async (_event, projectPath: string, filename: string): Promise<string | null> => {
+  ipcMain.handle('fluxor:read-project-config', async (_event, projectPath: string, filename: string): Promise<string | null> => {
     try {
       const configDir = getProjectConfigDir(projectPath);
       const configPath = join(configDir, filename);
@@ -538,7 +539,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:write-project-config', async (_event, projectPath: string, filename: string, content: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:write-project-config', async (_event, projectPath: string, filename: string, content: string): Promise<boolean> => {
     try {
       const configDir = getProjectConfigDir(projectPath);
       await mkdir(configDir, { recursive: true });
@@ -549,12 +550,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:get-config-dir', async (_event, projectPath: string): Promise<string> => {
+  ipcMain.handle('fluxor:get-config-dir', async (_event, projectPath: string): Promise<string> => {
     return getProjectConfigDir(projectPath);
   });
 
   // File content reading (for center panel file viewer)
-  ipcMain.handle('heliox:read-file', async (_event, filePath: string): Promise<string | null> => {
+  ipcMain.handle('fluxor:read-file', async (_event, filePath: string): Promise<string | null> => {
     try {
       const s = await stat(filePath);
       if (s.size > 1024 * 1024) return null;
@@ -565,7 +566,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // TSV result logging
-  ipcMain.handle('heliox:log-result', async (_event, projectPath: string, row: {
+  ipcMain.handle('fluxor:log-result', async (_event, projectPath: string, row: {
     commit: string;
     target: string;
     status: string;
@@ -574,7 +575,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     description: string;
   }) => {
     try {
-      const tsvPath = join(projectPath, 'heliox-results.tsv');
+      const tsvPath = join(projectPath, 'fluxor-results.tsv');
       const line = `${row.commit}\t${row.target}\t${row.status}\t${row.lcpDelta}\t${row.visualDiffPct}\t${row.description}\n`;
       try {
         await stat(tsvPath);
@@ -592,7 +593,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // Git operations
   // ── Git operations and user actions ─────────────────────────────────────────
-  ipcMain.handle('heliox:git-status', async (_event, cwd: string): Promise<{ clean: boolean; files: string[] }> => {
+  ipcMain.handle('fluxor:git-status', async (_event, cwd: string): Promise<{ clean: boolean; files: string[] }> => {
     try {
       const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd, timeout: 10000 });
       const files = stdout.trim().split('\n').filter(Boolean).map(line => line.trim());
@@ -602,7 +603,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:git-status-info', async (_event, cwd: string): Promise<{ branch: string; modified: number; staged: number; untracked: number }> => {
+  ipcMain.handle('fluxor:git-status-info', async (_event, cwd: string): Promise<{ branch: string; modified: number; staged: number; untracked: number }> => {
     try {
       const [branchResult, statusResult] = await Promise.all([
         execFileAsync('git', ['branch', '--show-current'], { cwd, timeout: 10000 }).catch(() => ({ stdout: '' })),
@@ -629,7 +630,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:git-diff-summary', async (_event, cwd: string): Promise<string> => {
+  ipcMain.handle('fluxor:git-diff-summary', async (_event, cwd: string): Promise<string> => {
     try {
       const { stdout } = await execFileAsync('git', ['diff', '--stat'], { cwd, timeout: 10000 });
       return stdout.trim();
@@ -638,7 +639,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:git-commit', async (_event, cwd: string, message: string): Promise<{ success: boolean; hash?: string; error?: string }> => {
+  ipcMain.handle('fluxor:git-commit', async (_event, cwd: string, message: string): Promise<{ success: boolean; hash?: string; error?: string }> => {
     try {
       await execFileAsync('git', ['add', '-A'], { cwd, timeout: 10000 });
       const { stdout } = await execFileAsync('git', ['commit', '-m', message], { cwd, timeout: 15000 });
@@ -650,7 +651,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:git-reset', async (_event, cwd: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:git-reset', async (_event, cwd: string): Promise<boolean> => {
     try {
       await execFileAsync('git', ['reset', '--hard', 'HEAD~1'], { cwd, timeout: 10000 });
       return true;
@@ -659,17 +660,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:stop-agent', async (_event, agentId: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:stop-agent', async (_event, agentId: string): Promise<boolean> => {
     return agentManager.stopAgent(agentId);
   });
 
-  ipcMain.handle('heliox:show-notification', async (_event, opts: { title: string; body: string }): Promise<void> => {
+  ipcMain.handle('fluxor:show-notification', async (_event, opts: { title: string; body: string }): Promise<void> => {
     if (Notification.isSupported()) {
       new Notification({ title: opts.title, body: opts.body }).show();
     }
   });
 
-  ipcMain.handle('heliox:open-file-dialog', async (_event, cwd: string): Promise<string | null> => {
+  ipcMain.handle('fluxor:open-file-dialog', async (_event, cwd: string): Promise<string | null> => {
     const options: OpenDialogOptions = {
       properties: ['openFile'],
       title: 'Select File',
@@ -684,24 +685,24 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ── Model list (delegated to opencode CLI) ─────────────────────────────────
   // Disk cache lives in opencode-providers; this IPC handler is a thin wrapper.
-  ipcMain.handle('heliox:list-models', async (): Promise<string[]> => {
-    const envModels = process.env.HELIOX_MODELS;
+  ipcMain.handle('fluxor:list-models', async (): Promise<string[]> => {
+    const envModels = readBrandEnv('FLUXOR_MODELS');
     if (envModels) {
       return envModels.split(',').map(m => m.trim()).filter(Boolean);
     }
     const models = await opencodeListModels();
     if (models.length === 0) {
-      log.warn('[Heliox] opencode returned no models — verify a provider is authorized');
+      log.warn('[Fluxor] opencode returned no models — verify a provider is authorized');
     }
     return models;
   });
 
-  ipcMain.handle('heliox:invalidate-models-cache', async (): Promise<void> => {
+  ipcMain.handle('fluxor:invalidate-models-cache', async (): Promise<void> => {
     // Force a refresh on the next call by passing { refresh: true }.
     await opencodeListModels(undefined, { refresh: true });
   });
 
-  ipcMain.handle('heliox:list-project-files', async (_event, projectPath: string): Promise<string[]> => {
+  ipcMain.handle('fluxor:list-project-files', async (_event, projectPath: string): Promise<string[]> => {
     const MAX_FILES = 500;
     const results: string[] = [];
 
@@ -731,7 +732,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return results;
   });
 
-  ipcMain.handle('heliox:save-file', async (_event, defaultPath: string, content: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:save-file', async (_event, defaultPath: string, content: string): Promise<boolean> => {
     try {
       const options: SaveDialogOptions = {
         title: 'Save File',
@@ -753,18 +754,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  // Export a canvas-compiled AgenticFlow to the portable heliox-flow.json
-  // interchange format (src/main/flow-export/heliox-flow.ts) — the format the
+  // Export a canvas-compiled AgenticFlow to the portable fluxor-flow.json
+  // interchange format (src/main/flow-export/fluxor-flow.ts) — the format the
   // Java/Python runtimes and the SDK conformance suite consume. Clones the
-  // heliox:save-file dialog pattern above.
-  ipcMain.handle('heliox:export-flow', async (_event, flow: AgenticFlow): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> => {
+  // fluxor:save-file dialog pattern above.
+  ipcMain.handle('fluxor:export-flow', async (_event, flow: AgenticFlow): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> => {
     try {
       const exported = exportFlow(flow);
       const options: SaveDialogOptions = {
         title: 'Export Flow',
         defaultPath: `${flow.id}.flow.json`,
         filters: [
-          { name: 'Heliox Flow', extensions: ['json'] },
+          { name: 'Fluxor Flow', extensions: ['json'] },
           { name: 'All Files', extensions: ['*'] },
         ],
       };
@@ -781,7 +782,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Direct file write (no dialog) — for inline code editing
-  ipcMain.handle('heliox:write-file', async (_event, filePath: string, content: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:write-file', async (_event, filePath: string, content: string): Promise<boolean> => {
     try {
       await writeFile(filePath, content, 'utf-8');
       return true;
@@ -791,7 +792,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Create a new empty file
-  ipcMain.handle('heliox:create-file', async (_event, filePath: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:create-file', async (_event, filePath: string): Promise<boolean> => {
     try {
       await access(filePath).then(() => { throw new Error('exists'); }).catch(e => {
         if (e.message === 'exists') throw e;
@@ -806,7 +807,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Create a new directory
-  ipcMain.handle('heliox:create-directory', async (_event, dirPath: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:create-directory', async (_event, dirPath: string): Promise<boolean> => {
     try {
       await mkdir(dirPath, { recursive: true });
       return true;
@@ -816,7 +817,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Delete a file
-  ipcMain.handle('heliox:delete-file', async (_event, filePath: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:delete-file', async (_event, filePath: string): Promise<boolean> => {
     try {
       await unlink(filePath);
       return true;
@@ -826,7 +827,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Delete a directory (recursive)
-  ipcMain.handle('heliox:delete-directory', async (_event, dirPath: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:delete-directory', async (_event, dirPath: string): Promise<boolean> => {
     try {
       await rm(dirPath, { recursive: true, force: true });
       return true;
@@ -836,7 +837,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Rename / move a file or directory
-  ipcMain.handle('heliox:rename-path', async (_event, oldPath: string, newPath: string): Promise<boolean> => {
+  ipcMain.handle('fluxor:rename-path', async (_event, oldPath: string, newPath: string): Promise<boolean> => {
     try {
       await rename(oldPath, newPath);
       return true;
@@ -858,9 +859,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   };
 
-  ipcMain.handle('heliox:git-diff', async (_event, cwd: string) => gitDiff(cwd));
+  ipcMain.handle('fluxor:git-diff', async (_event, cwd: string) => gitDiff(cwd));
 
-  ipcMain.handle('heliox:git-show-file', async (_event, cwd: string, filePath: string): Promise<string | null> => {
+  ipcMain.handle('fluxor:git-show-file', async (_event, cwd: string, filePath: string): Promise<string | null> => {
     try {
       const { stdout } = await execFileAsync('git', ['show', `HEAD:${filePath}`], { cwd, timeout: 10000 });
       return stdout;
@@ -869,12 +870,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:git-diff-files', async (_event, cwd: string, files: string[]) =>
+  ipcMain.handle('fluxor:git-diff-files', async (_event, cwd: string, files: string[]) =>
     files.length ? gitDiff(cwd, ['--', ...files]) : ''
   );
 
   // Git branch operations
-  ipcMain.handle('heliox:git-branches', async (_event, cwd: string): Promise<{ current: string; branches: string[] }> => {
+  ipcMain.handle('fluxor:git-branches', async (_event, cwd: string): Promise<{ current: string; branches: string[] }> => {
     try {
       const { stdout } = await execFileAsync('git', ['branch', '-a', '--format=%(refname:short)'], { cwd, timeout: 10000 });
       const all = stdout.trim().split('\n').filter(Boolean).map(b => b.replace(/^origin\//, '').trim());
@@ -886,20 +887,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('heliox:git-checkout', async (_event, cwd: string, branch: string, create = false) => {
+  ipcMain.handle('fluxor:git-checkout', async (_event, cwd: string, branch: string, create = false) => {
     return gitOp(create ? ['checkout', '-b', branch] : ['checkout', branch], cwd, 15000);
   });
 
-  ipcMain.handle('heliox:git-fetch', async (_event, cwd: string) => {
+  ipcMain.handle('fluxor:git-fetch', async (_event, cwd: string) => {
     return gitOp(['fetch', '--all', '--prune'], cwd, 30000);
   });
 
-  ipcMain.handle('heliox:git-pull', async (_event, cwd: string) => {
+  ipcMain.handle('fluxor:git-pull', async (_event, cwd: string) => {
     return gitOp(['pull'], cwd, 30000);
   });
 
   // Git file statuses for diff view (M=modified, A=added, D=deleted, R=renamed, ?=untracked)
-  ipcMain.handle('heliox:git-file-statuses', async (_event, cwd: string): Promise<Array<{ path: string; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' }>> => {
+  ipcMain.handle('fluxor:git-file-statuses', async (_event, cwd: string): Promise<Array<{ path: string; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' }>> => {
     const STATUS_MAP: Record<string, 'untracked' | 'added' | 'deleted' | 'renamed'> = {
       '?': 'untracked', 'A': 'added', 'D': 'deleted', 'R': 'renamed',
     };
@@ -918,7 +919,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── Market Inventory ──────────────────────────────────────────
 
-  ipcMain.handle('heliox:read-market-inventory', async (_event, projectPath: string) => {
+  ipcMain.handle('fluxor:read-market-inventory', async (_event, projectPath: string) => {
     const loadInventory = async (inventoryPath: string): Promise<any | null> => {
       try {
         const content = await readFile(inventoryPath, 'utf-8');
@@ -946,7 +947,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return null;
   });
 
-  ipcMain.handle('heliox:read-market-prompt', async (_event, projectPath: string, category: string, name: string) => {
+  ipcMain.handle('fluxor:read-market-prompt', async (_event, projectPath: string, category: string, name: string) => {
     const promptContent = await readMarketPromptFromDisk(projectPath, category, name);
     if (!promptContent) return null;
 
@@ -955,7 +956,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── Backlog Cards ─────────────────────────────────────────────
 
-  ipcMain.handle('heliox:read-backlog', async (_event, projectPath: string) => {
+  ipcMain.handle('fluxor:read-backlog', async (_event, projectPath: string) => {
     try {
       const backlogDir = join(projectPath, '.backlog');
       const entries = await readdir(backlogDir);
@@ -1011,7 +1012,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── Scan Projects Folder for Backlogs ───────────────────────────
 
-  ipcMain.handle('heliox:scan-backlogs', async (_event, projectsPath: string) => {
+  ipcMain.handle('fluxor:scan-backlogs', async (_event, projectsPath: string) => {
     const results: Array<{
       projectPath: string;
       projectName: string;
@@ -1068,7 +1069,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── List Projects Without Backlogs ──────────────────────────────
 
-  ipcMain.handle('heliox:list-projects-without-backlog', async (_event, projectsPath: string) => {
+  ipcMain.handle('fluxor:list-projects-without-backlog', async (_event, projectsPath: string) => {
     const result: Array<{ projectPath: string; projectName: string }> = [];
     try {
       const entries = await readdir(projectsPath, { withFileTypes: true });
@@ -1096,7 +1097,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── Initialize Backlog (in IDE AppData) ─────────────────────────
 
-  ipcMain.handle('heliox:init-backlog', async (_event, projectPath: string) => {
+  ipcMain.handle('fluxor:init-backlog', async (_event, projectPath: string) => {
     try {
       const configDir = getProjectConfigDir(projectPath);
       const backlogDir = join(configDir, '.backlog');
@@ -1109,7 +1110,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── Update Backlog Card Status ──────────────────────────────────
 
-  ipcMain.handle('heliox:update-backlog-card-status', async (
+  ipcMain.handle('fluxor:update-backlog-card-status', async (
     _event,
     backlogDir: string,
     filename: string,
@@ -1151,7 +1152,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── Read Backlog from Specific Directory ────────────────────────
 
-  ipcMain.handle('heliox:read-backlog-dir', async (_event, backlogDir: string) => {
+  ipcMain.handle('fluxor:read-backlog-dir', async (_event, backlogDir: string) => {
     try {
       const entries = await readdir(backlogDir);
       const cards: Array<{
@@ -1206,7 +1207,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── Batch Update Backlog Cards (status + order) ──────────────────
 
-  ipcMain.handle('heliox:update-backlog-cards', async (
+  ipcMain.handle('fluxor:update-backlog-cards', async (
     _event,
     backlogDir: string,
     updates: Array<{ filename: string; status?: string; order?: number }>,
@@ -1339,7 +1340,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('arena:read-leaderboard', async (_e, projectPath: string) => {
     const leaderboardPath = join(
-      projectPath, '.heliox', 'performance-frontier', 'heliox-leaderboard.json',
+      projectPath, '.fluxor', 'performance-frontier', 'fluxor-leaderboard.json',
     );
     try {
       const raw = await readFile(leaderboardPath, 'utf-8');

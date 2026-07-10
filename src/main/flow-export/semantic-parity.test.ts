@@ -19,7 +19,7 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { executeAgenticFlow } from '../harness-engine/executor';
 import { runLLMStep } from '../harness-engine/llm-runner';
-import { importFlow, type HelioxFlowExport } from './heliox-flow';
+import { importFlow, type FluxorFlowExport } from './fluxor-flow';
 
 // ---------------------------------------------------------------------------
 // Load shared fixtures (the cross-runtime contract)
@@ -27,7 +27,7 @@ import { importFlow, type HelioxFlowExport } from './heliox-flow';
 
 const fixtureDir = join(process.cwd(), 'sdk', 'conformance');
 
-const exportedFlow: HelioxFlowExport = JSON.parse(
+const exportedFlow: FluxorFlowExport = JSON.parse(
   readFileSync(join(fixtureDir, 'conformance-chain.flow.json'), 'utf-8'),
 );
 
@@ -52,7 +52,7 @@ const goldenToolCalls: Array<{
 // Load loop conformance fixtures (Phase 4a — bounded loop-back edges)
 // ---------------------------------------------------------------------------
 
-const loopExportedFlow: HelioxFlowExport = JSON.parse(
+const loopExportedFlow: FluxorFlowExport = JSON.parse(
   readFileSync(join(fixtureDir, 'conformance-loop.flow.json'), 'utf-8'),
 );
 

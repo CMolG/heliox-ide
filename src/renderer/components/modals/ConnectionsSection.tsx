@@ -12,14 +12,14 @@
  * - Owns: connection UI + the draft-form flow. Persistence, token encryption,
  *   and the actual `/models` probe all live main-side
  *   (provider-connections.ts / provider-connection-tester.ts) — this
- *   component only calls `window.helioxAPI.providerConnections*`.
+ *   component only calls `window.fluxorAPI.providerConnections*`.
  *
  * Model-id convention: selecting an enabled model calls
  * `onSelect(connectionId, 'conn:<connectionId>/<modelId>')` — see
  * `harness-engine/llm-runner.ts#resolveHarnessModel` for the consumer.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { LucideIcon } from '../desktop/LucideIcon';
 import { theme } from '../../logic/theme';
 import type {
@@ -83,7 +83,7 @@ function mergeModels(existing: ConnectionModel[], fetched: string[]): Connection
 }
 
 export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }: ConnectionsSectionProps) {
-  const addToast = useHelioxStore((s) => s.addToast);
+  const addToast = useFluxorStore((s) => s.addToast);
 
   const [connections, setConnections] = useState<ProviderConnection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,10 +99,10 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
   const [saving, setSaving] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!window.helioxAPI?.providerConnectionsList) return;
+    if (!window.fluxorAPI?.providerConnectionsList) return;
     setLoading(true);
     try {
-      const res = await window.helioxAPI.providerConnectionsList();
+      const res = await window.fluxorAPI.providerConnectionsList();
       if (res.success && res.data) setConnections(res.data);
     } finally {
       setLoading(false);
@@ -145,9 +145,9 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
   }, [baseUrlTouched]);
 
   const handleTest = useCallback(async () => {
-    if (!window.helioxAPI?.providerConnectionsTest) return;
+    if (!window.fluxorAPI?.providerConnectionsTest) return;
     setTestState({ status: 'testing' });
-    const res = await window.helioxAPI.providerConnectionsTest({
+    const res = await window.fluxorAPI.providerConnectionsTest({
       protocol: draft.protocol,
       baseUrl: draft.baseUrl,
       ...(draft.token.trim() ? { token: draft.token.trim() } : {}),
@@ -165,7 +165,7 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
   }, [draft]);
 
   const persistDraft = useCallback(async () => {
-    if (!window.helioxAPI?.providerConnectionsCreate || !window.helioxAPI?.providerConnectionsUpdate) return;
+    if (!window.fluxorAPI?.providerConnectionsCreate || !window.fluxorAPI?.providerConnectionsUpdate) return;
     setSaving(true);
     try {
       const testedModels = testState.status === 'ok' ? testState.models : undefined;
@@ -176,14 +176,14 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
           baseUrl: draft.baseUrl,
           ...(draft.token.trim() ? { token: draft.token.trim() } : {}),
         };
-        const res = await window.helioxAPI.providerConnectionsUpdate(editingId, patch);
+        const res = await window.fluxorAPI.providerConnectionsUpdate(editingId, patch);
         if (!res.success || !res.data) {
           addToast(`Failed to save connection: ${res.error ?? 'unknown error'}`, 'error');
           return;
         }
         let saved = res.data;
         if (testedModels) {
-          const mergeRes = await window.helioxAPI.providerConnectionsUpdate(editingId, {
+          const mergeRes = await window.fluxorAPI.providerConnectionsUpdate(editingId, {
             models: mergeModels(saved.models, testedModels),
             lastTestedAt: Date.now(),
             lastTestOk: true,
@@ -193,7 +193,7 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
         setConnections((prev) => prev.map((c) => (c.id === saved.id ? saved : c)));
         addToast('Connection updated', 'success');
       } else {
-        const created = await window.helioxAPI.providerConnectionsCreate({
+        const created = await window.fluxorAPI.providerConnectionsCreate({
           name: draft.name,
           protocol: draft.protocol,
           baseUrl: draft.baseUrl,
@@ -205,7 +205,7 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
         }
         let saved = created.data;
         if (testedModels && testedModels.length > 0) {
-          const mergeRes = await window.helioxAPI.providerConnectionsUpdate(saved.id, {
+          const mergeRes = await window.fluxorAPI.providerConnectionsUpdate(saved.id, {
             models: mergeModels(saved.models, testedModels),
             lastTestedAt: Date.now(),
             lastTestOk: true,
@@ -226,10 +226,10 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
       setConfirmDeleteId(id);
       return;
     }
-    if (!window.helioxAPI?.providerConnectionsDelete) return;
+    if (!window.fluxorAPI?.providerConnectionsDelete) return;
     setBusyId(id);
     try {
-      await window.helioxAPI.providerConnectionsDelete(id);
+      await window.fluxorAPI.providerConnectionsDelete(id);
       setConnections((prev) => prev.filter((c) => c.id !== id));
       if (expandedId === id) setExpandedId(null);
       addToast('Connection deleted', 'info');
@@ -240,10 +240,10 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
   }, [confirmDeleteId, expandedId, addToast]);
 
   const handleRetest = useCallback(async (id: string) => {
-    if (!window.helioxAPI?.providerConnectionsTest) return;
+    if (!window.fluxorAPI?.providerConnectionsTest) return;
     setBusyId(id);
     try {
-      const res = await window.helioxAPI.providerConnectionsTest({ connectionId: id });
+      const res = await window.fluxorAPI.providerConnectionsTest({ connectionId: id });
       if (res.success && res.data?.connection) {
         setConnections((prev) => prev.map((c) => (c.id === id ? res.data!.connection! : c)));
       } else if (!res.success) {
@@ -257,8 +257,8 @@ export function ConnectionsSection({ selectedProvider, selectedModel, onSelect }
   }, [addToast]);
 
   const handleToggleModel = useCallback(async (connId: string, modelId: string, enabled: boolean) => {
-    if (!window.helioxAPI?.providerConnectionsSetModelEnabled) return;
-    const res = await window.helioxAPI.providerConnectionsSetModelEnabled(connId, modelId, enabled);
+    if (!window.fluxorAPI?.providerConnectionsSetModelEnabled) return;
+    const res = await window.fluxorAPI.providerConnectionsSetModelEnabled(connId, modelId, enabled);
     if (res.success && res.data) {
       setConnections((prev) => prev.map((c) => (c.id === connId ? res.data! : c)));
     }

@@ -351,7 +351,7 @@ export class AgentManager extends EventEmitter {
         ? instruction.slice(0, 69) + '...'
         : instruction;
       await execFileAsync('git', ['add', '-A'], { cwd, timeout: 10_000 });
-      await execFileAsync('git', ['commit', '-m', `Heliox: ${summary}`], { cwd, timeout: 15_000 });
+      await execFileAsync('git', ['commit', '-m', `Fluxor: ${summary}`], { cwd, timeout: 15_000 });
     } catch {
       // Commit may fail if there are no changes; ignore silently
     }

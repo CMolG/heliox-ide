@@ -90,7 +90,7 @@ export function ModTab({ mod, index, onDetach, onClick, accentColor, parentActiv
 
   return (
     <div
-      className="heliox-mod-tab"
+      className="fluxor-mod-tab"
       style={{ ...tabStyle, cursor: onClick ? 'pointer' : 'default' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}

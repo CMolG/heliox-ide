@@ -1,7 +1,7 @@
 {
-  "name": "Heliox Remote",
-  "short_name": "Heliox",
-  "description": "Remote control companion for Heliox IDE",
+  "name": "Fluxor Remote",
+  "short_name": "Fluxor",
+  "description": "Remote control companion for Fluxor IDE",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",

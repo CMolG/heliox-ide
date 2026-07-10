@@ -533,12 +533,12 @@ describe('BrowserController.ensureAgentSurface', () => {
     expect(wp.sandbox).toBe(true);
   });
 
-  it('new headless window has partition: persist:heliox-agent', async () => {
+  it('new headless window has partition: persist:fluxor-agent', async () => {
     currentWc = fakeBrowserWindowInstance!.webContents as ReturnType<typeof makeWc>;
     await browserController.ensureAgentSurface();
 
     const wp = (lastBrowserWindowOpts as Record<string, unknown>).webPreferences as Record<string, unknown>;
-    expect(wp.partition).toBe('persist:heliox-agent');
+    expect(wp.partition).toBe('persist:fluxor-agent');
   });
 
   it('new headless window calls setWindowOpenHandler({ action: "deny" }) on its webContents', async () => {

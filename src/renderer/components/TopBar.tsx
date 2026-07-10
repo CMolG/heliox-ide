@@ -15,15 +15,15 @@
 // src/renderer/components/TopBar.tsx — Top navigation bar
 import React from 'react';
 import { theme } from '../logic/theme';
-import { HelioxLogo } from './brand/HelioxLogo';
+import { FluxorLogo } from './brand/FluxorLogo';
 import { BoardSwitcher } from './BoardSwitcher';
 
 export const TopBar = React.memo(function TopBar() {
   return (
     <header
       role="banner"
-      aria-label="Heliox IDE header"
-      className="heliox-topbar title-bar-drag"
+      aria-label="Fluxor IDE header"
+      className="fluxor-topbar title-bar-drag"
       style={{
         background: 'rgba(12, 10, 9, 0.8)',
         borderBottom: `1px solid ${theme.borderAccent}`,
@@ -53,13 +53,13 @@ export const TopBar = React.memo(function TopBar() {
         </div>
 
         <div className="flex items-center justify-end" style={{ gap: '10px' }}>
-          <HelioxLogo size={22} />
+          <FluxorLogo size={22} />
           <span
             className="text-xl font-bold leading-7"
             style={{ fontFamily: theme.fontDisplay, color: theme.textSecondary, letterSpacing: '0.03em' }}
             data-testid="topbar-brand"
           >
-            Heliox
+            Fluxor
           </span>
         </div>
       </div>

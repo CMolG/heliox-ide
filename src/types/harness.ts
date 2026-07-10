@@ -135,7 +135,7 @@ export function clampLoopIterations(n: unknown): number {
  * (`prevStepIds = []`) first, then each newly-unblocked layer in turn, with
  * ties at every layer broken by id ascending — root-first, ordered by
  * dependency depth, with a stable id tie-break. This is the single canonical
- * ordering shared by the portable export format (`heliox-flow.ts`'s
+ * ordering shared by the portable export format (`fluxor-flow.ts`'s
  * `exportFlow`) and the human-readable Markdown renderer (`flow-markdown.ts`'s
  * `flowToMarkdown`), so both surfaces present a flow's steps in the same
  * reproducible order regardless of `stepsRecord` insertion order. Lives here
@@ -198,7 +198,7 @@ export interface AgenticFlow {
   author?: string;
   /**
    * Optional user-defined flow version, carried from the owning canvas Frame.
-   * Distinct from HELIOX_FLOW_FORMAT_VERSION (the export wire-format version).
+   * Distinct from FLUXOR_FLOW_FORMAT_VERSION (the export wire-format version).
    */
   version?: string;
 }

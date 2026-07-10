@@ -5,10 +5,10 @@ import type { AgenticExecutionStatus } from '@/types/harness';
 import type { ModelPolicy, SelectionStrategy } from '@/types/ipc-events';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
-import { useHelioxStore } from '../../../store';
+import { useFluxorStore } from '../../../store';
 import { exportActiveFlow } from '../../../logic/flow-actions';
 import { LucideIcon } from '../LucideIcon';
-import { HelioxSpinner } from '../../brand/HelioxSpinner';
+import { FluxorSpinner } from '../../brand/FluxorSpinner';
 
 function isStepNode(n: { type?: string }): n is StepGraphNode {
   return n.type === 'step';
@@ -130,7 +130,7 @@ export const FrameNode = React.memo(function FrameNode({ id, data }: NodeProps) 
   const compileCurrentCanvas = useHarnessStore((s) => s.compileCurrentCanvas);
   const startExecution = useHarnessStore((s) => s.startExecution);
   const executionStatus = useHarnessStore((s) => s.executionStatus);
-  const addToast = useHelioxStore((s) => s.addToast);
+  const addToast = useFluxorStore((s) => s.addToast);
 
   // WS2: writes settings.modelPolicy, consumed by harness-store's executeFlow
   // on the NEXT dispatch of this flow (startExecution/runStep/runFromStep) —
@@ -148,8 +148,8 @@ export const FrameNode = React.memo(function FrameNode({ id, data }: NodeProps) 
     if (flow) void startExecution();
   }, [compileCurrentCanvas, startExecution]);
 
-  // Export the compiled pipeline to the portable heliox-flow.json interchange
-  // format (src/main/flow-export/heliox-flow.ts) via a native save dialog.
+  // Export the compiled pipeline to the portable fluxor-flow.json interchange
+  // format (src/main/flow-export/fluxor-flow.ts) via a native save dialog.
   // Delegates to `exportActiveFlow` (logic/flow-actions.ts, extracted in
   // Phase 11) so the Inspector's FlowInspector can trigger the identical
   // compile -> export -> toast path without duplicating it. Zero behavioral
@@ -277,7 +277,7 @@ export const FrameNode = React.memo(function FrameNode({ id, data }: NodeProps) 
             onClick={handleRun}
           >
             {executionStatus === 'running' ? (
-              <HelioxSpinner size={12} speed={1.4} />
+              <FluxorSpinner size={12} speed={1.4} />
             ) : executionStatus === 'completed' ? (
               <LucideIcon name="CheckCircle" size={11} />
             ) : executionStatus === 'error' ? (

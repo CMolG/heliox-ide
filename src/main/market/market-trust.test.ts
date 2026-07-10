@@ -35,7 +35,7 @@ function writeSignatureFile(dir: string, sigFile: MarketSignatureFile): void {
 }
 
 beforeEach(() => {
-  fixtureDir = mkdtempSync(join(tmpdir(), 'heliox-market-trust-'));
+  fixtureDir = mkdtempSync(join(tmpdir(), 'fluxor-market-trust-'));
   seedFixture(fixtureDir);
 });
 
@@ -59,7 +59,7 @@ describe('buildManifest', () => {
   });
 
   it('throws when the directory has no inventory.json', () => {
-    const emptyDir = mkdtempSync(join(tmpdir(), 'heliox-market-trust-empty-'));
+    const emptyDir = mkdtempSync(join(tmpdir(), 'fluxor-market-trust-empty-'));
     try {
       expect(() => buildManifest(emptyDir)).toThrow(/inventory\.json/);
     } finally {

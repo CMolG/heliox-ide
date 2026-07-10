@@ -21,15 +21,15 @@ import React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from './App';
-import { useHelioxStore } from './store';
+import { useFluxorStore } from './store';
 import { useDesktopStore } from './store/desktop-store';
 import { useHarnessStore } from './store/harness-store';
 
 beforeEach(() => {
-  useHelioxStore.setState(useHelioxStore.getInitialState(), true);
+  useFluxorStore.setState(useFluxorStore.getInitialState(), true);
   useDesktopStore.setState(useDesktopStore.getInitialState(), true);
   useHarnessStore.setState(useHarnessStore.getInitialState(), true);
-  delete window.helioxAPI;
+  delete window.fluxorAPI;
 });
 
 describe('App — flow-error toast wiring', () => {

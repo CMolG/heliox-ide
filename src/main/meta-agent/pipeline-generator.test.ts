@@ -70,7 +70,7 @@ describe('pipeline generator', () => {
     });
 
     expect(telemetryFetch).toHaveBeenCalledWith(
-      'https://api.javadaba.com/v1/heliox/ticket',
+      'https://api.javadaba.com/v1/fluxor/ticket',
       expect.objectContaining({
         method: 'POST',
         headers: { 'content-type': 'application/json' },

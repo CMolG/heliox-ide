@@ -1,0 +1,41 @@
+{
+  "$schema": "https://helioxide.com/schemas/metrics.json",
+  "thresholds": {
+    "lcp": {
+      "limit": 2500,
+      "unit": "ms",
+      "description": "Largest Contentful Paint — max acceptable value"
+    },
+    "inp": {
+      "limit": 200,
+      "unit": "ms",
+      "description": "Interaction to Next Paint — max acceptable value"
+    },
+    "cls": {
+      "limit": 0.10,
+      "unit": "score",
+      "description": "Cumulative Layout Shift — max acceptable value"
+    },
+    "tbt": {
+      "limit": 300,
+      "unit": "ms",
+      "description": "Total Blocking Time — max acceptable value"
+    },
+    "jsHeapMB": {
+      "limit": 150,
+      "unit": "MB",
+      "description": "JS Heap usage — max acceptable value"
+    }
+  },
+  "regressionPolicy": {
+    "maxAutoCorrections": 3,
+    "criticalDegradationPercent": 50,
+    "blockOnCritical": true,
+    "revertOnExhaustedAttempts": true
+  },
+  "snapshot": {
+    "viewport": { "width": 1280, "height": 800 },
+    "pixelDiffThreshold": 0.1,
+    "waitAfterNavigation": 500
+  }
+}

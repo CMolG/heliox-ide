@@ -209,7 +209,7 @@ describe('performance frontier procedural cases', () => {
     ])).toHaveProperty('size', 3);
   });
 
-  it('dogfoods Heliox IDE as the fixed Team Work product while keeping visual style seeded', () => {
+  it('dogfoods Fluxor IDE as the fixed Team Work product while keeping visual style seeded', () => {
     const cases = [41, 42, 43, 44, 45, 46].map((seed) => createTeamWorkCase({ seed }));
     const products = new Set(cases.map((testCase) => testCase.variables.product));
     const audiences = new Set(cases.map((testCase) => testCase.variables.audience));
@@ -217,10 +217,10 @@ describe('performance frontier procedural cases', () => {
     const planner = cases.at(-1)?.flow.stepsRecord['team-planner'];
     const plannerSystemPrompt = planner?.roles[0]?.systemPrompt ?? '';
 
-    expect(products).toEqual(new Set(['Heliox IDE']));
+    expect(products).toEqual(new Set(['Fluxor IDE']));
     expect(audiences).toEqual(new Set(['AI Engineers, Arquitectos de Sistemas y Equipos de Plataforma']));
     expect(visualStyles.size).toBeGreaterThan(1);
-    expect(cases.at(-1)?.prompt).toContain('Producto: Heliox IDE.');
+    expect(cases.at(-1)?.prompt).toContain('Producto: Fluxor IDE.');
     expect(cases.at(-1)?.prompt).toContain('AI Engineers, Arquitectos de Sistemas y Equipos de Plataforma');
     expect(plannerSystemPrompt).toContain('The visual-first, open-source IDE that orchestrates AI agents on an infinite canvas');
     expect(plannerSystemPrompt).toContain('Steps, Flows, Roles & Mods');

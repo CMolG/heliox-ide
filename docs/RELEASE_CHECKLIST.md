@@ -102,10 +102,10 @@ default:
 
 | Platform | Maker | Example filename |
 |---|---|---|
-| macOS | `MakerDMG` | `Heliox IDE-0.3.0-arm64.dmg`, `Heliox IDE-0.3.0-x64.dmg` |
-| Windows | `MakerSquirrel` | `Heliox IDE-0.3.0 Setup.exe` (+ `RELEASES`, `.nupkg`) — x64 only |
-| Linux (Debian) | `MakerDeb` | `heliox-ide_0.3.0_amd64.deb` |
-| Linux (RPM) | `MakerRpm` | `heliox-ide-0.3.0-1.x86_64.rpm` |
+| macOS | `MakerDMG` | `Fluxor IDE-0.3.0-arm64.dmg`, `Fluxor IDE-0.3.0-x64.dmg` |
+| Windows | `MakerSquirrel` | `Fluxor IDE-0.3.0 Setup.exe` (+ `RELEASES`, `.nupkg`) — x64 only |
+| Linux (Debian) | `MakerDeb` | `fluxor-ide_0.3.0_amd64.deb` |
+| Linux (RPM) | `MakerRpm` | `fluxor-ide-0.3.0-1.x86_64.rpm` |
 
 helioxide.com's download page matches releases by **file extension and an
 arch substring** (`.dmg`/`.exe`/`.deb`/`.rpm` + `arm64`/`x64`/`amd64`/etc.),

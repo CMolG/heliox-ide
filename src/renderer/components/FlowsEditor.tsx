@@ -14,11 +14,11 @@
  */
 // src/renderer/components/FlowsEditor.tsx — E2E Flow management panel
 import React, { useState, useCallback, useRef } from 'react';
-import { useHelioxStore } from '../store';
+import { useFluxorStore } from '../store';
 import type { FlowStep } from '@/types';
 import { FiCompass, FiAlertTriangle } from 'react-icons/fi';
 import { theme } from '../logic/theme';
-import { HelioxDropdown } from './ui/HelioxDropdown';
+import { FluxorDropdown } from './ui/FluxorDropdown';
 import { useAutoSave } from '@/renderer/logic/hooks/useAutoSave';
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
@@ -84,7 +84,7 @@ export function FlowsEditor() {
     addStep, removeStep, reorderSteps, updateFlowBaseUrl,
     saveFlowsToProject, projectPath, addToast, addLogEntry,
     appSettings,
-  } = useHelioxStore();
+  } = useFluxorStore();
 
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -127,7 +127,7 @@ export function FlowsEditor() {
   }, [confirmDeleteId, removeFlow]);
 
   const handleAutoDiscover = useCallback(async () => {
-    if (!projectPath || !window.helioxAPI || isAutoDiscovering) return;
+    if (!projectPath || !window.fluxorAPI || isAutoDiscovering) return;
     setIsAutoDiscovering(true);
     addToast('Analyzing project structure for E2E flows…', 'info');
     addLogEntry({ timestamp: Date.now(), level: 'info', message: 'Auto-discovering E2E flows…' });
@@ -136,7 +136,7 @@ export function FlowsEditor() {
     let accumulated = '';
 
     // Listen for streaming messages from this specific agent
-    const unsubscribe = window.helioxAPI.onAgentEvent((event) => {
+    const unsubscribe = window.fluxorAPI.onAgentEvent((event) => {
       if (event.agentId !== agentId) return;
 
       if (event.type === 'message-delta' && event.content) {
@@ -207,7 +207,7 @@ Valid step actions: navigate, click, type, screenshot, wait, scroll.
 Each step needs: action, name, target (CSS selector or URL path). Type steps also need a "value" field.
 Generate 3-8 flows covering the main functionality. Return ONLY the JSON array.`;
 
-      const result = await window.helioxAPI.runAgent({
+      const result = await window.fluxorAPI.runAgent({
         agentId: agentId,
         instruction: prompt,
         flows: [],
@@ -274,7 +274,7 @@ Generate 3-8 flows covering the main functionality. Return ONLY the JSON array.`
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'heliox-flows.json';
+    a.download = 'fluxor-flows.json';
     a.click();
     URL.revokeObjectURL(url);
   }, [flows]);
@@ -609,7 +609,7 @@ Generate 3-8 flows covering the main functionality. Return ONLY the JSON array.`
                       autoFocus
                     />
                     <div className="flex gap-2">
-                      <HelioxDropdown
+                      <FluxorDropdown
                         value={stepAction}
                         options={STEP_ACTIONS.map(a => ({ value: a, label: a.toUpperCase() }))}
                         onChange={(v) => setStepAction(v as FlowStep['action'])}

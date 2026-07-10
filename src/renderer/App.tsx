@@ -2,7 +2,7 @@
  * App.tsx — Renderer Application Shell
  *
  * Responsibility:
- * - Composes the top-level Heliox renderer shell and global panels.
+ * - Composes the top-level Fluxor renderer shell and global panels.
  * - Coordinates renderer startup effects that sync UI state with preload APIs.
  *
  * Boundaries:
@@ -12,7 +12,7 @@
  * Architectural role:
  * - Orchestration component in the renderer process.
  */
-// src/renderer/App.tsx — Main Heliox IDE React component
+// src/renderer/App.tsx — Main Fluxor IDE React component
 import React, { useEffect, useCallback, useRef } from 'react';
 import { TopBar } from './components/TopBar';
 import { ProjectExplorer } from './components/ProjectExplorer';
@@ -25,7 +25,7 @@ import { SideBar } from './components/SideBar';
 import { ExpandSideBarButton } from './components/ExpandSideBarButton';
 import { InspectorPanel } from './components/inspector/InspectorPanel';
 import { ExpandInspectorButton } from './components/ExpandInspectorButton';
-import { useHelioxStore } from './store';
+import { useFluxorStore } from './store';
 import { useDesktopStore } from './store/desktop-store';
 import { useHarnessStore, lastLogMessage } from './store/harness-store';
 import { useAgentEvents } from '@/renderer/logic/hooks/useAgentEvents';
@@ -39,7 +39,7 @@ export function App() {
     showSidebar, toggleSidebar,
     setSelectedSessionId, setShowSettings, setShowHelp,
     openProjects, removeOpenProject,
-  } = useHelioxStore();
+  } = useFluxorStore();
 
   const cliProvider = useDesktopStore(s => s.cliProvider);
   const addWindow = useDesktopStore(s => s.addWindow);
@@ -53,7 +53,7 @@ export function App() {
 
   // Expose stores on window for E2E testing
   useEffect(() => {
-    (window as any).__HELIOX_STORE__ = useHelioxStore;
+    (window as any).__FLUXOR_STORE__ = useFluxorStore;
     (window as any).__DESKTOP_STORE__ = useDesktopStore;
   }, []);
 
@@ -64,30 +64,30 @@ export function App() {
 
   // Load project config when project opens
   useEffect(() => {
-    if (!projectPath || !window.helioxAPI) return;
+    if (!projectPath || !window.fluxorAPI) return;
     loadProjectConfig();
   }, [projectPath, loadProjectConfig]);
 
   // Load market inventory so marketplace shows all flows/roles/mods
   useEffect(() => {
-    if (!projectPath || !window.helioxAPI) return;
-    window.helioxAPI.readMarketInventory(projectPath).then((inventory: any) => {
+    if (!projectPath || !window.fluxorAPI) return;
+    window.fluxorAPI.readMarketInventory(projectPath).then((inventory: any) => {
       if (inventory) setMarketInventory(inventory);
     }).catch(() => {});
   }, [projectPath, setMarketInventory]);
 
   // Auto-create session + load models when project opens
   useEffect(() => {
-    if (!projectPath || !window.helioxAPI) return;
+    if (!projectPath || !window.fluxorAPI) return;
 
     // Auto-create a session so metadata is immediately visible
-    const sessions = useHelioxStore.getState().sessions;
+    const sessions = useFluxorStore.getState().sessions;
     if (sessions.length === 0) {
       addSession();
     }
 
     // Load available models from opencode (provider/model format)
-    window.helioxAPI.listModels().then((models) => {
+    window.fluxorAPI.listModels().then((models) => {
       if (models && models.length > 0) setAvailableModels(models);
     }).catch(() => {
       // IPC handler already returns fallback, this is a safety net
@@ -106,7 +106,7 @@ export function App() {
   useEffect(() => {
     if (!projectPath || appSettings.onboardingDone) return;
     const tips = [
-      { delay: 500, msg: 'Welcome to Heliox IDE — your AI agent workspace' },
+      { delay: 500, msg: 'Welcome to Fluxor IDE — your AI agent workspace' },
       { delay: 2500, msg: 'Type in the chat panel to start an agent session' },
       { delay: 4500, msg: '⌘K to focus chat · ⌘O to open project · ⌘N new session' },
     ];
@@ -149,9 +149,9 @@ export function App() {
 
   // Check CLI availability when project opens
   useEffect(() => {
-    if (!projectPath || !window.helioxAPI) return;
+    if (!projectPath || !window.fluxorAPI) return;
 
-    window.helioxAPI.checkCli().then((status) => {
+    window.fluxorAPI.checkCli().then((status) => {
       if (!status.opencodeInstalled) {
         addLogEntry({
           timestamp: Date.now(),
@@ -183,8 +183,8 @@ export function App() {
   // Graceful shutdown
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (window.helioxAPI) {
-        window.helioxAPI.shutdown();
+      if (window.fluxorAPI) {
+        window.fluxorAPI.shutdown();
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -194,17 +194,17 @@ export function App() {
   // Handle open-project event (works even when a project is already open)
   useEffect(() => {
     const handler = async () => {
-      if (!window.helioxAPI) return;
+      if (!window.fluxorAPI) return;
       try {
-        const path = await window.helioxAPI.openFolderDialog();
+        const path = await window.fluxorAPI.openFolderDialog();
         if (path) {
           setProjectPath(path);
           addRecentProject(path);
         }
       } catch { /* user cancelled */ }
     };
-    window.addEventListener('heliox:open-project', handler);
-    return () => window.removeEventListener('heliox:open-project', handler);
+    window.addEventListener('fluxor:open-project', handler);
+    return () => window.removeEventListener('fluxor:open-project', handler);
   }, [setProjectPath, addRecentProject]);
 
   // Handle close-project event
@@ -214,8 +214,8 @@ export function App() {
         removeOpenProject(projectPath);
       }
     };
-    window.addEventListener('heliox:close-project', handler);
-    return () => window.removeEventListener('heliox:close-project', handler);
+    window.addEventListener('fluxor:close-project', handler);
+    return () => window.removeEventListener('fluxor:close-project', handler);
   }, [projectPath, removeOpenProject]);
 
   // Handle switch-project event (cycle to next open project)
@@ -226,18 +226,18 @@ export function App() {
       const next = openProjects[(idx + 1) % openProjects.length];
       setProjectPath(next);
     };
-    window.addEventListener('heliox:switch-project', handler);
-    return () => window.removeEventListener('heliox:switch-project', handler);
+    window.addEventListener('fluxor:switch-project', handler);
+    return () => window.removeEventListener('fluxor:switch-project', handler);
   }, [openProjects, projectPath, setProjectPath]);
 
   // M1 — Start/stop dev-server polling whenever the active project changes.
-  // The main process polls candidate ports and pushes 'heliox:dev-server-detected'
+  // The main process polls candidate ports and pushes 'fluxor:dev-server-detected'
   // events; the companion effect below subscribes to those events.
   useEffect(() => {
-    if (!projectPath || !window.helioxAPI) return;
-    window.helioxAPI.startDevServerWatch(projectPath).catch(() => {/* non-critical */});
+    if (!projectPath || !window.fluxorAPI) return;
+    window.fluxorAPI.startDevServerWatch(projectPath).catch(() => {/* non-critical */});
     return () => {
-      window.helioxAPI?.stopDevServerWatch().catch(() => {/* non-critical */});
+      window.fluxorAPI?.stopDevServerWatch().catch(() => {/* non-critical */});
     };
   }, [projectPath]);
 
@@ -246,8 +246,8 @@ export function App() {
   // we skip spawning a second one (idempotent across React re-renders and hot
   // reloads that restart the dev server on the same port).
   useEffect(() => {
-    if (!window.helioxAPI) return;
-    const unsub = window.helioxAPI.onDevServerDetected(({ url, port }) => {
+    if (!window.fluxorAPI) return;
+    const unsub = window.fluxorAPI.onDevServerDetected(({ url, port }) => {
       const existing = useDesktopStore.getState().windows;
       const alreadyOpen = existing.some(
         w => w.type === 'web-preview' && w.boundPort === port,
@@ -266,7 +266,7 @@ export function App() {
 
     // Escape — close any open modal / marketplace
     if (e.key === 'Escape') {
-      const state = useHelioxStore.getState();
+      const state = useFluxorStore.getState();
       const dState = useDesktopStore.getState();
       if (dState.showMarketplace) { e.preventDefault(); dState.setShowMarketplace(false); return; }
       if (state.showSettings) { e.preventDefault(); state.setShowSettings(false); return; }
@@ -284,14 +284,14 @@ export function App() {
     // Cmd+K — focus active window chat input
     if (isMeta && e.key === 'k') {
       e.preventDefault();
-      window.dispatchEvent(new CustomEvent('heliox:focus-chat'));
+      window.dispatchEvent(new CustomEvent('fluxor:focus-chat'));
       return;
     }
 
     // Cmd+O — open project
     if (isMeta && e.key === 'o' && !isInput) {
       e.preventDefault();
-      window.dispatchEvent(new CustomEvent('heliox:open-project'));
+      window.dispatchEvent(new CustomEvent('fluxor:open-project'));
       return;
     }
 
@@ -345,7 +345,7 @@ export function App() {
     // Cmd+/ — toggle help
     if (isMeta && e.key === '/') {
       e.preventDefault();
-      const state = useHelioxStore.getState();
+      const state = useFluxorStore.getState();
       state.setShowHelp(!state.showHelp);
       return;
     }
@@ -379,7 +379,7 @@ export function App() {
   // No project open — show project explorer
   if (!projectPath) {
     return (
-      <div className="heliox-layout overflow-hidden" role="application" aria-label="Heliox IDE">
+      <div className="fluxor-layout overflow-hidden" role="application" aria-label="Fluxor IDE">
         <TopBar />
         <main>
           <ProjectExplorer />
@@ -393,15 +393,15 @@ export function App() {
 
   return (
     <div
-      className="heliox-layout overflow-hidden"
+      className="fluxor-layout overflow-hidden"
       data-sidebar={showSidebar}
       data-inspector={showInspector}
       role="application"
-      aria-label="Heliox IDE"
+      aria-label="Fluxor IDE"
     >
       <TopBar />
       <div
-        className="heliox-explorer overflow-hidden transition-all duration-200"
+        className="fluxor-explorer overflow-hidden transition-all duration-200"
         style={{
           width: showSidebar ? '280px' : '0px',
           minWidth: showSidebar ? '280px' : '0px',
@@ -421,7 +421,7 @@ export function App() {
         </ErrorBoundary>
       </main>
       <div
-        className="heliox-inspector overflow-hidden transition-all duration-200"
+        className="fluxor-inspector overflow-hidden transition-all duration-200"
         style={{
           width: showInspector ? '300px' : '0px',
           minWidth: showInspector ? '300px' : '0px',

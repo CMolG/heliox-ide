@@ -1,9 +1,9 @@
 {
-  "name": "heliox-ide",
-  "productName": "Heliox IDE",
+  "name": "fluxor-ide",
+  "productName": "Fluxor IDE",
   "version": "0.2.0",
   "description": "Open-source dashboard for designing agentic flows — compose visually, verify by execution, and export portable flows that run across TypeScript, Java, and Python.",
-  "author": "Heliox",
+  "author": "Fluxor",
   "license": "Apache-2.0",
   "main": ".vite/build/index.js",
   "engines": {
@@ -21,10 +21,10 @@
     "pf:run": "tsx src/main/performance-frontier/cli.ts",
     "pf:bench": "tsx src/main/performance-frontier/bench/cli.ts",
     "pf:arena": "tsx src/main/performance-frontier/arena/arena-runner.ts",
-    "heliox:baseline": "node -e \"console.log('Run baselines via Heliox IDE UI — Flows tab → Initialize Baselines')\"",
+    "fluxor:baseline": "node -e \"console.log('Run baselines via Fluxor IDE UI — Flows tab → Initialize Baselines')\"",
     "build:bridge": "vite build --config vite.bridge.config.ts",
-    "heliox:init": "node -e \"const fs=require('fs'),p=require('path');const d=p.join(process.cwd(),'heliox');if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true});['flows.json','metrics.config.json'].forEach(f=>{const fp=p.join(d,f);if(!fs.existsSync(fp))fs.copyFileSync(p.join(__dirname,'assets','heliox-templates',f),fp)});console.log('Heliox config initialized in ./heliox/')\"",
-    "heliox:serve": "tsx src/main/serve/cli.ts"
+    "fluxor:init": "node -e \"const fs=require('fs'),p=require('path');const d=p.join(process.cwd(),'fluxor');const legacy=p.join(process.cwd(),'heliox');if(fs.existsSync(legacy)&&!fs.existsSync(d)){fs.renameSync(legacy,d);console.log('Legacy compat: migrated ./heliox/ to ./fluxor/');}if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true});['flows.json','metrics.config.json'].forEach(f=>{const fp=p.join(d,f);if(!fs.existsSync(fp))fs.copyFileSync(p.join(__dirname,'assets','fluxor-templates',f),fp)});console.log('Fluxor config initialized in ./fluxor/')\"",
+    "fluxor:serve": "tsx src/main/serve/cli.ts"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",

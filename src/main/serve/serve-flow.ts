@@ -1,7 +1,7 @@
 /**
- * serve-flow.ts — HTTP serving layer for a portable HelioxFlowExport
+ * serve-flow.ts — HTTP serving layer for a portable FluxorFlowExport
  *
- * Loads a HelioxFlowExport via importFlow, validates the DAG, and exposes
+ * Loads a FluxorFlowExport via importFlow, validates the DAG, and exposes
  * three endpoints over Node http / Express:
  *
  *   POST /run    — executes the flow; returns { completedStepIds, stepOutputs, finalOutput }.
@@ -26,7 +26,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Server } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { importFlow, type HelioxFlowExport } from '../flow-export/heliox-flow';
+import { importFlow, type FluxorFlowExport } from '../flow-export/fluxor-flow';
 import { executeAgenticFlow, type ExecuteAgenticFlowOptions } from '../harness-engine/executor';
 import { harnessEventBus, HARNESS_EVENT_NAME } from '../harness-engine/event-bus';
 import type { HarnessEventPayload } from '../../types/ipc-events';
@@ -306,13 +306,13 @@ function handleMethodNotAllowed(_req: IncomingMessage, res: ServerResponse): voi
 // ---------------------------------------------------------------------------
 
 /**
- * Create a serving instance from a HelioxFlowExport.
+ * Create a serving instance from a FluxorFlowExport.
  *
  * The flow is validated immediately so callers know upfront if the export is
  * malformed before a port is bound.
  */
 export function createFlowServer(
-  exported: HelioxFlowExport,
+  exported: FluxorFlowExport,
   options: ServeFlowOptions = {},
 ): ServeFlowServer {
   const flow = importFlow(exported);

@@ -2,7 +2,7 @@
 
 ## Support status
 
-Heliox IDE is in **alpha** (`v0.1.0`) and under active development. There is
+Fluxor IDE is in **alpha** (`v0.1.0`) and under active development. There is
 no LTS or backported-fix policy at this stage — security fixes land on the
 latest `main` only. This policy will gain supported-version guidance once
 stable releases begin.
@@ -12,8 +12,8 @@ stable releases begin.
 **Do not open a public GitHub issue for security vulnerabilities.**
 
 Report privately through
-[GitHub Security Advisories](https://github.com/CMolG/heliox-ide/security/advisories/new)
-for `CMolG/heliox-ide`. This opens a private discussion with maintainers
+[GitHub Security Advisories](https://github.com/CMolG/fluxor-ide/security/advisories/new)
+for `CMolG/fluxor-ide`. This opens a private discussion with maintainers
 before anything becomes public.
 
 Please include:
@@ -34,7 +34,7 @@ agree together on an extension.
 
 ## In-scope areas
 
-Heliox executes agent-authored code and third-party marketplace content on
+Fluxor executes agent-authored code and third-party marketplace content on
 your machine, so the following areas are treated as high-severity by default:
 
 - **MCP tool-provider spawning** (`src/main/harness-engine/mcp-adapter.ts`) —
@@ -45,7 +45,7 @@ your machine, so the following areas are treated as high-severity by default:
   injection, content trust and authenticity)
 - **Bridge pairing** (`src/main/bridge/`) — QR/PIN pairing and the remote
   companion relay (auth bypass, session hijacking, PIN/credential exposure)
-- **Serve endpoints** (`src/main/serve/`) — `heliox serve`'s HTTP API for
+- **Serve endpoints** (`src/main/serve/`) — `fluxor serve`'s HTTP API for
   running flows as a service (auth bypass, SSRF, unauthorized flow execution)
 
 Reports touching Electron sandboxing/`contextIsolation`, IPC handlers, or the
@@ -55,10 +55,10 @@ they are not listed above.
 ## Out of scope
 
 - Issues that require local filesystem access the attacker already has
-  (Heliox is a local-first desktop IDE; the local user is a trusted
+  (Fluxor is a local-first desktop IDE; the local user is a trusted
   principal)
 - Vulnerabilities in the third-party [OpenCode CLI](https://opencode.ai) that
-  Heliox shells out to for agent runs, or in the model providers OpenCode
+  Fluxor shells out to for agent runs, or in the model providers OpenCode
   itself delegates to — please report those upstream, to their respective
   maintainers
 

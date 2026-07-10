@@ -14,8 +14,8 @@ import {
   mutateTeamWorkCase,
 } from './prompt-mutator';
 
-const HELIOX_IDE_PRODUCT_CONTEXT = [
-  'Contexto del Producto (Heliox IDE 2.0):',
+const FLUXOR_IDE_PRODUCT_CONTEXT = [
+  'Contexto del Producto (Fluxor IDE 2.0):',
   '',
   'Concepto Principal: The visual-first, open-source IDE that orchestrates AI agents on an infinite canvas. A Figma-inspired spatial workspace for cognitive engineering.',
   '',
@@ -142,9 +142,9 @@ function makeTeamWorkSteps(mutation: ReturnType<typeof mutateTeamWorkCase>): Rec
       name: 'LandingContentPlanner',
       systemPrompt: [
         'Eres un estratega de contenido para productos developer-first. Tu unico entregable es copy claro, reutilizable y especifico para la landing page.',
-        'Debes usar estrictamente el siguiente contexto de producto. No conviertas Heliox IDE en un editor de texto generico.',
+        'Debes usar estrictamente el siguiente contexto de producto. No conviertas Fluxor IDE en un editor de texto generico.',
         '',
-        HELIOX_IDE_PRODUCT_CONTEXT,
+        FLUXOR_IDE_PRODUCT_CONTEXT,
       ].join('\n'),
     }],
     mentalContext: [],
@@ -478,7 +478,7 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       '',
       PROJECT_LAYOUT,
       '',
-      HELIOX_IDE_PRODUCT_CONTEXT,
+      FLUXOR_IDE_PRODUCT_CONTEXT,
     ].join('\n'),
     tools: fileTools,
     prevStepIds: [],
@@ -510,7 +510,7 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       'Apply the active mods strictly: a complete SEO document head (unique title + meta description + canonical + Open Graph + Twitter cards via a Head/helmet component), valid Schema.org JSON-LD (SoftwareApplication + Organization + BreadcrumbList) reflecting the visible copy, a Core Web Vitals budget (explicit width/height or aspect-ratio on media, lazy-load offscreen assets, no layout-shifting injections), and WCAG semantics (landmarks, exactly one h1, logical headings, accessible names).',
       'Use the exact product context for the copy — do not invent a different product.',
       '',
-      HELIOX_IDE_PRODUCT_CONTEXT,
+      FLUXOR_IDE_PRODUCT_CONTEXT,
     ].join('\n'),
     tools: fileTools,
     prevStepIds: ['scaffold-structure'],
@@ -687,7 +687,7 @@ export function createFromScratchCase({ seed }: { seed: number }): PFCase {
     'internationalized (en/es), accessible (WCAG), SEO-complete (meta tags + Schema.org JSON-LD), within a Core Web Vitals budget, themeable (light/dark/system), responsive (mobile-first);',
     'with default-deny authenticated routes, accessible validated forms, and a TDD test suite (failing tests, then implementation), closed by a security/quality review.',
     '',
-    HELIOX_IDE_PRODUCT_CONTEXT,
+    FLUXOR_IDE_PRODUCT_CONTEXT,
   ].join('\n');
 
   return {
@@ -696,7 +696,7 @@ export function createFromScratchCase({ seed }: { seed: number }): PFCase {
     seed,
     prompt,
     variables: {
-      product: 'Heliox IDE',
+      product: 'Fluxor IDE',
       stack: 'React 19 + Vite + TypeScript + Tailwind CSS v4 + shadcn/ui',
       locales: 'en,es',
       steps: 6,

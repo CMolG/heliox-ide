@@ -2,7 +2,7 @@
  * flow-markdown.ts — Human-readable Markdown rendering of a compiled AgenticFlow
  *
  * Companion to the portable JSON interchange format
- * (src/main/flow-export/heliox-flow.ts) — while that module targets other
+ * (src/main/flow-export/fluxor-flow.ts) — while that module targets other
  * runtimes (Java/Python/SDK conformance), this one targets HUMANS: a flow
  * summary a developer can read in a PR description, paste into a doc, or
  * skim without opening the IDE. `flowToMarkdown` is pure (no IPC, no store
@@ -15,10 +15,10 @@
  * main-process modules — mixing bundles breaks the renderer/main split). The
  * deterministic topological sort below is therefore imported from
  * `src/types/harness.ts`'s `topoSortAgenticSteps` rather than duplicated here
- * or imported from `heliox-flow.ts` (a `src/main` module off-limits to the
+ * or imported from `fluxor-flow.ts` (a `src/main` module off-limits to the
  * renderer) — `types/harness.ts` is a pure, boundary-safe shared home for
  * both processes (it already exports `clampLoopIterations` for the same
- * reason), so both this module and `heliox-flow.ts` share one canonical
+ * reason), so both this module and `fluxor-flow.ts` share one canonical
  * implementation instead of maintaining independent copies.
  *
  * Output contract (exercised byte-for-byte by flow-markdown.test.ts):
@@ -35,7 +35,7 @@
  *     and every "Depends on" reference below use the step's stable `id`.
  *   - Per step (each omitted when absent): Type, Description, a fenced
  *     Prompt block, a fenced "Role prompt" block (roles' systemPrompts
- *     joined with '\n\n', mirroring heliox-flow.ts's flattening), a Tools
+ *     joined with '\n\n', mirroring fluxor-flow.ts's flattening), a Tools
  *     bullet list, a "Depends on" bullet list (from `prevStepIds`), and a
  *     Model override line.
  *   - A trailing `## Loops` section (omitted when the flow has none), one

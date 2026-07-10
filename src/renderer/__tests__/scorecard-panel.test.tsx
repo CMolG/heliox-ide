@@ -3,7 +3,7 @@
  *
  * Verifies that all three sections of the scorecard render correctly with a
  * mocked IPC result: ground-truth verifiers, CI/judge, and cost/latency.
- * IPC is mocked at the window.helioxAPI boundary so no Electron context is needed.
+ * IPC is mocked at the window.fluxorAPI boundary so no Electron context is needed.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -73,8 +73,8 @@ const MOCK_RESULT: ScorecardResult = {
 beforeEach(() => {
   // Reset store to initial state
   useHarnessStore.setState(useHarnessStore.getInitialState(), true);
-  // Clean window.helioxAPI
-  delete (window as any).helioxAPI;
+  // Clean window.fluxorAPI
+  delete (window as any).fluxorAPI;
 });
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -248,7 +248,7 @@ describe('ScorecardPanel — error state', () => {
 describe('ScorecardPanel — runScorecard action', () => {
   it('calls the IPC bridge when run button clicked', async () => {
     const runScorecard = vi.fn().mockResolvedValue({ success: true, data: MOCK_RESULT });
-    (window as any).helioxAPI = { runScorecard };
+    (window as any).fluxorAPI = { runScorecard };
 
     render(<ScorecardPanel />);
 
@@ -262,7 +262,7 @@ describe('ScorecardPanel — runScorecard action', () => {
   });
 
   it('shows error state when IPC bridge is missing', async () => {
-    // window.helioxAPI is already deleted in beforeEach
+    // window.fluxorAPI is already deleted in beforeEach
     render(<ScorecardPanel />);
 
     // Directly call the store action

@@ -235,7 +235,7 @@ describe('ingestFiles', () => {
   beforeEach(async () => {
     store = new InMemoryVectorStore();
     embedFn = makeHashEmbedFn(DIM);
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'heliox-ingest-test-'));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fluxor-ingest-test-'));
   });
 
   it('ingests a .md file', async () => {
@@ -320,7 +320,7 @@ describe('E2E: ingest → retrieve', () => {
       'This is a classic English-language pangram. ' +
       'It is commonly used to display font samples.',
 
-      'Heliox is a next-generation agentic IDE. ' +
+      'Fluxor is a next-generation agentic IDE. ' +
       'It allows developers to compose AI-powered workflows visually. ' +
       'The mental canvas is its core innovation.',
 

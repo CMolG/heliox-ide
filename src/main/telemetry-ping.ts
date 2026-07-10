@@ -7,7 +7,8 @@
  *
  * Fires only when *both* are true:
  *  - `telemetryOptIn === true` in settings-store (default: false)
- *  - an endpoint is configured — HELIOX_TELEMETRY_ENDPOINT env var, or the
+ *  - an endpoint is configured — FLUXOR_TELEMETRY_ENDPOINT env var (legacy
+ *    compat: HELIOX_TELEMETRY_ENDPOINT, deprecated), or the
  *    `telemetryEndpoint` settings key as a fallback
  *
  * Payload is intentionally minimal: a random anonymous id (persisted so
@@ -20,6 +21,7 @@ import { app, ipcMain } from 'electron';
 import { randomUUID } from 'crypto';
 import { errMsg } from '../types';
 import { settingsGet, settingsSet } from './storage/settings-store';
+import { readBrandEnv } from './lib/env-compat';
 
 const PING_TIMEOUT_MS = 3000;
 
@@ -32,7 +34,7 @@ export interface TelemetryPingPayload {
 }
 
 function resolveEndpoint(): string | null {
-  const fromEnv = process.env.HELIOX_TELEMETRY_ENDPOINT;
+  const fromEnv = readBrandEnv('FLUXOR_TELEMETRY_ENDPOINT');
   if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) return fromEnv.trim();
 
   const fromSettings = settingsGet('telemetryEndpoint');

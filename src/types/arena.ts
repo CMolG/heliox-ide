@@ -1,5 +1,5 @@
 /**
- * arena.ts — Shared types for Heliox Arena leaderboard
+ * arena.ts — Shared types for Fluxor Arena leaderboard
  *
  * Architecture note:
  * This file follows the explanatory style used across the codebase:

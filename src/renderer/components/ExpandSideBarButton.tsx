@@ -14,12 +14,12 @@
  */
 import React from 'react';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
-import { useHelioxStore } from '@/renderer/store';
+import { useFluxorStore } from '@/renderer/store';
 
 // ─── Component ───────────────────────────────────────────────────
 
 export function ExpandSideBarButton() {
-  const toggleSidebar = useHelioxStore(s => s.toggleSidebar);
+  const toggleSidebar = useFluxorStore(s => s.toggleSidebar);
 
   return (
     <button

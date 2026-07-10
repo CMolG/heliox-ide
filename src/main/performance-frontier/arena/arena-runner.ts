@@ -1,5 +1,5 @@
 /**
- * arena-runner.ts — Heliox Arena orchestrator
+ * arena-runner.ts — Fluxor Arena orchestrator
  *
  * Mass-benchmarks LLMs from OpenRouter against the Performance Frontier (PF)
  * suites and emits a leaderboard. For every model it runs each configured suite
@@ -15,7 +15,7 @@
  *   ARENA_SUITES          comma list overriding suites (e.g. "architecture,assembler")
  *   ARENA_MODELS          comma list pinning the exact roster (e.g. "z-ai/glm-5.2");
  *                         bypasses free discovery and forced injection
- *   ARENA_OUTPUT_DIR      output dir (default .heliox/performance-frontier)
+ *   ARENA_OUTPUT_DIR      output dir (default .fluxor/performance-frontier)
  *   OPENROUTER_API_KEY    required to reach the OpenRouter models + inference API
  */
 import { mkdir, writeFile } from 'fs/promises';
@@ -205,8 +205,8 @@ export async function runArena(options: RunArenaOptions = {}): Promise<ArenaLead
   const suites = options.suites ?? parseSuitesEnv(process.env.ARENA_SUITES) ?? ARENA_SUITES;
   const outputDir = options.outputDir
     ?? process.env.ARENA_OUTPUT_DIR
-    ?? join(process.cwd(), '.heliox', 'performance-frontier');
-  const leaderboardPath = join(outputDir, 'heliox-leaderboard.json');
+    ?? join(process.cwd(), '.fluxor', 'performance-frontier');
+  const leaderboardPath = join(outputDir, 'fluxor-leaderboard.json');
 
   // An explicit roster (option or ARENA_MODELS) pins exactly which models run,
   // using live catalog pricing; otherwise we discover free models + forced ones.
@@ -283,7 +283,7 @@ const isDirectRun = typeof process !== 'undefined'
 
 if (isDirectRun) {
   main().catch((error) => {
-    console.error(`[Heliox Arena] ${errorMessage(error)}`);
+    console.error(`[Fluxor Arena] ${errorMessage(error)}`);
     process.exitCode = 1;
   });
 }

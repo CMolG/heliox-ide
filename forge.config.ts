@@ -29,7 +29,7 @@ import { existsSync } from 'node:fs';
 //     osxNotarize (notarytool, app-specific-password strategy). Notarization
 //     requires a signed app, so their presence also turns on osxSign.
 //   OSX_SIGN_IDENTITY                           — explicit codesign identity
-//     string (e.g. "Developer ID Application: Heliox, Inc. (TEAMID)").
+//     string (e.g. "Developer ID Application: Fluxor, Inc. (TEAMID)").
 //     Optional even while notarizing: omit it and @electron/osx-sign
 //     auto-discovers a "Developer ID Application" certificate from the
 //     default keychain (`osxSign: true`).
@@ -85,12 +85,20 @@ console.log(
   `Windows signing: ${Object.keys(windowsSigning).length > 0 ? 'ENABLED' : 'unsigned'}`
 );
 
-// Per-push CI builds (ci.yml `build` job) set HELIOX_MAKE_ZIP_ONLY=1 to emit a
+// Per-push CI builds (ci.yml `build` job) set FLUXOR_MAKE_ZIP_ONLY=1 to emit a
 // fast, dependency-light .zip of the packaged app on every OS — a real runnable
 // build without the native/optional toolchains the polished installers need
 // (maker-dmg's darwin-only `appdmg`, Squirrel.Windows, deb/rpm). Tagged
 // releases (release.yml) and local `make` still build the full installer set.
-const zipOnly = process.env.HELIOX_MAKE_ZIP_ONLY === '1';
+// Legacy compat: HELIOX_MAKE_ZIP_ONLY is accepted as a deprecated fallback
+// (Annex A env-var contract) — this stays a self-contained check rather than
+// importing src/main's shared env-compat helper, since electron-forge loads
+// this config directly, outside the app's Vite bundle.
+const legacyZipOnlyEnv = process.env.HELIOX_MAKE_ZIP_ONLY; // Legacy compat
+if (legacyZipOnlyEnv !== undefined && process.env.FLUXOR_MAKE_ZIP_ONLY === undefined) {
+  console.warn('[forge.config] legacy HELIOX_MAKE_ZIP_ONLY is deprecated; use FLUXOR_MAKE_ZIP_ONLY');
+}
+const zipOnly = (process.env.FLUXOR_MAKE_ZIP_ONLY ?? legacyZipOnlyEnv) === '1';
 
 // maker-dmg needs the darwin-only native `appdmg`, whose macos-alias/fs-xattr
 // addons don't compile on hosted macOS runners (old native code, no prebuilds),
@@ -101,26 +109,26 @@ const zipOnly = process.env.HELIOX_MAKE_ZIP_ONLY === '1';
 const appdmgAvailable = existsSync('node_modules/appdmg/package.json');
 
 const installerMakers = [
-  new MakerSquirrel({ name: 'HelioxIDE', authors: 'Heliox', setupIcon: './assets/icon.ico', ...windowsSigning }),
+  new MakerSquirrel({ name: 'FluxorIDE', authors: 'Fluxor', setupIcon: './assets/icon.ico', ...windowsSigning }),
   ...(appdmgAvailable ? [new MakerDMG({ format: 'ULFO', icon: './assets/icon.icns' })] : []),
   new MakerDeb({
     options: {
-      maintainer: 'Heliox',
-      homepage: 'https://heliox.dev',
+      maintainer: 'Fluxor',
+      homepage: 'https://helioxide.com',
     },
   }),
-  new MakerRpm({ options: { name: 'heliox-ide' } }),
+  new MakerRpm({ options: { name: 'fluxor-ide' } }),
 ];
 
 const config: ForgeConfig = {
   packagerConfig: {
-    name: 'Heliox IDE',
+    name: 'Fluxor IDE',
     // The deb/rpm makers look for the packaged binary by the lowercase package
-    // name ("heliox-ide"), but Packager names it after `name` ("Heliox IDE")
+    // name ("fluxor-ide"), but Packager names it after `name` ("Fluxor IDE")
     // by default — the mismatch failed the Linux `make` with "could not find
     // the Electron app binary". Pin the executable filename so every maker
     // resolves it consistently across platforms.
-    executableName: 'heliox-ide',
+    executableName: 'fluxor-ide',
     icon: './assets/icon',
     extraResource: [
       // Playwright's Chromium build is no longer bundled here (audit 1.7 —
@@ -154,7 +162,7 @@ const config: ForgeConfig = {
     new PublisherGithub({
       repository: {
         owner: 'CMolG',
-        name: 'heliox-ide',
+        name: 'fluxor-ide',
       },
       // Full (non-prerelease) releases only — update.electronjs.org and GitHub's
       // /releases/latest both EXCLUDE prereleases, so auto-update and the web's

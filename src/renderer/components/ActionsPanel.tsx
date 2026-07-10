@@ -17,7 +17,7 @@ import React, { useState, useCallback } from 'react';
 import { VscSearch, VscShield, VscBeaker } from 'react-icons/vsc';
 import { FiZap, FiLayers, FiLink, FiShield } from 'react-icons/fi';
 import { MdAccessibility } from 'react-icons/md';
-import { useHelioxStore } from '../store';
+import { useFluxorStore } from '../store';
 import { theme } from '../logic/theme';
 
 const ACTION_ICONS: Record<string, React.ReactNode> = {
@@ -230,7 +230,7 @@ For each finding:
 const CATEGORIES = Array.from(new Set(PREDEFINED_ACTIONS.map(a => a.category)));
 
 export function ActionsPanel() {
-  const { addSession, setSelectedSessionId, setActiveTab, addToast, addSessionMessage, updateSessionDescription } = useHelioxStore();
+  const { addSession, setSelectedSessionId, setActiveTab, addToast, addSessionMessage, updateSessionDescription } = useFluxorStore();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   const visibleActions = selectedCategory
@@ -251,8 +251,8 @@ export function ActionsPanel() {
       });
       updateSessionDescription(sessionId, action.name);
       // Trigger the send via custom event
-      window.dispatchEvent(new CustomEvent('heliox:run-action', { detail: { sessionId, prompt: action.prompt } }));
-      window.dispatchEvent(new CustomEvent('heliox:focus-chat'));
+      window.dispatchEvent(new CustomEvent('fluxor:run-action', { detail: { sessionId, prompt: action.prompt } }));
+      window.dispatchEvent(new CustomEvent('fluxor:focus-chat'));
     }, 100);
     addToast(`Running: ${action.name}`, 'info');
   }, [addSession, setSelectedSessionId, setActiveTab, addToast, addSessionMessage, updateSessionDescription]);

@@ -42,10 +42,10 @@ export function SectionContent({ section }: { section: DocSection }) {
     case 'overview':
       return (
         <div className="flex flex-col gap-4">
-          <h2 className="text-lg font-bold" style={headStyle}>Welcome to Heliox IDE</h2>
+          <h2 className="text-lg font-bold" style={headStyle}>Welcome to Fluxor IDE</h2>
           <p className="text-sm leading-6" style={bodyStyle}>
-            Heliox is an AI agent workspace built on OpenCode. Pick a provider (Anthropic, OpenAI,
-            OpenRouter, Xiaomi MiMo, OpenCode Zen, …), and Heliox orchestrates agent sessions,
+            Fluxor is an AI agent workspace built on OpenCode. Pick a provider (Anthropic, OpenAI,
+            OpenRouter, Xiaomi MiMo, OpenCode Zen, …), and Fluxor orchestrates agent sessions,
             validates changes against E2E flows, and auto-corrects regressions.
           </p>
           <div className="flex flex-col gap-2 p-4 rounded-xl" style={{ background: 'rgba(0,0,0,0.3)' }}>
@@ -93,7 +93,7 @@ export function SectionContent({ section }: { section: DocSection }) {
           <h2 className="text-lg font-bold" style={headStyle}>E2E Flows</h2>
           <p className="text-sm leading-6" style={bodyStyle}>
             E2E Flows define user journeys to validate with Playwright snapshots. After an agent
-            makes changes, Heliox runs your flows and compares screenshots against baselines.
+            makes changes, Fluxor runs your flows and compares screenshots against baselines.
           </p>
           <div className="flex flex-col gap-2 p-4 rounded-xl" style={{ background: 'rgba(0,0,0,0.3)' }}>
             <span className="text-[10px] font-bold uppercase tracking-wider" style={labelStyle}>Flow actions</span>
@@ -245,7 +245,7 @@ export function SectionContent({ section }: { section: DocSection }) {
           </p>
           <div className="flex flex-col gap-3">
             {[
-              { title: 'Providers', desc: 'Pick a provider (Anthropic, OpenAI, OpenRouter, Xiaomi MiMo, …) and paste its API key — Heliox routes everything through OpenCode.' },
+              { title: 'Providers', desc: 'Pick a provider (Anthropic, OpenAI, OpenRouter, Xiaomi MiMo, …) and paste its API key — Fluxor routes everything through OpenCode.' },
               { title: 'Auto-commit', desc: 'When enabled, automatically commits changes after a successful agent run.' },
               { title: 'E2E Validation', desc: 'When enabled, runs E2E flows after each agent execution to catch regressions.' },
               { title: 'Send on Enter', desc: 'Toggle whether pressing Enter sends the message or inserts a newline.' },

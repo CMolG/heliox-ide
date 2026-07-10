@@ -87,15 +87,15 @@ jobs:
         # app on every OS. The polished installers (dmg via appdmg, Squirrel,
         # deb/rpm) need native/optional toolchains that flake on hosted runners,
         # so they stay a release.yml concern (see forge.config.ts
-        # HELIOX_MAKE_ZIP_ONLY). Signing likewise stays unsigned here.
+        # FLUXOR_MAKE_ZIP_ONLY). Signing likewise stays unsigned here.
         env:
-          HELIOX_MAKE_ZIP_ONLY: '1'
+          FLUXOR_MAKE_ZIP_ONLY: '1'
         run: npm run make
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: heliox-ide-${{ github.sha }}-${{ matrix.os }}
+          name: fluxor-ide-${{ github.sha }}-${{ matrix.os }}
           path: out/make/**
           retention-days: 14
           if-no-files-found: error
@@ -104,7 +104,7 @@ jobs:
     name: Publish rolling "latest" release
     needs: build
     # Only the mainline feeds the public, always-latest download that the
-    # marketing site (heliox-ide-web → GitHub Releases API) surfaces. Feature
+    # marketing site (helioxide.com → GitHub Releases API) surfaces. Feature
     # branches still get per-run zip artifacts from `build`, just not this
     # rolling release. Skips forks/PRs (no push, no default-branch ref).
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

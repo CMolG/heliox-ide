@@ -18,7 +18,7 @@ export function getE2EUserDataDir(): string {
   } catch {
     // Fallback: create inline (shouldn't happen with proper config)
     const os = require('os');
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'heliox-e2e-fallback-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fluxor-e2e-fallback-'));
     return tmpDir;
   }
 }
@@ -41,6 +41,6 @@ export function getE2EEnv(): Record<string, string> {
     ...process.env as Record<string, string>,
     NODE_ENV: 'development',
     ELECTRON_IS_DEV: '1',
-    HELIOX_MODELS: process.env.HELIOX_E2E_MODELS ?? 'copilot',
+    FLUXOR_MODELS: process.env.FLUXOR_E2E_MODELS ?? 'copilot',
   };
 }

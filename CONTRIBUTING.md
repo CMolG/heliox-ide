@@ -1,17 +1,17 @@
-# Contributing to Heliox IDE
+# Contributing to Fluxor IDE
 
-Thanks for your interest in contributing. Heliox is an alpha-stage, fast-moving
+Thanks for your interest in contributing. Fluxor is an alpha-stage, fast-moving
 project — please read this guide before opening a PR.
 
 ## Development setup
 
 **Prerequisites:** Node.js 24+, Git, and the [OpenCode CLI](https://opencode.ai/docs/installation)
 (`opencode`) installed and on `PATH` if you want to exercise agent features —
-Heliox shells out to it for every agent run.
+Fluxor shells out to it for every agent run.
 
 ```bash
-git clone https://github.com/CMolG/heliox-ide.git
-cd heliox-ide
+git clone https://github.com/CMolG/fluxor-ide.git
+cd fluxor-ide
 npm install
 npm start        # launches the IDE in development mode (hot reload)
 ```
@@ -47,7 +47,7 @@ behavior.
 
 ## Design principles
 
-Heliox is an aggressively minimalist, dark-only, keyboard-first IDE. Changes
+Fluxor is an aggressively minimalist, dark-only, keyboard-first IDE. Changes
 should respect the existing design system rather than introduce a new one:
 
 - **Dark theme only** — the UI is built around a dark palette (`#0a0a0a`

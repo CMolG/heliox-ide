@@ -14,7 +14,7 @@
  */
 // src/renderer/components/desktop/ProjectPickerModal.tsx — Modal for selecting child project before new chat
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { theme } from '../../logic/theme';
 import { LucideIcon } from './LucideIcon';
 
@@ -29,18 +29,18 @@ interface ChildProject {
 }
 
 export function ProjectPickerModal({ onSelect, onClose }: ProjectPickerModalProps) {
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const projectPath = useFluxorStore(s => s.projectPath);
   const [children, setChildren] = useState<ChildProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    if (!projectPath || !window.helioxAPI) return;
+    if (!projectPath || !window.fluxorAPI) return;
     let cancelled = false;
 
     (async () => {
       try {
-        const entries = await window.helioxAPI!.readDirectory(projectPath);
+        const entries = await window.fluxorAPI!.readDirectory(projectPath);
         if (cancelled) return;
         // Filter to directories that look like projects (have package.json, .git, Cargo.toml, etc.)
         const projects: ChildProject[] = [];
@@ -48,7 +48,7 @@ export function ProjectPickerModal({ onSelect, onClose }: ProjectPickerModalProp
           if (!entry.isDirectory) continue;
           // Check if directory looks like a project
           try {
-            const subEntries = await window.helioxAPI!.readDirectory(entry.path);
+            const subEntries = await window.fluxorAPI!.readDirectory(entry.path);
             const names = new Set(subEntries.map(e => e.name));
             const isProject = names.has('package.json') || names.has('.git') || names.has('Cargo.toml')
               || names.has('pom.xml') || names.has('build.gradle') || names.has('go.mod')

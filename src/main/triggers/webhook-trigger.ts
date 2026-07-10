@@ -1,9 +1,9 @@
 /**
- * webhook-trigger.ts — Register HTTP webhook routes that launch Heliox flows.
+ * webhook-trigger.ts — Register HTTP webhook routes that launch Fluxor flows.
  *
  * Each webhook trigger binds a POST route to the shared HTTP server.  On
  * request:
- *   1. Validates X-Heliox-Secret header (or ?secret= query param); 401 if
+ *   1. Validates X-Fluxor-Secret header (or ?secret= query param); 401 if
  *      missing or wrong.
  *   2. Parses the JSON body as the flow input payload.
  *   3. Calls executeAgenticFlow with the (injectable) runStep.
@@ -20,7 +20,7 @@ import type { TriggerDef, WebhookTriggerConfig } from './trigger-types';
 import type { ExecuteAgenticFlowOptions } from '../harness-engine/executor';
 import { executeAgenticFlow } from '../harness-engine/executor';
 import { harnessEventBus, HARNESS_EVENT_NAME } from '../harness-engine/event-bus';
-import { importFlow, type HelioxFlowExport } from '../flow-export/heliox-flow';
+import { importFlow, type FluxorFlowExport } from '../flow-export/fluxor-flow';
 import type { HarnessEventPayload } from '../../types/ipc-events';
 import type { AgenticFlow } from '../../types/harness';
 
@@ -47,8 +47,8 @@ function jsonResponse(res: ServerResponse, status: number, body: unknown): void 
 }
 
 function extractSecret(req: IncomingMessage): string | undefined {
-  // 1. X-Heliox-Secret header (preferred)
-  const headerVal = req.headers['x-heliox-secret'];
+  // 1. X-Fluxor-Secret header (preferred)
+  const headerVal = req.headers['x-fluxor-secret'];
   if (typeof headerVal === 'string' && headerVal.length > 0) return headerVal;
 
   // 2. ?secret= query param (convenience for tools that can't set headers)
@@ -126,7 +126,7 @@ export function registerWebhookTrigger(
   let flow: AgenticFlow;
   try {
     const raw = readFileSync(def.flowPath, 'utf-8');
-    const exported: HelioxFlowExport = JSON.parse(raw) as HelioxFlowExport;
+    const exported: FluxorFlowExport = JSON.parse(raw) as FluxorFlowExport;
     flow = importFlow(exported);
   } catch (err) {
     throw new Error(

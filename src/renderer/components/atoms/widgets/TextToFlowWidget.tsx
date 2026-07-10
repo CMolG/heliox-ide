@@ -3,9 +3,9 @@
  *
  * Responsibility:
  * - "Text to Flow": the user describes, in natural language, what they need, and
- *   the Meta-Agent (window.helioxAPI.assemblePipeline) compiles it into a full
+ *   the Meta-Agent (window.fluxorAPI.assemblePipeline) compiles it into a full
  *   step DAG that is inserted onto the canvas. Migrated from the floating MetaChat
- *   into the widget system — same AI assembler + HelioxSpinner, NOT line-splitting.
+ *   into the widget system — same AI assembler + FluxorSpinner, NOT line-splitting.
  *
  * Boundaries:
  * - Owns: intent input + assembly request UX.
@@ -15,7 +15,7 @@ import React, { useState, useCallback, useMemo, useRef } from 'react';
 import type { PipelineAssembly } from '@/types/meta-agent';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { calculateSafeInsertionPoint } from '../../../store/spatial-engine';
-import { HelioxSpinner } from '../../brand/HelioxSpinner';
+import { FluxorSpinner } from '../../brand/FluxorSpinner';
 import { theme } from '../../../logic/theme';
 
 const FRAME_HORIZONTAL_PADDING = 112;
@@ -67,7 +67,7 @@ export function TextToFlowWidget() {
     setStatus('assembling');
     setError(null);
     try {
-      const result = await window.helioxAPI?.assemblePipeline(userIntent);
+      const result = await window.fluxorAPI?.assemblePipeline(userIntent);
       if (!result?.success || !result.data) {
         throw new Error(result?.error ?? 'Meta-Agent assembly failed.');
       }
@@ -158,7 +158,7 @@ export function TextToFlowWidget() {
         }}
         aria-label="Build flow from description"
       >
-        {status === 'assembling' ? <><HelioxSpinner size={14} /> Assembling…</> : 'Build flow'}
+        {status === 'assembling' ? <><FluxorSpinner size={14} /> Assembling…</> : 'Build flow'}
       </button>
       {error && (
         <div role="status" style={{ fontFamily: theme.fontInter, fontSize: 10, color: theme.danger, lineHeight: 1.4 }}>

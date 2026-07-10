@@ -90,15 +90,15 @@ beforeEach(() => {
   mockHarness.startExecution.mockClear();
 });
 
-// ── window.helioxAPI stub (Export button — real useHelioxStore, real IPC bridge) ──
+// ── window.fluxorAPI stub (Export button — real useFluxorStore, real IPC bridge) ──
 
 function stubExportFlow(impl: (...args: unknown[]) => unknown) {
-  Object.defineProperty(window, 'helioxAPI', {
+  Object.defineProperty(window, 'fluxorAPI', {
     value: { exportFlow: vi.fn(impl) },
     writable: true,
     configurable: true,
   });
-  return (window.helioxAPI as unknown as { exportFlow: ReturnType<typeof vi.fn> }).exportFlow;
+  return (window.fluxorAPI as unknown as { exportFlow: ReturnType<typeof vi.fn> }).exportFlow;
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ describe('FrameNode — run/status treatment per executionStatus', () => {
   });
 });
 
-// ── Export control (Phase 4a — canvas → portable heliox-flow.json export) ──────
+// ── Export control (Phase 4a — canvas → portable fluxor-flow.json export) ──────
 
 describe('FrameNode — Export control', () => {
   it('renders an Export button next to Run with a descriptive aria-label', () => {
@@ -196,7 +196,7 @@ describe('FrameNode — Export control', () => {
     expect(button).toHaveAttribute('aria-label', 'Export "ETL Pipeline" as a portable flow file');
   });
 
-  it('compiles the canvas and calls window.helioxAPI.exportFlow with the compiled flow on click', () => {
+  it('compiles the canvas and calls window.fluxorAPI.exportFlow with the compiled flow on click', () => {
     const compiledFlow = { id: 'flow-1', name: 'My Flow', rootStepId: 'root', stepsRecord: {} };
     mockHarness.compileCurrentCanvas.mockReturnValue(compiledFlow);
     const exportFlow = stubExportFlow(() => Promise.resolve({ success: true, path: '/tmp/flow-1.flow.json' }));
@@ -208,7 +208,7 @@ describe('FrameNode — Export control', () => {
     expect(exportFlow).toHaveBeenCalledWith(compiledFlow);
   });
 
-  it('does not call window.helioxAPI.exportFlow when compileCurrentCanvas returns null (e.g. an empty/invalid canvas)', () => {
+  it('does not call window.fluxorAPI.exportFlow when compileCurrentCanvas returns null (e.g. an empty/invalid canvas)', () => {
     mockHarness.compileCurrentCanvas.mockReturnValue(null);
     const exportFlow = stubExportFlow(() => Promise.resolve({ success: true }));
 
