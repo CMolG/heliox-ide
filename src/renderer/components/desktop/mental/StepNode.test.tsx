@@ -340,3 +340,60 @@ describe('StepNode — quick-add popover', () => {
     expect(screen.queryByTestId('step-quick-add-popover')).not.toBeInTheDocument();
   });
 });
+
+// ── H1: role helm (Single Persona) + mods-with-state ──────────────────────────
+// The assigned role earns a singular "helm" treatment (one per step), rendered
+// as a single-select listbox with the role as the sole aria-selected option —
+// distinct from the stackable mod chips below it.
+describe('StepNode — role helm (Single Persona)', () => {
+  const ROLE = { name: 'frontend-engineer', icon: 'User', iconLibrary: 'lucide', description: '', tags: [], color: '#E87040' };
+
+  it('renders no persona helm when the step has no role', () => {
+    render(<StepNode {...makeNodeProps('step-norole')} />);
+    expect(screen.queryByTestId('step-node-helm-step-norole')).not.toBeInTheDocument();
+  });
+
+  it('renders the assigned role as a single aria-selected listbox option (roving tabindex)', () => {
+    render(<StepNode {...makeNodeProps('step-helm', { roles: [ROLE] })} />);
+
+    const listbox = screen.getByRole('listbox', { name: 'Assigned persona — one per step' });
+    expect(listbox).toBeInTheDocument();
+
+    const option = screen.getByTestId('step-node-helm-step-helm');
+    expect(option).toHaveAttribute('role', 'option');
+    expect(option).toHaveAttribute('aria-selected', 'true');
+    expect(option).toHaveAttribute('tabindex', '0');
+    // Role conveyed by NAME text, never color alone (a11y 1.4.1).
+    expect(option).toHaveTextContent('Frontend Engineer');
+  });
+
+  it('labels the section "Persona" (singular) to convey the one-per-step rule in text', () => {
+    render(<StepNode {...makeNodeProps('step-persona', { roles: [ROLE] })} />);
+    const section = screen.getByRole('region', { name: 'Step persona' });
+    expect(section).toHaveTextContent('Persona');
+  });
+
+  it('the persona remove button has an accessible name and calls removeRoleFromStep', () => {
+    render(<StepNode {...makeNodeProps('step-helm-rm', { roles: [ROLE] })} />);
+    const removeBtn = screen.getByRole('button', { name: 'Remove persona Frontend Engineer' });
+    fireEvent.click(removeBtn);
+    expect(mockDesktop.removeRoleFromStep).toHaveBeenCalledWith('step-helm-rm', 'frontend-engineer');
+  });
+});
+
+describe('StepNode — mods list with state', () => {
+  const MOD_A = { name: 'strict-linting', icon: 'Wrench', iconLibrary: 'lucide', description: '', tags: [] };
+  const MOD_B = { name: 'dry-run', icon: 'Wrench', iconLibrary: 'lucide', description: '', tags: [] };
+
+  it('shows the attached-mod count in the section label', () => {
+    render(<StepNode {...makeNodeProps('step-mods', { mods: [MOD_A, MOD_B] })} />);
+    const section = screen.getByRole('region', { name: 'Assigned mods' });
+    expect(section).toHaveTextContent('Mods · 2');
+  });
+
+  it('lists each attached mod with a remove control', () => {
+    render(<StepNode {...makeNodeProps('step-mods2', { mods: [MOD_A] })} />);
+    expect(screen.getByText('Strict Linting')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Strict Linting' })).toBeInTheDocument();
+  });
+});

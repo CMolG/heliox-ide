@@ -24,7 +24,14 @@ export interface CanvasContextMenuAction {
 }
 
 const CANVAS_ACTIONS: CanvasContextMenuAction[] = [
-  { label: 'New Chat Window', icon: 'MessageSquare', action: 'new-chat' },
+  // Label/icon evolved by the chats→steps re-architecture (F0 decision 2,
+  // 2026-07-10): this no longer opens a chat window — it creates a
+  // mono-step at the click position (see SeamlessCanvas.tsx's
+  // handleContextMenuAction, case 'new-chat'). The `action` literal is kept
+  // stable ('new-chat') so nothing else keyed off it churns — mirrors
+  // Dock.tsx's own 'new-chat' dock action, which keeps its id/action
+  // stable while only its label/behavior changed.
+  { label: 'New Step', icon: 'SquarePlus', action: 'new-chat' },
   { label: 'New File Explorer', icon: 'FileText', action: 'file-explorer' },
   { label: 'New Backlog Board', icon: 'KanbanSquare', action: 'backlog' },
   { label: 'Enable Mental Authoring', icon: 'PenTool', action: 'mental-draw-toggle', dividerAfter: true },

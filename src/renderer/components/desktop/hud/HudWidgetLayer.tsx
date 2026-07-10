@@ -22,7 +22,7 @@ import { useDesktopStore } from '../../../store/desktop-store';
 import type { HudWidgetType } from '../../../store/desktop-store';
 import { WidgetWrapper } from '../../atoms/WidgetWrapper';
 import { AgentSessionsWidget } from '../../atoms/widgets/AgentSessionsWidget';
-import { TextToFlowWidget } from '../../atoms/widgets/TextToFlowWidget';
+import { HudAutoChatPanel } from './HudAutoChatPanel';
 import { NotificationsWidget } from '../../atoms/widgets/NotificationsWidget';
 import { LucideIcon } from '../LucideIcon';
 import {
@@ -42,14 +42,19 @@ interface WidgetMeta {
 
 const WIDGET_META: Record<HudWidgetType, WidgetMeta> = {
   'agent-sessions':   { title: 'Agent Sessions',   iconName: 'Bot',      defaultWidth: 340, defaultHeight: 240 },
-  'text-to-flow':     { title: 'Text to Flow',     iconName: 'Workflow',  defaultWidth: 320, defaultHeight: 220 },
+  // Was 'text-to-flow' / TextToFlowWidget — renamed in place (chats→steps
+  // re-architecture, F0 decision 2): this widget IS the single automation
+  // chat now (HudAutoChatPanel adds an intent-history list on the same
+  // one-shot assemblePipeline→insertPipelineAssembly seam). See the
+  // HudWidgetType rename comment in desktop-store.ts.
+  'auto-chat':        { title: 'Auto-Chat',        iconName: 'Workflow', defaultWidth: 320, defaultHeight: 220 },
   'notifications':    { title: 'Notifications',    iconName: 'Bell',     defaultWidth: 300, defaultHeight: 280 },
 };
 
 function renderWidgetBody(type: HudWidgetType) {
   switch (type) {
     case 'agent-sessions':   return <AgentSessionsWidget />;
-    case 'text-to-flow':     return <TextToFlowWidget />;
+    case 'auto-chat':        return <HudAutoChatPanel />;
     case 'notifications':    return <NotificationsWidget />;
   }
 }

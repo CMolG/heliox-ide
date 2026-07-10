@@ -434,8 +434,8 @@ describe('NodeTree — Locate (context menu) parity with row-click', () => {
 describe('SideBar — Components header count', () => {
   it('adds the flow count on top of the window count (not just windows.length)', () => {
     seedFlowFixture(); // 1 frame + 2 steps + 1 mental card
-    useDesktopStore.getState().addWindow('chat');
-    useDesktopStore.getState().addWindow('chat');
+    useDesktopStore.getState().addWindow('file-explorer');
+    useDesktopStore.getState().addWindow('file-explorer');
     render(<SideBar />);
 
     // 2 windows + 1 flow = 3 — proves frames are added on top of windows.length,

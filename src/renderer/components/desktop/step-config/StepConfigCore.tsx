@@ -20,7 +20,7 @@
  * Extracted verbatim from StepInfoModal.tsx (Phase 6 refactor) so a future
  * right-side inspector can host this surface without the modal chrome.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { LucideIcon } from '../LucideIcon';
 import {
   domainMismatchHint,
@@ -32,30 +32,49 @@ import {
 } from '../attachable-helpers';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
+// Recycled verbatim from the retired chat surface (F0: chats→steps). The step's
+// Instructions box is now the "chat-like" composer, so it reuses the exact
+// @file autocomplete + attached-file chips the chat input had. Imported in
+// place — NOT moved — so Ola C's dead-code sweep keeps this file (H2 consumer).
+import { FileContextPanel } from '../../chat/FileContextBuilder';
+import { useFluxorStore } from '../../../store';
 import type { StepNodeData } from '@/types/desktop';
 import type { AgenticExecutionStatus } from '@/types/harness';
 import type { MarketRole, MarketMod } from '@/types/market';
 
 // ─── Role / Mod rows (assigned atoms, with remove) ────────────────
 
+// The role "helm" row (Single Persona). The role's descriptive content is a
+// single-select-listbox `option` (see the roles list's `role="listbox"` below)
+// marked `aria-selected` — the assigned persona is the current selection, and
+// there is at most one. The remove control is a SIBLING of the option, never a
+// child of it (ARIA APG: an option must not contain focusable descendants).
 function RoleRow({ role, onRemove }: { role: MarketRole; onRemove: () => void }) {
   const accent = role.color?.startsWith('#') ? role.color : role.color ? `#${role.color}` : '#E87040';
   const label = kebabToTitle(role.name);
   return (
     <div className="step-config-atom-row" style={{ ['--atom-accent' as string]: accent }}>
-      <div className="step-config-atom-icon" aria-hidden="true">
-        <LucideIcon name="User" size={12} />
-      </div>
-      <div className="step-config-atom-body">
-        <div className="step-config-atom-name">{label}</div>
-        {role.description && <p className="step-config-atom-desc">{role.description}</p>}
-        {role.tags && role.tags.length > 0 && (
-          <div className="step-config-atom-tags">
-            {role.tags.map((tag) => (
-              <span key={tag} className="step-config-atom-tag">{tag}</span>
-            ))}
-          </div>
-        )}
+      <div
+        role="option"
+        aria-selected="true"
+        tabIndex={0}
+        data-testid={`step-info-role-helm-${role.name}`}
+        style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1, minWidth: 0 }}
+      >
+        <div className="step-config-atom-icon" aria-hidden="true">
+          <LucideIcon name="User" size={12} />
+        </div>
+        <div className="step-config-atom-body">
+          <div className="step-config-atom-name">{label}</div>
+          {role.description && <p className="step-config-atom-desc">{role.description}</p>}
+          {role.tags && role.tags.length > 0 && (
+            <div className="step-config-atom-tags">
+              {role.tags.map((tag) => (
+                <span key={tag} className="step-config-atom-tag">{tag}</span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <button
         type="button"
@@ -198,6 +217,17 @@ export function StepConfigCore({ stepId, stepData, status }: StepConfigCoreProps
   const removeRoleFromStep = useDesktopStore((s) => s.removeRoleFromStep);
   const addModToStep = useDesktopStore((s) => s.addModToStep);
   const removeModFromStep = useDesktopStore((s) => s.removeModFromStep);
+  // Mono-step gesture hookup (W2 → H2): the double-click-empty-canvas gesture
+  // (and the "New Step" context-menu action) create a step, open the Inspector,
+  // and set `pendingStepFocusId` to that step. This surface owns the step's
+  // text input, so it is the consumer of that signal — see the focus effect
+  // below. (desktop-store.ts:513 documents the full contract.)
+  const pendingStepFocusId = useDesktopStore((s) => s.pendingStepFocusId);
+  const setPendingStepFocusId = useDesktopStore((s) => s.setPendingStepFocusId);
+  // Workspace file list backing the @file autocomplete (recycled from the chat
+  // composer). Empty until a project is opened — the autocomplete simply shows
+  // nothing then, never errors.
+  const projectFiles = useFluxorStore((s) => s.projectFiles);
   const runStep = useHarnessStore((s) => s.runStep);
   const runFromStep = useHarnessStore((s) => s.runFromStep);
 
@@ -213,11 +243,68 @@ export function StepConfigCore({ stepId, stepData, status }: StepConfigCoreProps
   const [modError, setModError] = useState<string | null>(null);
   const [modDomainHint, setModDomainHint] = useState<string | null>(null);
 
+  // @file autocomplete state (recycled from the chat composer's own local
+  // state; the presentational dropdown/chips live in FileContextPanel).
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const [showAtAutocomplete, setShowAtAutocomplete] = useState(false);
+  const [atQuery, setAtQuery] = useState('');
+  const [atSelectedIndex, setAtSelectedIndex] = useState(0);
+  const [atCursorIndex, setAtCursorIndex] = useState(0);
+
   const isBusy = status === 'running' || status === 'compiling';
 
+  // Mono-step gesture hookup (contract in desktop-store.ts:513): when the
+  // gesture names THIS step, grab DOM focus into the prompt textarea and clear
+  // the one-shot signal so it fires exactly once. StepInspector remounts this
+  // subtree via `key={stepId}` on selection change, so this runs on mount for a
+  // freshly-gestured step — no stale-focus race across steps.
+  useEffect(() => {
+    if (pendingStepFocusId === stepId) {
+      promptRef.current?.focus();
+      setPendingStepFocusId(null);
+    }
+  }, [pendingStepFocusId, stepId, setPendingStepFocusId]);
+
+  // `setInput` for FileContextPanel: it inserts/removes `@file` tokens in the
+  // prompt text (both the value and the updater forms). The prompt is the one
+  // step field the harness compiler actually executes (normalizePrompt), so
+  // @file mentions ride to execution inside it — the same mechanism the chat
+  // used to deliver file context. FileContextPanel is a controlled view over
+  // `promptValue`, so the updater's `prev` is that same value — no stale-closure
+  // risk (each select/chip-remove is its own settled render).
+  const setPromptInput = useCallback((value: string | ((prev: string) => string)) => {
+    const next = typeof value === 'function' ? value(promptValue) : value;
+    updateStepData(stepId, { prompt: next });
+  }, [stepId, updateStepData, promptValue]);
+
+  // Extends the plain prompt write with the chat composer's @-mention
+  // detection: when the caret sits right after an `@token`, open the file
+  // autocomplete anchored at that token.
   const handlePromptChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    updateStepData(stepId, { prompt: e.target.value });
+    const val = e.target.value;
+    updateStepData(stepId, { prompt: val });
+    const cursor = e.target.selectionStart ?? val.length;
+    const atMatch = val.slice(0, cursor).match(/@([\w./\-[\]()]*)$/);
+    if (atMatch) {
+      setShowAtAutocomplete(true);
+      setAtQuery(atMatch[1]);
+      setAtCursorIndex(cursor - atMatch[0].length);
+      setAtSelectedIndex(0);
+    } else {
+      setShowAtAutocomplete(false);
+    }
   }, [stepId, updateStepData]);
+
+  // Arrow/Escape navigation for the open autocomplete (mirrors the chat
+  // composer). The suggestions are also plain <button>s, so they stay
+  // Tab/Enter reachable without this handler (keyboard access never depends on
+  // it) — this only adds the faster in-textarea arrow navigation.
+  const handlePromptKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!showAtAutocomplete) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setAtSelectedIndex((i) => i + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setAtSelectedIndex((i) => Math.max(0, i - 1)); }
+    else if (e.key === 'Escape') { e.preventDefault(); setShowAtAutocomplete(false); }
+  }, [showAtAutocomplete]);
 
   // Model override: an explicit "provider/model" string beats this flow's
   // Model policy AND the router's pick, for this step only (AgenticStep.model,
@@ -273,27 +360,52 @@ export function StepConfigCore({ stepId, stepData, status }: StepConfigCoreProps
 
   return (
     <>
-      {/* ── Instructions ── */}
+      {/* ── Instructions (chat-like composer: text → prompt, @file → context) ── */}
       <h3 className="step-config-section-label" id={promptHeadingId}>Instructions</h3>
+      {/* Recycled chat composer: the @file autocomplete dropdown + attached-file
+          chips. Chips are a live view of the `@token`s in the prompt, so
+          removing a chip edits the prompt itself. */}
+      <FileContextPanel
+        input={promptValue}
+        setInput={setPromptInput}
+        projectFiles={projectFiles}
+        inputRef={promptRef}
+        showAtAutocomplete={showAtAutocomplete}
+        setShowAtAutocomplete={setShowAtAutocomplete}
+        atQuery={atQuery}
+        atSelectedIndex={atSelectedIndex}
+        setAtSelectedIndex={setAtSelectedIndex}
+        atCursorIndex={atCursorIndex}
+      />
       <textarea
+        ref={promptRef}
         id={`step-config-prompt-${stepId}`}
         className="step-config-textarea"
         data-testid="step-info-prompt"
         value={promptValue}
         onChange={handlePromptChange}
-        placeholder="Describe what this step should do…"
+        onKeyDown={handlePromptKeyDown}
+        placeholder="Describe what this step should do… Type @ to attach a file."
         aria-labelledby={promptHeadingId}
         aria-describedby={promptHintId}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={showAtAutocomplete}
+        aria-controls={showAtAutocomplete ? 'file-autocomplete-listbox' : undefined}
+        aria-activedescendant={showAtAutocomplete ? `file-option-${atSelectedIndex}` : undefined}
         rows={6}
       />
       <p id={promptHintId} className="step-config-hint">
-        This text is what the agent executes for this step.
+        This text is what the agent executes for this step. Type <kbd>@</kbd> to attach a workspace file as context.
       </p>
 
-      {/* ── Roles ── */}
+      {/* ── Role (Single Persona helm) ── */}
       <h3 className="step-config-section-label" id={rolesHeadingId}>Role</h3>
       {roles.length > 0 ? (
-        <div className="step-config-atom-list" role="group" aria-labelledby={rolesHeadingId}>
+        // Single-select listbox: the assigned persona is the sole aria-selected
+        // option (see RoleRow). A different persona is picked below; attaching
+        // one replaces the current (addRoleToStep's client-side affordance).
+        <div className="step-config-atom-list" role="listbox" aria-labelledby={rolesHeadingId}>
           {roles.map((role) => (
             <RoleRow key={role.name} role={role} onRemove={() => removeRoleFromStep(stepId, role.name)} />
           ))}
@@ -344,6 +456,26 @@ export function StepConfigCore({ stepId, stepData, status }: StepConfigCoreProps
           <span>{modDomainHint}</span>
         </p>
       )}
+
+      {/* Execution-authority doctrine (F0 spec): the pickers above run fast
+          client-side affordances (one role per step; incompatible mods
+          rejected), but the FINAL authority is `validateStepAtoms` at run time
+          (main process). Surfacing that here is the contract — the UI reuses
+          the affordances AND makes the run-time veto visible, rather than
+          silently implying the client checks are the whole story. The veto
+          itself appears in Run evidence (StepRunEvidence, owned elsewhere). */}
+      <p
+        className="step-config-hint"
+        role="note"
+        data-testid="step-config-execution-authority"
+        style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}
+      >
+        <LucideIcon name="ShieldCheck" size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+        <span>
+          One persona per step, and mod compatibility, are finally verified when the step runs —
+          any conflict is vetoed at run time and shown in Run evidence.
+        </span>
+      </p>
 
       {/* ── Execution ── */}
       <h3 className="step-config-section-label">Execution</h3>

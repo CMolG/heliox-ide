@@ -34,7 +34,6 @@ const TYPE_META: Record<AttachableType, { color: string; icon: string; label: st
 // row's own win.type rather than a single hardcoded word (see File:/Grid:
 // precedent below for file-viewer/grid rows).
 const WINDOW_KIND_LABEL: Record<string, string> = {
-  chat: 'Chat',
   backlog: 'Backlog',
   plugin: 'Plugin',
   'prompt-dev-zone': 'Prompt Dev Zone',
@@ -337,7 +336,13 @@ export function NodeTree() {
     return b.zIndex - a.zIndex;
   });
 
-  const chatWindows = sortedWindows.filter(w => w.type === 'chat');
+  // 'Chats' group retired (chats→steps re-architecture, F0 decision 2,
+  // 2026-07-10) — chat is no longer a window surface at all, and F0
+  // explicitly does not preserve it in any reduced form ("no se conserva
+  // reducido"), so this section is removed outright rather than kept as an
+  // always-empty group (renderGroup already no-ops on an empty list, but a
+  // group that can structurally never have content again is dead weight,
+  // not a harmless default).
   const fileWindows = sortedWindows.filter(w => w.type === 'file-explorer');
   const fileViewerWindows = sortedWindows.filter(w => w.type === 'file-viewer');
   const pluginWindows = sortedWindows.filter(w => w.type === 'plugin');
@@ -582,7 +587,6 @@ export function NodeTree() {
         </div>
       ) : (
         <>
-          {renderGroup('Chats', chatWindows)}
           {/* Files group: file-explorers + file-viewer child items */}
           {(fileWindows.length > 0 || fileViewerWindows.length > 0) && (
             <div>

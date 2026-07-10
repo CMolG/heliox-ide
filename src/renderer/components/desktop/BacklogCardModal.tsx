@@ -21,8 +21,14 @@ import React, { useEffect, useCallback } from 'react';
 import Markdown from 'react-markdown';
 import { useDesktopStore } from '../../store/desktop-store';
 import { useFluxorStore } from '../../store';
+import { useHarnessStore } from '../../store/harness-store';
+import { calculateSafeInsertionPoint } from '../../store/spatial-engine';
 import { LucideIcon } from './LucideIcon';
-import type { ChatMessage } from '@/types';
+
+// Mirrors DEFAULT_STEP_WIDTH/HEIGHT in desktop-store.ts — see
+// BacklogKanbanWidget.tsx's identical constant for the full rationale.
+const STEP_WIDTH = 300;
+const STEP_HEIGHT = 190;
 
 const PRIORITY_LABELS: Record<string, { label: string; cssClass: string }> = {
   critical: { label: 'Critical', cssClass: 'high' },
@@ -73,42 +79,21 @@ export function BacklogCardModal() {
       wrapperPrompt,
     ].join('\n');
 
-    const store = useFluxorStore.getState();
+    // chats→steps re-architecture (F0 decision 2, 2026-07-10, Task L) — same
+    // re-wiring as BacklogKanbanWidget.executeCard (the canonical version of
+    // this pattern): materialize a step carrying the flow's prompt + task
+    // content, then run it through the harness-engine instead of opening a
+    // chat window via the old agent-manager `runAgent` IPC.
     const dStore = useDesktopStore.getState();
-
-    const sessionId = store.addSession();
-    const windowId = dStore.addWindow('chat', {
+    const position = calculateSafeInsertionPoint(dStore.mentalNodes, STEP_WIDTH, STEP_HEIGHT);
+    const stepId = dStore.addStepNode({
+      position,
       title: `${modalCard.targetAgent} → ${modalCard.title}`,
-      iconName: 'Zap',
-      sessionId,
+      prompt: instruction,
     });
-    dStore.connectFlow(windowId, modalCard.targetAgent);
-
-    const model = flowMeta.betterOn || 'opencode/claude-sonnet-4-6';
-    store.setSessionModel(sessionId, model);
-
-    const createdSession = useFluxorStore.getState().sessions.find(s => s.id === sessionId);
-    if (window.fluxorAPI && projectPath && createdSession) {
-      window.fluxorAPI.contextMapUpsertSessionNode(projectPath, {
-        sessionId,
-        label: `Session #${createdSession.number}: ${modalCard.title}`,
-        status: 'running',
-        roleId: createdSession.roleId,
-      }).catch(() => {});
-    }
-
-    const effort = (flowMeta.recommendedComplexity || 'medium') as 'low' | 'medium' | 'high';
-
-    const userMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: wrapperPrompt,
-      timestamp: Date.now(),
-    };
-    store.addSessionMessage(sessionId, userMsg);
-    store.updateSessionStatus(sessionId, 'running');
-    store.updateSessionDescription(sessionId, modalCard.title);
-    dStore.updateWindowTitle(windowId, modalCard.title);
+    if (flowMeta.betterOn) dStore.updateStepData(stepId, { model: flowMeta.betterOn });
+    dStore.setSelectedMentalNodeIds([stepId]);
+    dStore.updateSettings({ showInspector: true });
 
     // Update card status
     const updatedCards = dStore.backlogCards.map(c =>
@@ -118,22 +103,10 @@ export function BacklogCardModal() {
 
     closeModal();
 
-    try {
-      await window.fluxorAPI.runAgent({
-        agentId: sessionId,
-        instruction,
-        flows: store.flows,
-        cwd: projectPath,
-        contextProjectPath: projectPath,
-        model,
-        effort,
-        aiAdapter: store.appSettings.aiAdapter,
-        autoCommit: store.appSettings.autoCommit,
-        runE2E: store.appSettings.runE2E,
-      });
-    } catch {
-      store.updateSessionStatus(sessionId, 'error');
-    }
+    // Runs through the harness-engine (per-step run) — runStep never
+    // throws; failures surface via harness-store's executionStatus, already
+    // bridged to a toast in App.tsx.
+    await useHarnessStore.getState().runStep(stepId);
   }, [modalCard, projectPath, marketInventory, closeModal]);
 
   if (!modalCard) return null;

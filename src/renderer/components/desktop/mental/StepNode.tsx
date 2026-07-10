@@ -30,6 +30,35 @@ function roleColor(role: MarketRole): string {
   return role.color?.startsWith('#') ? role.color : role.color ? `#${role.color}` : '#E87040';
 }
 
+// The role "helm" (Single Persona): a step carries at most one role, so — unlike
+// the stackable mod chips below — the assigned role earns a singular, crown-like
+// treatment. Inline-styled (index.css is out of this task's territory) drawing
+// on the attachment visual language (TopRoleAttachment's accent-role crown): a
+// full accent border with a thicker top edge reads as the "helm." The role NAME
+// is always rendered alongside the accent, so the persona is never conveyed by
+// color alone (a11y 1.4.1). `${accent}` values are already normalized to full
+// `#rrggbb` by `roleColor`, so the hex-alpha suffixes below are safe.
+function helmOptionStyle(accent: string): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
+    maxWidth: 150,
+    height: 24,
+    padding: '0 9px',
+    borderRadius: 7,
+    border: `1px solid ${accent}`,
+    borderTopWidth: 2,
+    background: `${accent}1f`,
+    color: '#f4f4f5',
+    fontFamily: 'var(--font-manrope)',
+    fontSize: 10,
+    lineHeight: 1,
+    cursor: 'default',
+  };
+}
+
 // Non-color status glyph shown before the inline Run button — status must
 // never be color-only (a11y). "running" is special-cased to the branded
 // FluxorSpinner (mirrors FrameNode's header Run control); "idle" renders
@@ -387,26 +416,72 @@ export const StepNode = React.memo(function StepNode({ id, data }: NodeProps) {
                 <LucideIcon name="Plus" size={12} />
               </button>
 
-              {roles.length > 0 && (
-                <section className="step-node-section" aria-label="Assigned roles">
-                  <span className="step-node-section-label">Roles</span>
-                  <div className="step-node-chip-list">
-                    {roles.map((role) => (
-                      <StepChip
-                        key={role.name}
-                        label={kebabToTitle(role.name)}
-                        accent={roleColor(role)}
-                        icon="User"
-                        onRemove={() => removeRoleFromStep(id, role.name)}
-                      />
-                    ))}
-                  </div>
-                </section>
-              )}
+              {roles[0] && (() => {
+                const role = roles[0];
+                const roleLabel = kebabToTitle(role.name);
+                const accent = roleColor(role);
+                return (
+                  // Single Persona: the section label is deliberately singular
+                  // ("Persona", vs the plural "Mods" below) so the one-per-step
+                  // rule is conveyed in text, not just by the singular helm. The
+                  // helm is a single-select listbox reflecting the current
+                  // persona: the assigned role is the sole `aria-selected` option
+                  // (roving tabindex — one option, so it holds tabIndex 0). A
+                  // different persona is chosen from the quick-add popover / Step
+                  // Config picker (which reuse addRoleToStep's replace-in-place
+                  // affordance); the helm mirrors that selection. Final Single
+                  // Persona authority is validateStepAtoms at run time — its veto
+                  // surfaces in Run evidence (StepConfigCore documents this).
+                  <section className="step-node-section" aria-label="Step persona">
+                    <span
+                      className="step-node-section-label"
+                      title="One persona per step (Single Persona)"
+                    >
+                      Persona
+                    </span>
+                    <div className="step-node-chip-list">
+                      <div role="listbox" aria-label="Assigned persona — one per step" style={{ display: 'flex', minWidth: 0 }}>
+                        <div
+                          role="option"
+                          aria-selected="true"
+                          tabIndex={0}
+                          data-testid={`step-node-helm-${id}`}
+                          data-role-name={role.name}
+                          data-step-no-drag="true"
+                          style={helmOptionStyle(accent)}
+                          title={`Persona: ${roleLabel}`}
+                          onPointerDown={(event) => event.stopPropagation()}
+                        >
+                          <LucideIcon name="User" size={12} />
+                          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {roleLabel}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="step-node-chip-remove nodrag"
+                        aria-label={`Remove persona ${roleLabel}`}
+                        data-testid={`step-node-helm-remove-${id}`}
+                        data-step-no-drag="true"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeRoleFromStep(id, role.name);
+                        }}
+                      >
+                        <LucideIcon name="X" size={10} />
+                      </button>
+                    </div>
+                  </section>
+                );
+              })()}
 
               {mods.length > 0 && (
                 <section className="step-node-section" aria-label="Assigned mods">
-                  <span className="step-node-section-label">Mods</span>
+                  <span className="step-node-section-label">
+                    {`Mods · ${mods.length}`}
+                  </span>
                   <div className="step-node-chip-list">
                     {mods.map((mod: MarketMod) => (
                       <StepChip

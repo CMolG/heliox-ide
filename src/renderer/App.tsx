@@ -274,10 +274,26 @@ export function App() {
       return;
     }
 
-    // Cmd+N — new chat window (show project picker)
+    // Cmd+N — new step (chats→steps re-architecture, F0 decision 2,
+    // 2026-07-10). Used to show the project picker for a new chat window;
+    // 'chat' is retired, so this now performs the canonical mono-step
+    // gesture instead (same primitive as double-clicking empty canvas in
+    // SeamlessCanvas.tsx's handleDoubleClick, and the canvas context menu's
+    // "New Step" action) — anchored at the viewport center since a keyboard
+    // shortcut has no click position to anchor to (same center-of-viewport
+    // calc Dock.tsx's 'new-step' dock action uses).
     if (isMeta && e.key === 'n' && !isInput) {
       e.preventDefault();
-      useDesktopStore.getState().setShowProjectPicker(true, null);
+      const dState = useDesktopStore.getState();
+      const { canvasPan: pan, canvasZoom: zoom } = dState;
+      const vpW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+      const vpH = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const cx = (vpW / 2 - pan.x) / zoom;
+      const cy = (vpH / 2 - pan.y) / zoom;
+      const stepId = dState.addStepNode({ position: { x: cx - 150, y: cy - 95 } });
+      dState.setSelectedMentalNodeIds([stepId]);
+      dState.updateSettings({ showInspector: true });
+      dState.setPendingStepFocusId(stepId);
       return;
     }
 

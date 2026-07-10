@@ -1,16 +1,28 @@
 /**
- * StepRunEvidence.tsx — Execution evidence surface (routing + connections)
+ * StepRunEvidence.tsx — Execution evidence surface (transcript + routing +
+ * connections)
  *
  * Responsibility:
- * - Renders the read-only "Why this model" routing-evidence card (WS2 smart
- *   routing) and the Connections/Loop cards for a step.
+ * - Renders the run TRANSCRIPT of a launched step (structured Markdown +
+ *   tool-call cards + file-change chips + collapsible reasoning, via
+ *   `StepTranscript`), the read-only "Why this model" routing-evidence card
+ *   (WS2 smart routing), and the Connections/Loop cards for a step.
  *
  * Boundaries:
- * - Owns: presentation of routing evidence (`harness-store.stepModels`) and
- *   of the connection/loop summary handed down by the caller.
+ * - Owns: presentation of the step transcript (`harness-store.stepThinkings`),
+ *   routing evidence (`harness-store.stepModels`), and of the connection/loop
+ *   summary handed down by the caller.
  * - Does NOT own: any step-state mutation — this surface is purely
  *   read-only (see `StepConfigCore.tsx` for the editable
- *   Instructions/Role/Mod/Execution surface it's rendered alongside).
+ *   Instructions/Role/Mod/Execution surface it's rendered alongside); nor the
+ *   harness event pipeline (main process, frozen by F0).
+ *
+ * Sole consumer (Task T contract): the launched step surface — this component
+ * renders inside `StepInfoModal` / the Inspector's step-config column, both
+ * handed the `{ stepId, stepData }` pair. The auto-chat HUD panel
+ * (`HudAutoChatPanel`) is a one-shot intent box and deliberately does NOT
+ * consume this transcript (F0 spec §decision 2 + Task W1) — there is no props
+ * contract exposed for it.
  *
  * Extracted verbatim from StepInfoModal.tsx (Phase 6 refactor) so a future
  * right-side inspector can host this surface without the modal chrome.
@@ -18,11 +30,13 @@
  * (both surfaces are handed the same `{ stepId, stepData }` pair by their
  * composing parent) even though this component doesn't read it today.
  */
-import React from 'react';
+import React, { useCallback } from 'react';
 import { LucideIcon } from '../LucideIcon';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
 import { findOwningFrame } from '../../../lib/harness-compiler';
+import { StepTranscript } from './StepTranscript';
+import { FileChangeChips } from './FileChangeChips';
 import type { StepNodeData } from '@/types/desktop';
 import type { AgenticExecutionStatus } from '@/types/harness';
 import type { RoutedModelEvidence } from '@/types/ipc-events';
@@ -143,6 +157,33 @@ export function StepRunEvidence({ stepId, connections, status }: StepRunEvidence
   const stepModels = useHarnessStore((s) => s.stepModels) ?? {};
   const stepModelInfo = stepModels[stepId];
 
+  // Transcript timeline — the flattened reasoning/text/tool deltas the harness
+  // streamed for THIS step. Same `?? {}` defensive-default contract as the two
+  // selectors above (pre-existing StepInfoModal fixtures mock harness-store
+  // without `stepThinkings`): an unmocked store yields `[]`, so the Transcript
+  // section below is simply absent — never a crash — until a run streams deltas.
+  const stepThinkings = useHarnessStore((s) => s.stepThinkings) ?? {};
+  const transcript = stepThinkings[stepId] ?? [];
+  const isRunning = status === 'running';
+
+  // File-change chips → diff viewer. GRACEFUL DEGRADATION (Task T ruling,
+  // 2026-07-10): the harness step-run pipeline emits NO file-change events
+  // today, so there is no per-step "changed files" source — this stays `[]`
+  // and `FileChangeChips` renders nothing (never a fabricated path). Documented
+  // FOLLOW-UP: a `FileChanged` harness event + a `stepChangedFiles` slice
+  // lights this up with only this one line changing. The diff-viewer opener is
+  // wired now (ported from AgenticChatApp's `addWindow('diff-viewer', …)`) so
+  // the seam is ready; it's dormant until `changedFiles` is non-empty.
+  const changedFiles: string[] = [];
+  const addWindow = useDesktopStore((s) => s.addWindow);
+  const handleOpenDiff = useCallback(
+    (path: string) => {
+      const title = path.split(/[\\/]/).pop() || path;
+      addWindow('diff-viewer', { title: `Diff · ${title}`, size: { width: 720, height: 540 } });
+    },
+    [addWindow],
+  );
+
   // Rosetta context-mode badge: derived from this step's OWNING FRAME (canvas
   // data), not from `activeFlow` — a step-config surface must show the truth
   // before any compile/run has happened, and `findOwningFrame` is the exact
@@ -156,6 +197,29 @@ export function StepRunEvidence({ stepId, connections, status }: StepRunEvidence
 
   return (
     <>
+      {/* ── Transcript (evidence of a launched step's actual run) ──
+          Absorbs the transcript tech of the retired agentic-chat overhaul
+          (#4), retargeted to per-step evidence: real Markdown, tool-call
+          cards, collapsible reasoning, scroll pinning. Absent until a run has
+          streamed at least one delta for this step (or it's mid-run). ── */}
+      {(transcript.length > 0 || isRunning) && (
+        <div data-testid="step-info-transcript-section">
+          <h3 className="step-config-section-label" style={{ marginTop: 4 }}>
+            Transcript
+          </h3>
+          <StepTranscript entries={transcript} running={isRunning} />
+        </div>
+      )}
+
+      {/* ── Files changed → diff viewer (dormant until the harness pipeline
+          streams file-change events — see `changedFiles` note above) ── */}
+      {changedFiles.length > 0 && (
+        <div data-testid="step-info-files-section">
+          <h3 className="step-config-section-label">Files changed</h3>
+          <FileChangeChips files={changedFiles} onOpenDiff={handleOpenDiff} />
+        </div>
+      )}
+
       {/* ── Rosetta context mode (feedback-only; absent in blind — no clutter
           for the default/today's-behavior case) ── */}
       {contextMode === 'feedback' && (

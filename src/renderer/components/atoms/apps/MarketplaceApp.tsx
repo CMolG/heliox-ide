@@ -18,10 +18,12 @@
 // src/renderer/components/atoms/apps/MarketplaceApp.tsx — Figma-style grid marketplace
 import React, { useMemo } from 'react';
 import { useDesktopStore } from '../../../store/desktop-store';
+import { calculateSafeInsertionPoint } from '../../../store/spatial-engine';
 import { LucideIcon } from '../../desktop/LucideIcon';
 import { PluginCard, CATEGORY_BADGES } from './PluginCard';
 import type { Plugin, PluginCategory } from '../../../../types/desktop';
-import type { MarketInventory, MarketFlow, MarketRole, MarketMod, MarketStep } from '../../../../types/market';
+import type { MarketInventory, MarketFlow, MarketFlowStep, MarketRole, MarketMod, MarketStep } from '../../../../types/market';
+import type { PipelineAssembly, PipelineAssemblyStep } from '../../../../types/meta-agent';
 
 const CATEGORY_TABS: Array<{ key: PluginCategory | 'all'; label: string }> = [
   { key: 'all', label: 'All' },
@@ -31,13 +33,18 @@ const CATEGORY_TABS: Array<{ key: PluginCategory | 'all'; label: string }> = [
   { key: 'steps', label: 'Steps' },
 ];
 
-// One short, factual sentence describing what "Deploy" actually does for each
-// category — this IS part of "explaining what the item does" (spec item 2),
-// since deploy has different real-world outcomes (attachable dock vs. a window).
+// One short, factual sentence describing what the deploy action actually does
+// for each category — this IS part of "explaining what the item does" (spec
+// item 2), since deploy has different real-world outcomes (attachable dock,
+// a window, or — for flows — real steps copied onto the board).
+//
+// roles/modifiers still say "a step" (not "a chat window"): the chats→steps
+// re-architecture (F0 decision 2, 2026-07-10) retired chat windows entirely —
+// roles/mods now attach to a step's helm instead.
 const DEPLOY_HINTS: Record<PluginCategory, string> = {
-  flows: 'Adds this Flow to your attachable dock, ready to drag onto the canvas.',
-  roles: 'Adds this Role to your attachable dock — drag it onto a chat window to assign it.',
-  modifiers: 'Adds this Mod to your attachable dock — drag it onto a chat window to stack it.',
+  flows: 'Adds this Flow to the board as a ready-to-run pipeline of real, editable steps.',
+  roles: 'Adds this Role to your attachable dock — drag it onto a step to assign it.',
+  modifiers: 'Adds this Mod to your attachable dock — drag it onto a step to stack it.',
   steps: 'Adds this Step to your attachable dock, ready to drag onto a pipeline.',
   tools: 'Opens this tool in its own window.',
 };
@@ -83,6 +90,96 @@ function findInventoryMatch(plugin: Plugin, inventory: MarketInventory | null): 
       // gracefully to the plugin's own fields (spec item 2).
       return null;
   }
+}
+
+// ─── Flow → PipelineAssembly ("Add to board") ──────────────────────
+//
+// Market flows are prebuilt content, not a Meta-Agent intent — this builds a
+// PipelineAssembly directly from a flow's authored `steps[]` and hands it to
+// the SAME materializer the auto-chat panel uses (`insertPipelineAssembly`,
+// desktop-store.ts), so a flow always lands on the board as real,
+// independently editable steps (F0 decision 4, 2026-07-10). `assemblePipeline`
+// (the LLM Meta-Agent) is deliberately NOT involved: the steps are already
+// known, authored content — re-generating them via an LLM call would be
+// slower, non-deterministic, and would defeat the point of a "prebuilt"
+// pipeline. This is the ONLY other caller of `insertPipelineAssembly`
+// besides HudAutoChatPanel — "seam de materialización único" (F0) holds:
+// both callers build a `PipelineAssembly` and hand it to the same store
+// action; neither reimplements node/edge construction.
+
+const FLOW_FALLBACK_STEP_ID = 'run-flow';
+
+/** Default predecessor for a flow step with no explicit `prevStepIds`: a plain linear chain in array order. */
+function defaultFlowStepPrevIds(steps: MarketFlowStep[], index: number): string[] {
+  const previous = steps[index - 1];
+  return index === 0 || !previous ? [] : [previous.id];
+}
+
+function toPipelineAssemblyStep(step: MarketFlowStep, index: number, steps: MarketFlowStep[]): PipelineAssemblyStep {
+  return {
+    id: step.id,
+    prompt: step.prompt,
+    roleId: step.roleId ?? '',
+    modIds: step.modIds ?? [],
+    prevStepIds: step.prevStepIds ?? defaultFlowStepPrevIds(steps, index),
+    ...(step.loopBackTo ? { loopBackTo: step.loopBackTo } : {}),
+  };
+}
+
+/**
+ * Converts a market flow into a `PipelineAssembly`. A flow with no authored
+ * `steps[]` (e.g. a single-shot conversational flow like `brainstorm-cards`,
+ * whose real value is its `.md` system prompt rather than a code-mutation
+ * pipeline) falls back to one mono-step carrying `description` as its
+ * prompt — the same fallback shape L's backlog-card launchers use for a flow
+ * with no structured steps, so a flow always materializes into SOMETHING
+ * runnable rather than silently doing nothing.
+ */
+export function buildFlowAssembly(flow: MarketFlow): PipelineAssembly {
+  const frameTitle = toTitleCase(flow.name);
+  const steps = flow.steps ?? [];
+
+  if (steps.length === 0) {
+    return {
+      frameTitle,
+      description: flow.description,
+      missingCapabilitiesRequested: [],
+      steps: [{
+        id: FLOW_FALLBACK_STEP_ID,
+        prompt: flow.description,
+        roleId: '',
+        modIds: [],
+        prevStepIds: [],
+      }],
+    };
+  }
+
+  return {
+    frameTitle,
+    description: flow.description,
+    missingCapabilitiesRequested: [],
+    steps: steps.map((step, index) => toPipelineAssemblyStep(step, index, steps)),
+  };
+}
+
+// Frame sizing constants mirror HudAutoChatPanel's `estimateFrameSize`
+// (the auto-chat panel, F0's other `insertPipelineAssembly` caller) so a
+// pipeline looks the same size regardless of which seam produced it.
+// Duplicated rather than imported: the two components render in different
+// waves of the same task and neither exports these as shared constants.
+const FLOW_FRAME_HORIZONTAL_PADDING = 112;
+const FLOW_FRAME_VERTICAL_PADDING = 210;
+const FLOW_STEP_HORIZONTAL_GAP = 250;
+const FLOW_STEP_WIDTH = 300;
+const FLOW_MIN_FRAME_WIDTH = 860;
+const FLOW_MIN_FRAME_HEIGHT = 420;
+
+function estimateFlowFrameSize(assembly: PipelineAssembly): { width: number; height: number } {
+  const stepCount = Math.max(1, assembly.steps.length);
+  return {
+    width: Math.max(FLOW_MIN_FRAME_WIDTH, FLOW_FRAME_HORIZONTAL_PADDING + FLOW_STEP_WIDTH + (stepCount - 1) * FLOW_STEP_HORIZONTAL_GAP + 96),
+    height: Math.max(FLOW_MIN_FRAME_HEIGHT, FLOW_FRAME_VERTICAL_PADDING + (stepCount > 1 ? 34 : 0)),
+  };
 }
 
 // ─── Small presentational helpers ──────────────────────────────────
@@ -203,7 +300,10 @@ function ProductSheet({ plugin, inventory, onBack, onDeploy, backButtonRef, addB
         </dl>
       )}
 
-      {/* Deploy — the ONLY control that deploys */}
+      {/* Deploy — the ONLY control that deploys. Flows materialize straight
+          onto the board as real steps (F0 decision 4), so its label reflects
+          that outcome rather than the generic "Deploy" the other categories
+          use (attachable dock / window). */}
       <div className="mt-auto pt-4 border-t border-black/[0.06] flex flex-col gap-2">
         <p className="text-[11px] text-[#555] m-0">{DEPLOY_HINTS[plugin.category]}</p>
         <button
@@ -213,7 +313,7 @@ function ProductSheet({ plugin, inventory, onBack, onDeploy, backButtonRef, addB
           onClick={onDeploy}
           className="self-end min-h-11 rounded-lg border-none bg-[#1a1a2e] px-5 text-sm font-semibold text-white cursor-pointer hover:bg-[#2a2a45]"
         >
-          Deploy
+          {plugin.category === 'flows' ? 'Add to board' : 'Deploy'}
         </button>
       </div>
     </div>
@@ -230,6 +330,10 @@ export function MarketplaceApp() {
   const setMarketplaceFilter = useDesktopStore(s => s.setMarketplaceFilter);
   const marketInventory = useDesktopStore(s => s.marketInventory);
   const deployPlugin = useDesktopStore(s => s.deployPlugin);
+  const mentalNodes = useDesktopStore(s => s.mentalNodes);
+  const insertPipelineAssembly = useDesktopStore(s => s.insertPipelineAssembly);
+  const setCanvasPan = useDesktopStore(s => s.setCanvasPan);
+  const setCanvasZoom = useDesktopStore(s => s.setCanvasZoom);
   const [search, setSearch] = React.useState('');
   const [selected, setSelected] = React.useState<Plugin | null>(null);
 
@@ -264,9 +368,40 @@ export function MarketplaceApp() {
 
   const handleDeploy = React.useCallback(() => {
     if (!selected) return;
+
+    // Flows bypass deployPlugin entirely (F0 decision 4, 2026-07-10): a flow
+    // is no longer an attachable spawned onto the canvas — it's a prebuilt
+    // pipeline copied straight onto the board as real, editable steps via
+    // the canonical assembly seam (insertPipelineAssembly), same as the
+    // auto-chat panel.
+    if (selected.category === 'flows') {
+      const match = findInventoryMatch(selected, marketInventory);
+      if (match?.kind === 'flows') {
+        const assembly = buildFlowAssembly(match.item);
+        const frameSize = estimateFlowFrameSize(assembly);
+        const position = calculateSafeInsertionPoint(mentalNodes, frameSize.width, frameSize.height);
+        insertPipelineAssembly({ assembly, position, frameWidth: frameSize.width, frameHeight: frameSize.height });
+
+        // Reveal what just materialized — same "pan + zoom onto the new
+        // frame" affordance the auto-chat panel gives after assembling one,
+        // so a flow copied from the market doesn't silently land off-screen.
+        const container = document.querySelector('.mental-graph-canvas-container');
+        const viewW = container?.clientWidth ?? window.innerWidth;
+        const viewH = container?.clientHeight ?? window.innerHeight;
+        const targetZoom = 0.8;
+        const centerX = position.x + frameSize.width / 2;
+        const centerY = position.y + frameSize.height / 2;
+        setCanvasZoom(targetZoom);
+        setCanvasPan({ x: viewW / 2 - centerX * targetZoom, y: viewH / 2 - centerY * targetZoom });
+      }
+      setShowMarketplace(false);
+      closeSheet();
+      return;
+    }
+
     deployPlugin(selected.id); // already closes the marketplace (desktop-store.ts)
     closeSheet();
-  }, [selected, deployPlugin, closeSheet]);
+  }, [selected, marketInventory, mentalNodes, insertPipelineAssembly, setCanvasPan, setCanvasZoom, setShowMarketplace, deployPlugin, closeSheet]);
 
   // Header close (X): while the sheet is open it steps back to the grid
   // (spec item 4); otherwise it closes the whole marketplace as before.

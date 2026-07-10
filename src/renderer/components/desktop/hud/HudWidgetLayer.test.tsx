@@ -59,8 +59,8 @@ vi.mock('../../atoms/WidgetWrapper', () => ({
 vi.mock('../../atoms/widgets/AgentSessionsWidget', () => ({
   AgentSessionsWidget: () => <div data-testid="mock-agent-sessions" />,
 }));
-vi.mock('../../atoms/widgets/TextToFlowWidget', () => ({
-  TextToFlowWidget: () => <div data-testid="mock-text-to-flow" />,
+vi.mock('./HudAutoChatPanel', () => ({
+  HudAutoChatPanel: () => <div data-testid="mock-auto-chat" />,
 }));
 vi.mock('../../atoms/widgets/NotificationsWidget', () => ({
   NotificationsWidget: () => <div data-testid="mock-notifications" />,
@@ -187,16 +187,16 @@ describe('HudWidgetLayer — Phase 4 safe zone + collision resolution', () => {
   });
 
   it('spawn: a newly-visible widget dodges an already-visible widget occupying the same rect', () => {
-    // text-to-flow is already on screen and settled at (40,40) before agent-sessions appears.
+    // auto-chat is already on screen and settled at (40,40) before agent-sessions appears.
     setWidgets([
-      { type: 'text-to-flow', visible: true, position: { x: 40, y: 40 }, size: { width: 48, height: 48 } },
+      { type: 'auto-chat', visible: true, position: { x: 40, y: 40 }, size: { width: 48, height: 48 } },
     ]);
     const { rerender } = render(<HudWidgetLayer />);
-    mockDesktop.moveHudWidget.mockClear(); // drop text-to-flow's own (no-op) mount resolution
+    mockDesktop.moveHudWidget.mockClear(); // drop auto-chat's own (no-op) mount resolution
 
     // agent-sessions "spawns" directly on top of it.
     setWidgets([
-      { type: 'text-to-flow', visible: true, position: { x: 40, y: 40 }, size: { width: 48, height: 48 } },
+      { type: 'auto-chat', visible: true, position: { x: 40, y: 40 }, size: { width: 48, height: 48 } },
       { type: 'agent-sessions', visible: true, position: { x: 40, y: 40 }, size: { width: 48, height: 48 } },
     ]);
     rerender(<HudWidgetLayer />);
@@ -208,10 +208,10 @@ describe('HudWidgetLayer — Phase 4 safe zone + collision resolution', () => {
   });
 
   it('resize-release: re-resolves position when growing the widget makes it overlap a neighbour', () => {
-    // agent-sessions (340x240 default) starts well clear of text-to-flow, 120px gap.
+    // agent-sessions (340x240 default) starts well clear of auto-chat, 120px gap.
     setWidgets([
       { type: 'agent-sessions', visible: true, position: { x: 40, y: 40 } },
-      { type: 'text-to-flow', visible: true, position: { x: 500, y: 40 } },
+      { type: 'auto-chat', visible: true, position: { x: 500, y: 40 } },
     ]);
     render(<HudWidgetLayer />);
     mockDesktop.moveHudWidget.mockClear();
@@ -221,7 +221,7 @@ describe('HudWidgetLayer — Phase 4 safe zone + collision resolution', () => {
     const handle = widget.querySelector('.resize-handle[data-dir="se"]') as HTMLElement;
 
     // Grow width from 340 to 504 (+164, lands on a grid multiple) — its
-    // right edge (40+504=544) now reaches past text-to-flow's left edge (500).
+    // right edge (40+504=544) now reaches past auto-chat's left edge (500).
     fireEvent.mouseDown(handle, { button: 0, clientX: 100, clientY: 100 });
     fireEvent.mouseMove(document, { clientX: 264, clientY: 100 });
     fireEvent.mouseUp(document, { clientX: 264, clientY: 100 });
@@ -238,7 +238,7 @@ describe('HudWidgetLayer — Phase 4 safe zone + collision resolution', () => {
 
   it('drag-release: dropping onto another widget resolves to a non-overlapping position', () => {
     setWidgets([
-      { type: 'text-to-flow', visible: true, position: { x: 500, y: 40 }, size: { width: 48, height: 48 } },
+      { type: 'auto-chat', visible: true, position: { x: 500, y: 40 }, size: { width: 48, height: 48 } },
       { type: 'agent-sessions', visible: true, position: { x: 40, y: 40 }, size: { width: 48, height: 48 } },
     ]);
     render(<HudWidgetLayer />);
@@ -246,7 +246,7 @@ describe('HudWidgetLayer — Phase 4 safe zone + collision resolution', () => {
 
     const dragHandle = screen.getByTestId('hud-widget-drag-agent-sessions');
     // Drag agent-sessions (40,40) by (+460, 0) so it lands exactly on
-    // text-to-flow's rect (500,40)-(548,88).
+    // auto-chat's rect (500,40)-(548,88).
     fireEvent.mouseDown(dragHandle, { button: 0, clientX: 0, clientY: 0 });
     fireEvent.mouseMove(document, { clientX: 460, clientY: 0 });
     fireEvent.mouseUp(document, { clientX: 460, clientY: 0 });

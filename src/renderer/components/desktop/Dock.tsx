@@ -13,13 +13,11 @@
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
 import React, { useCallback, useRef, useState, useMemo } from 'react';
-import { useDesktopStore, CLI_ICON_NAMES } from '../../store/desktop-store';
+import { useDesktopStore } from '../../store/desktop-store';
 import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
-import { ProjectPickerModal } from './ProjectPickerModal';
 import { DockPopover } from './DockPopover';
 import type { AttachableType, MentalMode, MentalShape, MentalTool } from '@/types/desktop';
-import { getCliTheme } from '@/types/desktop';
 
 const ATTACHABLE_TYPE_COLORS: Record<string, string> = {
   flows: '#A78BFA',
@@ -36,8 +34,6 @@ export function Dock() {
   const installedPlugins = useDesktopStore(s => s.installedPlugins);
   const windows = useDesktopStore(s => s.windows);
   const focusWindow = useDesktopStore(s => s.focusWindow);
-  const cliProvider = useDesktopStore(s => s.cliProvider);
-  const addSession = useFluxorStore(s => s.addSession);
   const projectPath = useFluxorStore(s => s.projectPath);
   const availablePlugins = useDesktopStore(s => s.availablePlugins);
   const deployPlugin = useDesktopStore(s => s.deployPlugin);
@@ -54,11 +50,7 @@ export function Dock() {
   const setMentalMode = useDesktopStore(s => s.setMentalMode);
   const mentalTool = useDesktopStore(s => s.mentalTool);
   const setMentalTool = useDesktopStore(s => s.setMentalTool);
-
-  // Project picker modal state (from store so App.tsx shortcuts can also trigger it)
-  const showProjectPicker = useDesktopStore(s => s.showProjectPicker);
-  const pendingChatPosition = useDesktopStore(s => s.pendingChatPosition);
-  const setShowProjectPicker = useDesktopStore(s => s.setShowProjectPicker);
+  const setHudWidgetVisible = useDesktopStore(s => s.setHudWidgetVisible);
 
   // Drag-out state for spawning windows at drop position
   const [dragItem, setDragItem] = useState<string | null>(null);
@@ -103,37 +95,24 @@ export function Dock() {
     setAttachableOffset(o => (o + ATTACHABLE_VISIBLE_COUNT) % attachableItems.length);
   }, [attachableItems.length]);
 
-  // Create a new chat window scoped to a child project
-  const spawnChat = useCallback((childProjectPath: string, position?: { x: number; y: number }) => {
-    const childName = childProjectPath.split('/').pop() ?? 'project';
-    const sessionId = addSession();
-    const provLabel = getCliTheme(cliProvider).label;
-    addWindow('chat', {
-      title: `${provLabel} / ${childName}`,
-      iconName: CLI_ICON_NAMES[cliProvider] ?? CLI_ICON_NAMES.opencode ?? 'Terminal',
-      sessionId,
-      childProjectPath,
-      ...(position ? { position } : {}),
-    });
-
-    const session = useFluxorStore.getState().sessions.find(s => s.id === sessionId);
-    if (window.fluxorAPI && session) {
-      window.fluxorAPI.contextMapUpsertSessionNode(childProjectPath, {
-        sessionId,
-        label: session.description?.trim().length
-          ? `Session #${session.number}: ${session.description}`
-          : `Session #${session.number}`,
-        status: 'stopped',
-        roleId: session.roleId,
-      }).catch(() => {});
-    }
-  }, [addSession, addWindow, cliProvider]);
+  // Reveal + focus the single Auto-Chat HUD panel (chats→steps
+  // re-architecture, F0 decision 2, 2026-07-10). Replaces the old
+  // "pick a child project → spawn a scoped chat window" flow — the Auto-Chat
+  // panel is a single, fixed HUD surface (not per-project, not a window), so
+  // there is nothing left to pick. `requestAnimationFrame` lets the widget
+  // mount (if it wasn't already visible) before the focus event fires; the
+  // panel's own mount-time effect covers that same case too, so this is
+  // belt-and-suspenders for the "already open, clicked again" case.
+  const revealAutoChat = useCallback(() => {
+    setHudWidgetVisible('auto-chat', true);
+    requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('fluxor:focus-auto-chat')));
+  }, [setHudWidgetVisible]);
 
   const handleClick = useCallback((item: typeof dockItems[0]) => {
     if (item.type === 'action') {
       switch (item.action) {
         case 'new-chat': {
-          setShowProjectPicker(true, null);
+          revealAutoChat();
           break;
         }
         case 'file-explorer': {
@@ -203,8 +182,7 @@ export function Dock() {
           // Create a flow scaffold: an initiator step + one next step, wired
           // with a directed FlowEdge (source right handle → target left handle).
           // The initiator's isRoot badge (Play icon in StepNode) marks it as
-          // the flow entry point. Chat windows remain a separate entity — wiring
-          // a chat session into the graph as the initiator is a follow-up task.
+          // the flow entry point.
           const state = useDesktopStore.getState();
           const pan = state.canvasPan;
           const zoom = state.canvasZoom;
@@ -243,7 +221,7 @@ export function Dock() {
       });
       requestAnimationFrame(() => navigateToWindow(winId));
     }
-  }, [dockItems, addWindow, setShowMarketplace, setShowProjectPicker, installedPlugins, addSession, windows, focusWindow, cliProvider, projectName, navigateToWindow, setMentalMode]);
+  }, [dockItems, addWindow, setShowMarketplace, revealAutoChat, installedPlugins, windows, focusWindow, projectName, navigateToWindow, setMentalMode]);
 
   // ─── Drag-out handling (like LegallyOS) ────────────────────
 
@@ -280,7 +258,9 @@ export function Dock() {
           const dropX = ev.clientX - 240;
           const dropY = ev.clientY - 30;
           if (item.type === 'action' && item.action === 'new-chat') {
-            setShowProjectPicker(true, { x: dropX, y: dropY });
+            // Auto-Chat is a fixed HUD panel, not a spawnable window — the
+            // drop position is intentionally not honored (see revealAutoChat).
+            revealAutoChat();
           } else if (item.type === 'action' && item.action === 'file-explorer') {
             addWindow('file-explorer', {
               title: projectName,
@@ -316,7 +296,7 @@ export function Dock() {
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [dockItems, addWindow, addSession, installedPlugins, cliProvider, projectName, setShowProjectPicker]);
+  }, [dockItems, addWindow, installedPlugins, projectName, revealAutoChat]);
 
   // ─── Attachable drag-to-desktop ────────────────────────────
   const onAttachDragStart = useCallback((e: React.MouseEvent, plugin: { id: string; category: string; name: string; iconName: string }) => {
@@ -577,19 +557,6 @@ export function Dock() {
         >
           <LucideIcon name="Package" size={24} />
         </div>
-      )}
-
-      {/* Project picker modal */}
-      {showProjectPicker && (
-        <ProjectPickerModal
-          onSelect={(childPath) => {
-            spawnChat(childPath, pendingChatPosition ?? undefined);
-            setShowProjectPicker(false);
-          }}
-          onClose={() => {
-            setShowProjectPicker(false);
-          }}
-        />
       )}
     </>
   );

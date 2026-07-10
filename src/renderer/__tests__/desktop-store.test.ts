@@ -11,8 +11,15 @@ beforeEach(() => {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function addChat(opts?: { title?: string; iconName?: string; sessionId?: string }) {
-  return useDesktopStore.getState().addWindow('chat', opts);
+// Was `addChat` (created a 'chat' window) — 'chat' is retired as a window
+// type (chats→steps re-architecture, F0 decision 2, 2026-07-10). The vast
+// majority of this file's tests only ever needed "a generic window with no
+// type-specific behavior" as a fixture, so this now backs onto 'plugin' —
+// the ternary's own fallthrough/default case in `addWindow` (desktop-store.ts)
+// — rather than every one of this helper's ~65 call sites needing a
+// per-test type decision.
+function addTestWindow(opts?: { title?: string; iconName?: string; sessionId?: string }) {
+  return useDesktopStore.getState().addWindow('plugin', opts);
 }
 
 function getWindow(id: string) {
@@ -22,13 +29,21 @@ function getWindow(id: string) {
 // ─── Window CRUD ─────────────────────────────────────────────────
 
 describe('Window CRUD', () => {
-  it('addWindow creates a chat window with defaults', () => {
-    const id = addChat();
+  it('addWindow creates a plugin window with defaults', () => {
+    // Was "addWindow creates a chat window with defaults" — asserted the
+    // CLI-provider-themed title/icon `addWindow` used to default to for
+    // 'chat' windows specifically. That branch is retired along with 'chat'
+    // itself (see addWindow's ternary chain, desktop-store.ts) — there is no
+    // replacement behavior to assert for it. This instead covers the
+    // ternary's final fallthrough default (title 'Plugin' / icon 'Blocks'),
+    // previously untested (the sibling test below always passes explicit
+    // opts, never exercising the no-opts default).
+    const id = useDesktopStore.getState().addWindow('plugin');
     const win = getWindow(id)!;
     expect(win).toBeDefined();
-    expect(win.type).toBe('chat');
-    expect(win.title).toMatch(/^(OpenCode|Xiaomi|OpenRouter|Anthropic|OpenAI|Google|Provider)/);
-    expect(win.iconName).toBe('Zap');
+    expect(win.type).toBe('plugin');
+    expect(win.title).toBe('Plugin');
+    expect(win.iconName).toBe('Blocks');
     expect(win.state).toBe('normal');
     expect(win.modifierIds).toEqual([]);
     expect(win.position).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
@@ -49,37 +64,37 @@ describe('Window CRUD', () => {
   });
 
   it('addWindow sets activeWindowId and increments nextZIndex', () => {
-    const id = addChat();
+    const id = addTestWindow();
     const state = useDesktopStore.getState();
     expect(state.activeWindowId).toBe(id);
     expect(state.nextZIndex).toBeGreaterThan(10);
   });
 
   it('removeWindow removes the window', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().removeWindow(id);
     expect(getWindow(id)).toBeUndefined();
     expect(useDesktopStore.getState().windows).toHaveLength(0);
   });
 
   it('removeWindow clears activeWindowId when removed window was active', () => {
-    const id = addChat();
+    const id = addTestWindow();
     expect(useDesktopStore.getState().activeWindowId).toBe(id);
     useDesktopStore.getState().removeWindow(id);
     expect(useDesktopStore.getState().activeWindowId).toBeNull();
   });
 
   it('removeWindow preserves activeWindowId when a different window is removed', () => {
-    const id1 = addChat();
-    const id2 = addChat();
+    const id1 = addTestWindow();
+    const id2 = addTestWindow();
     expect(useDesktopStore.getState().activeWindowId).toBe(id2);
     useDesktopStore.getState().removeWindow(id1);
     expect(useDesktopStore.getState().activeWindowId).toBe(id2);
   });
 
   it('removeWindow also removes connections involving that window', () => {
-    const id1 = addChat();
-    const id2 = addChat();
+    const id1 = addTestWindow();
+    const id2 = addTestWindow();
     useDesktopStore.setState((s) => ({
       connections: [...s.connections, { id: 'c1', sourceWindowId: id1, sourcePort: 'right' as const, targetWindowId: id2, targetPort: 'left' as const }],
     }));
@@ -89,8 +104,8 @@ describe('Window CRUD', () => {
   });
 
   it('focusWindow updates activeWindowId and bumps zIndex', () => {
-    const id1 = addChat();
-    const id2 = addChat();
+    const id1 = addTestWindow();
+    const id2 = addTestWindow();
     const zBefore = getWindow(id1)!.zIndex;
     useDesktopStore.getState().focusWindow(id1);
     expect(useDesktopStore.getState().activeWindowId).toBe(id1);
@@ -98,7 +113,7 @@ describe('Window CRUD', () => {
   });
 
   it('focusWindow restores a minimized window to normal', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().setWindowState(id, 'minimized');
     expect(getWindow(id)!.state).toBe('minimized');
     useDesktopStore.getState().focusWindow(id);
@@ -106,32 +121,32 @@ describe('Window CRUD', () => {
   });
 
   it('moveWindow updates position', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().moveWindow(id, { x: 200, y: 300 });
     expect(getWindow(id)!.position).toEqual({ x: 200, y: 300 });
   });
 
   it('resizeWindow updates size', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().resizeWindow(id, { width: 800, height: 600 });
     expect(getWindow(id)!.size).toEqual({ width: 800, height: 600 });
   });
 
   it('resizeWindow enforces minimum size', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().resizeWindow(id, { width: 100, height: 50 });
     expect(getWindow(id)!.size).toEqual({ width: 320, height: 250 });
   });
 
   it('resizeWindow can also update position', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().resizeWindow(id, { width: 500, height: 400 }, { x: 10, y: 20 });
     expect(getWindow(id)!.position).toEqual({ x: 10, y: 20 });
     expect(getWindow(id)!.size).toEqual({ width: 500, height: 400 });
   });
 
   it('setWindowState sets minimized / maximized / normal', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().setWindowState(id, 'minimized');
     expect(getWindow(id)!.state).toBe('minimized');
     useDesktopStore.getState().setWindowState(id, 'maximized');
@@ -141,7 +156,7 @@ describe('Window CRUD', () => {
   });
 
   it('updateWindowTitle changes the title', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().updateWindowTitle(id, 'Renamed');
     expect(getWindow(id)!.title).toBe('Renamed');
   });
@@ -191,9 +206,13 @@ describe('Persisted dock migrations', () => {
         { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
       ],
       grids: [{ id: 'grid-1', position: { x: 0, y: 0 }, size: { width: 640, height: 480 }, columns: 2, rows: 2, cells: ['win-1', null, null, null] }],
+      // 'file-explorer' rather than the old 'chat' fixture type — this test
+      // is about the v15 grid-strip migration, orthogonal to window type;
+      // 'chat' would now be dropped entirely by the v19 migration (also
+      // exercised here, since 14 < 19) before these assertions ever ran.
       windows: [
-        { id: 'win-1', type: 'chat', title: 'Chat', gridId: 'grid-1', gridCellIndex: 0, gridColSpan: 1, gridRowSpan: 1, position: { x: 0, y: 0 }, size: { width: 300, height: 300 } },
-        { id: 'win-2', type: 'chat', title: 'Chat 2', position: { x: 100, y: 100 }, size: { width: 300, height: 300 } },
+        { id: 'win-1', type: 'file-explorer', title: 'Files', gridId: 'grid-1', gridCellIndex: 0, gridColSpan: 1, gridRowSpan: 1, position: { x: 0, y: 0 }, size: { width: 300, height: 300 } },
+        { id: 'win-2', type: 'file-explorer', title: 'Files 2', position: { x: 100, y: 100 }, size: { width: 300, height: 300 } },
       ],
     };
 
@@ -247,18 +266,139 @@ describe('Mind map migration cleanup', () => {
   });
 });
 
+// ─── v19/v20 migration — chats→steps re-architecture ─────────────
+//
+// F0 decision 2 (2026-07-10): 'chat' retired as a DesktopWindow['type'];
+// 'text-to-flow' HUD widget renamed to 'auto-chat' in the same slot. This is
+// THE migration/tombstone coverage for criterion 5 ("boards guardados con
+// ventanas de chat antiguas cargan sin crash").
+describe('v19 migration — chat window type retirement (legacy board load)', () => {
+  it('drops persisted chat windows without crashing, keeps other windows, and adds a tombstone notification', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    expect(migrate).toBeDefined();
+
+    const persisted = {
+      windows: [
+        { id: 'legacy-chat-1', type: 'chat', title: 'OpenCode / project', sessionId: 's1', cliProvider: 'opencode', position: { x: 0, y: 0 }, size: { width: 480, height: 500 } },
+        { id: 'legacy-chat-2', type: 'chat', title: 'Anthropic / other', sessionId: 's2', position: { x: 50, y: 50 }, size: { width: 480, height: 500 } },
+        { id: 'keep-file-explorer', type: 'file-explorer', title: 'Files', position: { x: 100, y: 100 }, size: { width: 400, height: 560 } },
+      ],
+      dockItems: [
+        { id: 'dock-new-chat', type: 'action', label: 'New Chat', iconName: 'MessageSquare', action: 'new-chat' },
+        { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
+      ],
+      grids: [],
+    };
+
+    // A very old session (pre-v18) exercises the FULL chain in one pass —
+    // never crashes, and every intermediate migration still applies.
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 15);
+
+    // The tombstone: both legacy chat windows are gone, the survivor stays.
+    expect(migrated.windows).toHaveLength(1);
+    expect(migrated.windows[0].id).toBe('keep-file-explorer');
+    expect(migrated.windows.some((w: { type: string }) => w.type === 'chat')).toBe(false);
+
+    // Never a silent surprise — a notification documents what happened.
+    expect(migrated.notifications).toBeDefined();
+    expect(migrated.notifications).toHaveLength(1);
+    expect(migrated.notifications[0].message).toMatch(/2 chat windows/);
+    expect(migrated.notifications[0].message).toMatch(/Auto-Chat/);
+    expect(migrated.notifications[0].read).toBe(false);
+    expect(migrated.unreadCount).toBe(1);
+
+    // The Dock's "New Chat" item survives (same id/action — no crash for
+    // persisted dock arrays either) but is relabeled in place.
+    const dockItem = migrated.dockItems.find((d: { action: string }) => d.action === 'new-chat');
+    expect(dockItem).toBeDefined();
+    expect(dockItem.id).toBe('dock-new-chat');
+    expect(dockItem.label).toBe('Auto-Chat');
+
+    // Board bootstrap (v18) still ran in the same pass — this migration
+    // doesn't short-circuit the rest of the chain.
+    expect(migrated.boards).toEqual([expect.objectContaining({ id: 'board-1' })]);
+  });
+
+  it('is a no-op when no chat windows are present (no spurious notification)', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    const persisted = {
+      windows: [{ id: 'w1', type: 'file-explorer', title: 'Files', position: { x: 0, y: 0 }, size: { width: 400, height: 560 } }],
+      dockItems: [],
+      grids: [],
+    };
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 15);
+    expect(migrated.windows).toHaveLength(1);
+    expect(migrated.notifications).toBeUndefined();
+    expect(migrated.unreadCount).toBeUndefined();
+  });
+
+  it('loading a legacy board through the full store (not just the raw migrate fn) never crashes and drops the chat window', () => {
+    // Exercises persist's actual hydration path end-to-end (getInitialState
+    // + setState, not the migrate function in isolation) for the same
+    // "legacy board with a chat window" scenario, per this task's mandated
+    // migration test.
+    const migrate = useDesktopStore.persist.getOptions().migrate!;
+    const persisted = {
+      windows: [{ id: 'legacy-chat', type: 'chat', title: 'Chat', position: { x: 0, y: 0 }, size: { width: 480, height: 500 } }],
+      dockItems: [],
+      grids: [],
+    };
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 15);
+    const merge = useDesktopStore.persist.getOptions().merge!;
+    const currentState = useDesktopStore.getInitialState();
+    expect(() => {
+      const merged = (merge as (p: unknown, c: unknown) => any)(migrated, currentState);
+      useDesktopStore.setState(merged, true);
+    }).not.toThrow();
+    expect(useDesktopStore.getState().windows).toHaveLength(0);
+    expect(useDesktopStore.getState().windows.every(w => (w.type as string) !== 'chat')).toBe(true);
+  });
+});
+
+describe('v20 migration — auto-chat HUD widget rename', () => {
+  it('renames a persisted text-to-flow HUD widget to auto-chat, carrying its visibility/position', () => {
+    const migrate = useDesktopStore.persist.getOptions().migrate;
+    const persisted = {
+      hudWidgets: [
+        { type: 'text-to-flow', visible: false, position: { x: 42, y: 99 } },
+        { type: 'agent-sessions', visible: true, position: { x: 1, y: 2 } },
+      ],
+      dockItems: [],
+      grids: [],
+    };
+    const migrated = (migrate as (state: unknown, version: number) => any)(persisted, 19);
+    const renamed = migrated.hudWidgets.find((w: { type: string }) => w.type === 'auto-chat');
+    expect(renamed).toBeDefined();
+    expect(renamed.visible).toBe(false);
+    expect(renamed.position).toEqual({ x: 42, y: 99 });
+    expect(migrated.hudWidgets.some((w: { type: string }) => w.type === 'text-to-flow')).toBe(false);
+  });
+
+  it('merge() aliases a legacy text-to-flow (or text-to-pipeline) type defensively even without migrate running', () => {
+    // Defense-in-depth backstop, mirroring the pre-existing
+    // text-to-pipeline→text-to-flow alias — see merge()'s own comment.
+    const merge = useDesktopStore.persist.getOptions().merge;
+    const currentState = useDesktopStore.getInitialState();
+    const persistedState = { hudWidgets: [{ type: 'text-to-flow', visible: false, position: { x: 7, y: 8 } }] };
+    const merged = (merge as (p: unknown, c: unknown) => any)(persistedState, currentState);
+    const autoChat = merged.hudWidgets.find((w: { type: string }) => w.type === 'auto-chat');
+    expect(autoChat.visible).toBe(false);
+    expect(autoChat.position).toEqual({ x: 7, y: 8 });
+  });
+});
+
 // ─── Role Assignment ─────────────────────────────────────────────
 
 describe('Role assignment', () => {
   it('assignRole returns true and sets roleId on first assignment', () => {
-    const id = addChat();
+    const id = addTestWindow();
     const result = useDesktopStore.getState().assignRole(id, 'role-ui');
     expect(result).toBe(true);
     expect(getWindow(id)!.roleId).toBe('role-ui');
   });
 
   it('assignRole returns false when window already has a role (exclusivity)', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().assignRole(id, 'role-ui');
     const result = useDesktopStore.getState().assignRole(id, 'role-backend');
     expect(result).toBe(false);
@@ -271,14 +411,14 @@ describe('Role assignment', () => {
   });
 
   it('removeRole clears the roleId', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().assignRole(id, 'role-ui');
     useDesktopStore.getState().removeRole(id);
     expect(getWindow(id)!.roleId).toBeUndefined();
   });
 
   it('assignRole works again after removeRole', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().assignRole(id, 'role-ui');
     useDesktopStore.getState().removeRole(id);
     const result = useDesktopStore.getState().assignRole(id, 'role-backend');
@@ -291,27 +431,27 @@ describe('Role assignment', () => {
 
 describe('Modifier system', () => {
   it('addModifier adds a modifier to the window', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().addModifier(id, 'mod-verbose');
     expect(getWindow(id)!.modifierIds).toEqual(['mod-verbose']);
   });
 
   it('addModifier allows multiple modifiers', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().addModifier(id, 'mod-verbose');
     useDesktopStore.getState().addModifier(id, 'mod-docs');
     expect(getWindow(id)!.modifierIds).toEqual(['mod-verbose', 'mod-docs']);
   });
 
   it('addModifier does not duplicate an already-present modifier', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().addModifier(id, 'mod-verbose');
     useDesktopStore.getState().addModifier(id, 'mod-verbose');
     expect(getWindow(id)!.modifierIds).toEqual(['mod-verbose']);
   });
 
   it('removeModifier removes a specific modifier', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().addModifier(id, 'mod-verbose');
     useDesktopStore.getState().addModifier(id, 'mod-docs');
     useDesktopStore.getState().removeModifier(id, 'mod-verbose');
@@ -319,7 +459,7 @@ describe('Modifier system', () => {
   });
 
   it('removeModifier is a no-op for missing modifier', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().addModifier(id, 'mod-verbose');
     useDesktopStore.getState().removeModifier(id, 'mod-docs');
     expect(getWindow(id)!.modifierIds).toEqual(['mod-verbose']);
@@ -330,8 +470,8 @@ describe('Modifier system', () => {
 
 describe('Connections', () => {
   it('removeConnection removes a connection by id', () => {
-    const id1 = addChat();
-    const id2 = addChat();
+    const id1 = addTestWindow();
+    const id2 = addTestWindow();
     useDesktopStore.setState((s) => ({
       connections: [...s.connections, { id: 'c1', sourceWindowId: id1, sourcePort: 'right' as const, targetWindowId: id2, targetPort: 'left' as const }],
     }));
@@ -403,14 +543,14 @@ describe('CLI theming', () => {
 
 describe('Snap guides', () => {
   it('calculateSnapGuides returns empty when no other windows exist', () => {
-    const id = addChat();
+    const id = addTestWindow();
     const { guides } = useDesktopStore.getState().calculateSnapGuides(id, { x: 100, y: 100 }, { width: 480, height: 500 });
     expect(guides).toEqual([]);
   });
 
   it('calculateSnapGuides produces guides when windows left-edges align within threshold', () => {
-    const id1 = useDesktopStore.getState().addWindow('chat', { position: { x: 100, y: 100 }, size: { width: 480, height: 500 } });
-    const id2 = useDesktopStore.getState().addWindow('chat', { position: { x: 500, y: 300 }, size: { width: 480, height: 500 } });
+    const id1 = useDesktopStore.getState().addWindow('plugin', { position: { x: 100, y: 100 }, size: { width: 480, height: 500 } });
+    const id2 = useDesktopStore.getState().addWindow('plugin', { position: { x: 500, y: 300 }, size: { width: 480, height: 500 } });
     // Move id2 so its left edge is within snap threshold of id1's left edge (100)
     const { guides, snappedPos } = useDesktopStore.getState().calculateSnapGuides(id2, { x: 103, y: 300 }, { width: 480, height: 500 });
     expect(guides.length).toBeGreaterThan(0);
@@ -420,15 +560,15 @@ describe('Snap guides', () => {
   });
 
   it('calculateSnapGuides returns no guides when windows are far apart', () => {
-    const id1 = useDesktopStore.getState().addWindow('chat', { position: { x: 100, y: 100 }, size: { width: 200, height: 200 } });
-    const id2 = useDesktopStore.getState().addWindow('chat', { position: { x: 900, y: 900 }, size: { width: 200, height: 200 } });
+    const id1 = useDesktopStore.getState().addWindow('plugin', { position: { x: 100, y: 100 }, size: { width: 200, height: 200 } });
+    const id2 = useDesktopStore.getState().addWindow('plugin', { position: { x: 900, y: 900 }, size: { width: 200, height: 200 } });
     const { guides } = useDesktopStore.getState().calculateSnapGuides(id2, { x: 900, y: 900 }, { width: 200, height: 200 });
     expect(guides).toHaveLength(0);
   });
 
   it('calculateSnapGuides ignores minimized windows', () => {
-    const id1 = useDesktopStore.getState().addWindow('chat', { position: { x: 100, y: 100 }, size: { width: 480, height: 500 } });
-    const id2 = useDesktopStore.getState().addWindow('chat', { position: { x: 500, y: 300 }, size: { width: 480, height: 500 } });
+    const id1 = useDesktopStore.getState().addWindow('plugin', { position: { x: 100, y: 100 }, size: { width: 480, height: 500 } });
+    const id2 = useDesktopStore.getState().addWindow('plugin', { position: { x: 500, y: 300 }, size: { width: 480, height: 500 } });
     useDesktopStore.getState().setWindowState(id1, 'minimized');
     const { guides } = useDesktopStore.getState().calculateSnapGuides(id2, { x: 100, y: 300 }, { width: 480, height: 500 });
     expect(guides).toHaveLength(0);
@@ -448,18 +588,18 @@ describe('Snap guides', () => {
 describe('Window state management', () => {
   it('nextZIndex starts at 10 and increments with each addWindow', () => {
     expect(useDesktopStore.getState().nextZIndex).toBe(10);
-    addChat();
+    addTestWindow();
     // addWindow uses globalTopZ which gives z = max(nextZIndex, 0, ...) + 1.
     // With nextZIndex=10 and no other windows, z = 11, then nextZIndex = z+1 = 12.
     expect(useDesktopStore.getState().nextZIndex).toBe(12);
-    addChat();
+    addTestWindow();
     // z = max(12, 11) + 1 = 13, nextZIndex = 14.
     expect(useDesktopStore.getState().nextZIndex).toBe(14);
   });
 
   it('focusWindow brings the window above its peers (and advances the counter)', () => {
-    const id1 = addChat();
-    const id2 = addChat();
+    const id1 = addTestWindow();
+    const id2 = addTestWindow();
     // Focus the older (currently-behind) window — it must rise above id2 even if
     // the counter had drifted below the persisted zIndexes.
     useDesktopStore.getState().focusWindow(id1);
@@ -471,24 +611,24 @@ describe('Window state management', () => {
   });
 
   it('activeWindowId is set to last added window', () => {
-    const id1 = addChat();
+    const id1 = addTestWindow();
     expect(useDesktopStore.getState().activeWindowId).toBe(id1);
-    const id2 = addChat();
+    const id2 = addTestWindow();
     expect(useDesktopStore.getState().activeWindowId).toBe(id2);
   });
 
   it('activeWindowId updates on focusWindow', () => {
-    const id1 = addChat();
-    const id2 = addChat();
+    const id1 = addTestWindow();
+    const id2 = addTestWindow();
     expect(useDesktopStore.getState().activeWindowId).toBe(id2);
     useDesktopStore.getState().focusWindow(id1);
     expect(useDesktopStore.getState().activeWindowId).toBe(id1);
   });
 
   it('each window gets a unique incrementing zIndex', () => {
-    const id1 = addChat();
-    const id2 = addChat();
-    const id3 = addChat();
+    const id1 = addTestWindow();
+    const id2 = addTestWindow();
+    const id3 = addTestWindow();
     const z1 = getWindow(id1)!.zIndex;
     const z2 = getWindow(id2)!.zIndex;
     const z3 = getWindow(id3)!.zIndex;
@@ -661,7 +801,7 @@ describe('File-Explorer Windows', () => {
   });
 
   it('file-explorer windows can be focused and tracked', () => {
-    const chatId = addChat();
+    const chatId = addTestWindow();
     const fileId = useDesktopStore.getState().addWindow('file-explorer');
 
     useDesktopStore.getState().focusWindow(chatId);
@@ -685,15 +825,18 @@ describe('File-Explorer Windows', () => {
     expect(win.pluginId).toBeUndefined();
   });
 
-  it('file-explorer and chat windows coexist', () => {
-    addChat({ title: 'Chat 1' });
+  it('file-explorer and plugin windows coexist', () => {
+    // Was "file-explorer and chat windows coexist" — 'chat' is retired
+    // (F0 decision 2); 'plugin' (via addTestWindow) exercises the same
+    // "two distinct window types side by side" behavior.
+    addTestWindow({ title: 'Plugin 1' });
     useDesktopStore.getState().addWindow('file-explorer', { title: 'Files' });
-    addChat({ title: 'Chat 2' });
+    addTestWindow({ title: 'Plugin 2' });
     useDesktopStore.getState().addWindow('file-explorer', { title: 'Files 2' });
 
     const { windows } = useDesktopStore.getState();
     expect(windows.length).toBe(4);
-    expect(windows.filter(w => w.type === 'chat').length).toBe(2);
+    expect(windows.filter(w => w.type === 'plugin').length).toBe(2);
     expect(windows.filter(w => w.type === 'file-explorer').length).toBe(2);
   });
 
@@ -711,21 +854,21 @@ describe('Navigator Highlight', () => {
   });
 
   it('setHoveredWindowId updates the hovered window', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().setHoveredWindowId(id);
     expect(useDesktopStore.getState().hoveredWindowId).toBe(id);
   });
 
   it('setHoveredWindowId can be cleared to null', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().setHoveredWindowId(id);
     useDesktopStore.getState().setHoveredWindowId(null);
     expect(useDesktopStore.getState().hoveredWindowId).toBeNull();
   });
 
   it('hoveredWindowId is independent of activeWindowId', () => {
-    const id1 = addChat({ title: 'A' });
-    const id2 = addChat({ title: 'B' });
+    const id1 = addTestWindow({ title: 'A' });
+    const id2 = addTestWindow({ title: 'B' });
     useDesktopStore.getState().focusWindow(id1);
     useDesktopStore.getState().setHoveredWindowId(id2);
     expect(useDesktopStore.getState().activeWindowId).toBe(id1);
@@ -737,7 +880,7 @@ describe('Navigator Highlight', () => {
 
 describe('removeAttachedItem', () => {
   it('removes a role from a window without respawning', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().assignRole(id, 'frontend-engineer');
     expect(getWindow(id)!.roleId).toBe('frontend-engineer');
 
@@ -748,7 +891,7 @@ describe('removeAttachedItem', () => {
   });
 
   it('removes a mod from a window without respawning', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().addModifier(id, 'strict-mode');
     expect(getWindow(id)!.modifierIds).toContain('strict-mode');
 
@@ -758,8 +901,14 @@ describe('removeAttachedItem', () => {
   });
 
   it('removes a flow from a window without respawning', () => {
-    const id = addChat();
-    useDesktopStore.getState().connectFlow(id, 'lighthouse-audit');
+    // Seeds flowId directly (bypassing connectFlow, which is retired below —
+    // see 'Flow Connectors (retired)') to keep this test's actual subject
+    // (removeAttachedItem's flow-removal path, via the ungated disconnectFlow)
+    // isolated from that separate retirement.
+    const id = addTestWindow();
+    useDesktopStore.setState((s) => ({
+      windows: s.windows.map(w => w.id === id ? { ...w, flowId: 'lighthouse-audit' } : w),
+    }));
     expect(getWindow(id)!.flowId).toBe('lighthouse-audit');
 
     useDesktopStore.getState().removeAttachedItem(id, 'flow', 'lighthouse-audit');
@@ -774,7 +923,7 @@ describe('removeAttachedItem', () => {
   });
 
   it('differs from detachFromWindow which respawns attachable', () => {
-    const id = addChat();
+    const id = addTestWindow();
     useDesktopStore.getState().assignRole(id, 'frontend-engineer');
 
     // detachFromWindow should respawn
@@ -784,6 +933,35 @@ describe('removeAttachedItem', () => {
     expect(useDesktopStore.getState().attachables[0].name).toBe('frontend-engineer');
   });
 
+});
+
+// ─── Flow Connectors (retired) ────────────────────────────────────
+//
+// connectFlow/attachToWindow's window-scoped role/mod/flow attachment was
+// only ever valid for chat windows — 'chat' is retired (F0 decision 2/4,
+// 2026-07-10) alongside the market's own flow-as-attachable concept (flows
+// become prebuilt pipelines copied to the board instead, market F4 task).
+// These lock in the new "always fails, never mutates" contract so the
+// retirement is an explicit, asserted fact rather than silently-dropped
+// coverage — see the matching comments on connectFlow/attachToWindow in
+// desktop-store.ts.
+describe('connectFlow / attachToWindow (retired)', () => {
+  it('connectFlow never attaches a flow to any window and returns false', () => {
+    const id = addTestWindow();
+    const success = useDesktopStore.getState().connectFlow(id, 'lighthouse-audit');
+    expect(success).toBe(false);
+    expect(getWindow(id)!.flowId).toBeUndefined();
+  });
+
+  it('attachToWindow never attaches a role/mod to any window and returns false', () => {
+    const id = addTestWindow();
+    const attachableId = useDesktopStore.getState().spawnAttachable('role', 'frontend-engineer', { x: 0, y: 0 });
+    const success = useDesktopStore.getState().attachToWindow(attachableId, id);
+    expect(success).toBe(false);
+    expect(getWindow(id)!.roleId).toBeUndefined();
+    // The attachable is untouched — attachToWindow never got far enough to remove it.
+    expect(useDesktopStore.getState().attachables.some(a => a.id === attachableId)).toBe(true);
+  });
 });
 
 describe('Mental authoring mode', () => {
@@ -1641,7 +1819,7 @@ describe('Mental → Chat attachments', () => {
   it('defaults to empty selection and no attachments', () => {
     const state = useDesktopStore.getState();
     expect(state.selectedMentalNodeIds).toEqual([]);
-    const winId = addChat();
+    const winId = addTestWindow();
     expect(getWindow(winId)?.mentalAttachments).toBeUndefined();
   });
 
@@ -1660,7 +1838,7 @@ describe('Mental → Chat attachments', () => {
   });
 
   it('attachMentalToWindow stores a subgraph as a matrix entry', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     useDesktopStore.getState().attachMentalToWindow(winId, ['n1', 'n2', 'n3']);
     const w = getWindow(winId)!;
     expect(w.mentalAttachments).toHaveLength(1);
@@ -1669,7 +1847,7 @@ describe('Mental → Chat attachments', () => {
   });
 
   it('attachMentalToWindow accepts multiple distinct attachments', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     const store = useDesktopStore.getState();
     store.attachMentalToWindow(winId, ['n1', 'n2']);
     store.attachMentalToWindow(winId, ['n3']);
@@ -1678,7 +1856,7 @@ describe('Mental → Chat attachments', () => {
   });
 
   it('attachMentalToWindow dedupes attachments with identical membership', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     const store = useDesktopStore.getState();
     store.attachMentalToWindow(winId, ['n1', 'n2']);
     store.attachMentalToWindow(winId, ['n2', 'n1']); // same set, different order
@@ -1686,7 +1864,7 @@ describe('Mental → Chat attachments', () => {
   });
 
   it('detachMentalAttachment removes only the targeted index', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     const store = useDesktopStore.getState();
     store.attachMentalToWindow(winId, ['a']);
     store.attachMentalToWindow(winId, ['b']);
@@ -1697,7 +1875,7 @@ describe('Mental → Chat attachments', () => {
   });
 
   it('detachMentalAttachment is a no-op for out-of-range indices', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     const store = useDesktopStore.getState();
     store.attachMentalToWindow(winId, ['a']);
     useDesktopStore.getState().detachMentalAttachment(winId, 99);
@@ -1706,7 +1884,7 @@ describe('Mental → Chat attachments', () => {
   });
 
   it('clearMentalAttachments wipes all attachments on a window', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     const store = useDesktopStore.getState();
     store.attachMentalToWindow(winId, ['a']);
     store.attachMentalToWindow(winId, ['b']);
@@ -1715,8 +1893,8 @@ describe('Mental → Chat attachments', () => {
   });
 
   it('attachments survive when other windows mutate', () => {
-    const chatA = addChat();
-    const chatB = addChat();
+    const chatA = addTestWindow();
+    const chatB = addTestWindow();
     const store = useDesktopStore.getState();
     store.attachMentalToWindow(chatA, ['a1', 'a2']);
     store.attachMentalToWindow(chatB, ['b1']);
@@ -1726,7 +1904,7 @@ describe('Mental → Chat attachments', () => {
   });
 
   it('attaching with an empty nodeIds array represents the whole-map sentinel', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     useDesktopStore.getState().attachMentalToWindow(winId, []);
     expect(getWindow(winId)!.mentalAttachments).toHaveLength(1);
     expect(getWindow(winId)!.mentalAttachments![0].nodeIds).toEqual([]);
@@ -1736,11 +1914,11 @@ describe('Mental → Chat attachments', () => {
 // ─── HUD Widgets slice ────────────────────────────────────────────
 
 describe('HUD Widgets slice', () => {
-  it('starts with the default predefined set (text-to-flow visible, others hidden)', () => {
+  it('starts with the default predefined set (auto-chat visible, others hidden)', () => {
     const { hudWidgets } = useDesktopStore.getState();
     expect(hudWidgets).toHaveLength(3);
     const sessions = hudWidgets.find(w => w.type === 'agent-sessions');
-    const pipeline = hudWidgets.find(w => w.type === 'text-to-flow');
+    const pipeline = hudWidgets.find(w => w.type === 'auto-chat');
     const notifs   = hudWidgets.find(w => w.type === 'notifications');
     expect(sessions?.visible).toBe(false);
     expect(pipeline?.visible).toBe(true);
@@ -1754,8 +1932,8 @@ describe('HUD Widgets slice', () => {
   });
 
   it('setHudWidgetVisible hides a visible widget', () => {
-    useDesktopStore.getState().setHudWidgetVisible('text-to-flow', false);
-    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'text-to-flow');
+    useDesktopStore.getState().setHudWidgetVisible('auto-chat', false);
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'auto-chat');
     expect(widget?.visible).toBe(false);
   });
 
@@ -1785,21 +1963,21 @@ describe('HUD Widgets slice', () => {
   });
 
   it('toggleHudWidget flips visibility from true to false', () => {
-    useDesktopStore.getState().toggleHudWidget('text-to-flow');
-    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'text-to-flow');
+    useDesktopStore.getState().toggleHudWidget('auto-chat');
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'auto-chat');
     expect(widget?.visible).toBe(false);
   });
 
   it('toggling does not affect other widget types', () => {
     useDesktopStore.getState().toggleHudWidget('notifications');
-    const pipeline = useDesktopStore.getState().hudWidgets.find(w => w.type === 'text-to-flow');
+    const pipeline = useDesktopStore.getState().hudWidgets.find(w => w.type === 'auto-chat');
     expect(pipeline?.visible).toBe(true); // unchanged (still its own default)
   });
 
   it('all three widget types are present exactly once', () => {
     const types = useDesktopStore.getState().hudWidgets.map(w => w.type);
     expect(types).toContain('agent-sessions');
-    expect(types).toContain('text-to-flow');
+    expect(types).toContain('auto-chat');
     expect(types).toContain('notifications');
     expect(new Set(types).size).toBe(3);
   });
@@ -1832,8 +2010,8 @@ describe('resizeHudWidget', () => {
   it('clamps above the current viewport bounds', () => {
     const hugeWidth = window.innerWidth + 5000;
     const hugeHeight = window.innerHeight + 5000;
-    useDesktopStore.getState().resizeHudWidget('text-to-flow', { width: hugeWidth, height: hugeHeight });
-    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'text-to-flow');
+    useDesktopStore.getState().resizeHudWidget('auto-chat', { width: hugeWidth, height: hugeHeight });
+    const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'auto-chat');
     expect(widget?.size).toEqual({ width: window.innerWidth, height: window.innerHeight });
   });
 });
@@ -1858,7 +2036,7 @@ describe('HUD widget persistence merge — size', () => {
     expect(sessions.position).toEqual({ x: 10, y: 20 });
 
     // A widget with no persisted entry keeps its default (no size — component falls back to WIDGET_META)
-    const pipeline = merged.hudWidgets.find((w: { type: string }) => w.type === 'text-to-flow');
+    const pipeline = merged.hudWidgets.find((w: { type: string }) => w.type === 'auto-chat');
     expect(pipeline.size).toBeUndefined();
   });
 
@@ -1992,7 +2170,7 @@ describe('Unified z-stack: mentalZ and click-recency', () => {
   });
 
   it('addMentalNode assigns a mentalZ entry above any existing window zIndex', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     const winZ = useDesktopStore.getState().windows.find(w => w.id === winId)!.zIndex!;
     const nodeId = useDesktopStore.getState().addMentalNode({
       position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square',
@@ -2005,7 +2183,7 @@ describe('Unified z-stack: mentalZ and click-recency', () => {
     const nodeId = useDesktopStore.getState().addMentalNode({
       position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square',
     });
-    const winId = addChat();
+    const winId = addTestWindow();
     const winZ = useDesktopStore.getState().windows.find(w => w.id === winId)!.zIndex!;
     useDesktopStore.getState().bringMentalToFront(nodeId);
     const nodeZ = useDesktopStore.getState().mentalZ[nodeId];
@@ -2019,13 +2197,13 @@ describe('Unified z-stack: mentalZ and click-recency', () => {
     useDesktopStore.getState().bringMentalToFront(nodeId);
     const highMentalZ = useDesktopStore.getState().mentalZ[nodeId];
 
-    const winId = addChat();
+    const winId = addTestWindow();
     const winZ = useDesktopStore.getState().windows.find(w => w.id === winId)!.zIndex!;
     expect(winZ).toBeGreaterThan(highMentalZ);
   });
 
   it('focusWindow (on existing window) rises above mentalZ', () => {
-    const winId = addChat();
+    const winId = addTestWindow();
     const nodeId = useDesktopStore.getState().addMentalNode({
       position: { x: 0, y: 0 }, width: 220, height: 120, text: '', color: '#EDE9FE', shape: 'square',
     });
@@ -2330,7 +2508,13 @@ describe('Boards — v18 migration (boards + persisted canvasZoom)', () => {
     expect(migrate).toBeDefined();
 
     const persisted = {
-      windows: [{ id: 'win-1', type: 'chat', title: 'Chat', position: { x: 0, y: 0 }, size: { width: 480, height: 500 } }],
+      // 'file-explorer' rather than the old 'chat' fixture type — this test
+      // is about the v18 boards-bootstrap migration, orthogonal to window
+      // type; 'chat' would now be dropped entirely by the v19 migration
+      // (also exercised here, since 17 < 19), which would break the
+      // "prior fields survive untouched" assertion below for the wrong
+      // reason (an unrelated migration, not a v18 regression).
+      windows: [{ id: 'win-1', type: 'file-explorer', title: 'Files', position: { x: 0, y: 0 }, size: { width: 480, height: 500 } }],
       mentalNodes: [{ id: 'mn-1', type: 'mental', position: { x: 0, y: 0 }, width: 220, height: 120, text: 'legacy', color: '#EDE9FE', shape: 'square', createdAt: 1 }],
       mentalEdges: [],
       canvasPan: { x: 10, y: 20 },

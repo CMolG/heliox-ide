@@ -50,7 +50,7 @@ function renderWindow(windowId: string) {
 describe('DesktopWindow — selection ring carrier (.desktop-window-shell)', () => {
   it('mirrors data-active="true" onto the shell for the active window', () => {
     // addWindow() makes the newly-created window the active one.
-    const id = useDesktopStore.getState().addWindow('chat');
+    const id = useDesktopStore.getState().addWindow('file-explorer');
     const { container } = renderWindow(id);
 
     const shell = container.querySelector('.desktop-window-shell');
@@ -62,15 +62,15 @@ describe('DesktopWindow — selection ring carrier (.desktop-window-shell)', () 
   });
 
   it('mirrors data-active="false" once a DIFFERENT window becomes active', () => {
-    const id = useDesktopStore.getState().addWindow('chat');
-    useDesktopStore.getState().addWindow('chat'); // this one becomes active instead
+    const id = useDesktopStore.getState().addWindow('file-explorer');
+    useDesktopStore.getState().addWindow('file-explorer'); // this one becomes active instead
     const { container } = renderWindow(id);
 
     expect(container.querySelector('.desktop-window-shell')).toHaveAttribute('data-active', 'false');
   });
 
   it('mirrors data-highlighted from hoveredWindowId', () => {
-    const id = useDesktopStore.getState().addWindow('chat');
+    const id = useDesktopStore.getState().addWindow('file-explorer');
     useDesktopStore.setState({ hoveredWindowId: id });
     const { container } = renderWindow(id);
 
@@ -78,7 +78,7 @@ describe('DesktopWindow — selection ring carrier (.desktop-window-shell)', () 
   });
 
   it('mirrors data-highlighted="false" when a different window is hovered', () => {
-    const id = useDesktopStore.getState().addWindow('chat');
+    const id = useDesktopStore.getState().addWindow('file-explorer');
     useDesktopStore.setState({ hoveredWindowId: 'some-other-window' });
     const { container } = renderWindow(id);
 
@@ -86,7 +86,7 @@ describe('DesktopWindow — selection ring carrier (.desktop-window-shell)', () 
   });
 
   it('mirrors data-selected from selectedWindowIds', () => {
-    const id = useDesktopStore.getState().addWindow('chat');
+    const id = useDesktopStore.getState().addWindow('file-explorer');
     useDesktopStore.setState({ selectedWindowIds: [id] });
     const { container } = renderWindow(id);
 
@@ -103,7 +103,7 @@ describe('DesktopWindow — selection ring carrier (.desktop-window-shell)', () 
         ],
       },
     });
-    const id = useDesktopStore.getState().addWindow('chat', { roleId: 'frontend-engineer' });
+    const id = useDesktopStore.getState().addWindow('file-explorer', { roleId: 'frontend-engineer' });
     const { container } = renderWindow(id);
 
     const shell = container.querySelector('.desktop-window-shell') as HTMLElement;
@@ -112,8 +112,8 @@ describe('DesktopWindow — selection ring carrier (.desktop-window-shell)', () 
   });
 
   it('shell has no role/selection state for a plain, unselected, inactive window', () => {
-    const id = useDesktopStore.getState().addWindow('chat');
-    useDesktopStore.getState().addWindow('chat'); // steals "active"
+    const id = useDesktopStore.getState().addWindow('file-explorer');
+    useDesktopStore.getState().addWindow('file-explorer'); // steals "active"
     const { container } = renderWindow(id);
 
     const shell = container.querySelector('.desktop-window-shell');

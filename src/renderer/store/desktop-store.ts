@@ -12,7 +12,6 @@ import { getConnectedComponent } from '../logic/mental-graph';
 import { debouncedLocalStorage } from '../logic/debounced-storage';
 import { MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT } from '../logic/hud-grid';
 import { normalizeEdgeTypes } from '../logic/normalize-edge-types';
-import { CLI_THEME_COLORS } from '@/types/desktop';
 import type {
   DesktopWindow, WindowPosition, WindowSize, WindowConnection,
   DockItem, Plugin, PluginCategory, SnapGuide, CliProvider, ConnectionPort, CanvasPan,
@@ -108,7 +107,14 @@ export const CLI_ICON_NAMES: Record<string, string> = {
 // ─── Default Dock Items (minimal) ────────────────────────────────
 
 const DEFAULT_DOCK_ITEMS: DockItem[] = [
-  { id: 'dock-new-chat', type: 'action', label: 'New Chat', iconName: 'MessageSquare', action: 'new-chat' },
+  // Label/behavior evolved by the chats→steps re-architecture (F0 decision 2,
+  // 2026-07-10): this no longer spawns a chat window — it reveals + focuses
+  // the single Auto-Chat HUD panel (see Dock.tsx's 'new-chat' case). The
+  // `id`/`action` literals are kept stable ('new-chat') so persisted dock
+  // arrays from before this change keep matching this entry (migration
+  // v19 relabels any already-persisted 'new-chat' item in place — see
+  // migrate() below).
+  { id: 'dock-new-chat', type: 'action', label: 'Auto-Chat', iconName: 'MessageSquare', action: 'new-chat' },
   { id: 'dock-file-explorer', type: 'action', label: 'Files', iconName: 'FileText', action: 'file-explorer' },
   { id: 'dock-backlog', type: 'action', label: 'Backlog', iconName: 'KanbanSquare', action: 'backlog' },
   { id: 'dock-mental-draw-toggle', type: 'action', label: 'Enable Mental Authoring', iconName: 'PenTool', action: 'mental-draw-toggle' },
@@ -167,6 +173,26 @@ export interface DesktopNotification {
   read: boolean;
 }
 
+// ─── Auto-chat panel — lightweight intent history ─────────────────
+//
+// One entry per intent submitted to HudAutoChatPanel: what was typed + what
+// it materialized (or the error). This is deliberately NOT a multi-turn
+// agent transcript (F0 spec + plan Task W1) — assemblePipeline is a one-shot
+// intent→PipelineAssembly call, not a conversation, so there is no
+// "assistant reply" to log, only the outcome of materializing (or failing
+// to materialize) a flow. Real per-step tool/transcript evidence lives in
+// StepRunEvidence (Task T), which this history does NOT attempt to
+// duplicate. NOT persisted (see `autoChatHistory` below) — mirrors
+// `notifications`'s session-only lifetime.
+export interface AutoChatHistoryEntry {
+  id: string;
+  intent: string;
+  timestamp: number;
+  result:
+    | { kind: 'success'; frameId: string; stepCount: number }
+    | { kind: 'error'; message: string };
+}
+
 interface AddStepNodeInput {
   id?: string;
   parentId?: string;
@@ -208,7 +234,14 @@ interface InsertPipelineAssemblyResult {
 
 // ─── HUD Widget Types ─────────────────────────────────────────────
 
-export type HudWidgetType = 'agent-sessions' | 'text-to-flow' | 'notifications';
+// 'text-to-flow' renamed to 'auto-chat' (chats→steps re-architecture, F0
+// decision 2, 2026-07-10): the one-shot intent→flow widget IS the single
+// automation-chat surface the F0 spec calls for — evolved in place (new
+// history list, same assemblePipeline→insertPipelineAssembly seam) rather
+// than adding a second, overlapping HUD widget. Migration v20 renames the
+// persisted type in place (mirrors the v16→v17 'text-to-pipeline'→
+// 'text-to-flow' precedent below); merge()'s alias is the defensive backstop.
+export type HudWidgetType = 'agent-sessions' | 'auto-chat' | 'notifications';
 
 export interface HudWidget {
   type: HudWidgetType;
@@ -220,7 +253,7 @@ export interface HudWidget {
 // Default positions (fixed px, not window-relative so they work before mount)
 const DEFAULT_HUD_WIDGETS: HudWidget[] = [
   { type: 'agent-sessions',   visible: false, position: { x: 900, y: 80 } },
-  { type: 'text-to-flow', visible: true,  position: { x: 360, y: 140 } },
+  { type: 'auto-chat',    visible: true,  position: { x: 360, y: 140 } },
   { type: 'notifications',    visible: false, position: { x: 900, y: 360 } },
 ];
 
@@ -263,7 +296,10 @@ interface DesktopStore {
   copyWindows: () => void;
   pasteWindows: () => void;
 
-  // Flow connectors (max 1 per window)
+  // Flow connectors (max 1 per window) — retired alongside 'chat' (F0
+  // decision 2/4): connectFlow always returns false now, see its
+  // implementation comment. disconnectFlow stays a plain, ungated setter
+  // (used generically by removeAttachedItem/detachFromWindow).
   connectFlow: (windowId: string, flowName: string) => boolean;
   disconnectFlow: (windowId: string) => void;
 
@@ -302,7 +338,7 @@ interface DesktopStore {
   ) => string;
   removeAttachable: (attachableId: string) => void;
   moveAttachable: (attachableId: string, position: WindowPosition) => void;
-  /** Drop an attachable onto a chat window — attaches and removes from canvas */
+  /** Retired alongside 'chat' (F0 decision 2) — was: drop an attachable onto a chat window (attaches and removes from canvas). Always returns false now, see the implementation comment. */
   attachToWindow: (attachableId: string, windowId: string) => boolean;
   /** Detach a role/mod/flow from a window — respawns as attachable on canvas */
   detachFromWindow: (windowId: string, type: AttachableType, name: string) => void;
@@ -456,6 +492,27 @@ interface DesktopStore {
   markAllRead: () => void;
   clearNotifications: () => void;
 
+  // ─── Auto-chat panel (HudAutoChatPanel) — NOT persisted, see the
+  // AutoChatHistoryEntry doc comment for why this isn't a transcript.
+  autoChatHistory: AutoChatHistoryEntry[];
+  addAutoChatHistoryEntry: (entry: Omit<AutoChatHistoryEntry, 'id' | 'timestamp'>) => void;
+  clearAutoChatHistory: () => void;
+
+  // ─── Mono-step gesture (W2) — transient "please focus me" signal ──
+  // Set the moment a step is created via the double-click-empty-canvas
+  // gesture (or any future launcher that wants the same "ready to type"
+  // feel), naming the step whose input should grab DOM focus once. NOT
+  // persisted (transient UI signal only) — mirrors `mentalEditingNodeId`'s
+  // shape. Consumer contract: whichever component owns the step's
+  // prompt/text input (Task H2, ola B1 — no such input exists on the canvas
+  // yet as of this task) should watch this id, focus its own input when it
+  // matches its `stepId`, then call `setPendingStepFocusId(null)` so it only
+  // fires once. Until H2 lands, nothing consumes this — the gesture below
+  // (W2) still selects the step and opens the Inspector so it's visible and
+  // ready, this field just carries the "and please focus" intent forward.
+  pendingStepFocusId: string | null;
+  setPendingStepFocusId: (id: string | null) => void;
+
   // Navigator highlight — Figma-style hover/select border
   hoveredWindowId: string | null;
   setHoveredWindowId: (id: string | null) => void;
@@ -497,7 +554,16 @@ interface DesktopStore {
   /** Pan the canvas so a given window is centered in the viewport */
   navigateToWindow: (windowId: string) => void;
 
-  // Project picker modal (for new chat creation)
+  // Project picker modal — was: pick a child project before spawning a chat
+  // window. 'chat' is retired (F0 decision 2) and Dock.tsx (its only
+  // renderer) no longer mounts <ProjectPickerModal>, so setting this flag
+  // is now a no-op in the UI. Left in place (not deleted) only because
+  // App.tsx's Cmd+N shortcut and SeamlessCanvas.tsx's canvas context-menu
+  // "New Chat" action still call `setShowProjectPicker` — both outside this
+  // task's territory; see this task's final report for the exact call
+  // sites pending reassignment (Cmd+N → mono-step is already Task L's job;
+  // the canvas context-menu entry is a newly-found 6th chat-launcher not
+  // yet assigned to anyone).
   showProjectPicker: boolean;
   pendingChatPosition: WindowPosition | null;
   setShowProjectPicker: (v: boolean, position?: WindowPosition | null) => void;
@@ -634,10 +700,11 @@ export const useDesktopStore = create<DesktopStore>()(
         const position = opts?.position ?? getViewportCenteredSpawnPosition(state.canvasPan, state.canvasZoom);
         const size = opts?.size ?? DEFAULT_WINDOW_SIZE;
         const zIndex = globalTopZ(state);
-        const cliProv = opts?.cliProvider ?? state.cliProvider;
-        const defaultTitle = type === 'chat'
-          ? (CLI_THEME_COLORS[cliProv]?.label ?? cliProv)
-          : type === 'file-explorer' ? 'Files'
+        // 'chat' branch retired alongside DesktopWindow['type'] (F0 decision 2,
+        // 2026-07-10) — every remaining type falls through this ternary chain
+        // exactly as it did before (the 'chat' arm was always first/exclusive,
+        // never reached by any other type).
+        const defaultTitle = type === 'file-explorer' ? 'Files'
           : type === 'backlog' ? 'Backlog'
           : type === 'file-viewer' ? (opts?.title ?? 'File')
           : type === 'diff-viewer' ? (opts?.title ?? 'Diff Viewer')
@@ -645,9 +712,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'web-preview' ? (opts?.title ?? 'Preview')
           : type === 'arena' ? 'Fluxor Arena'
           : 'Plugin';
-        const defaultIcon = type === 'chat'
-          ? CLI_ICON_NAMES[cliProv]
-          : type === 'file-explorer' ? 'FileText'
+        const defaultIcon = type === 'file-explorer' ? 'FileText'
           : type === 'backlog' ? 'KanbanSquare'
           : type === 'file-viewer' ? 'FileCode2'
           : type === 'diff-viewer' ? 'GitCompareArrows'
@@ -665,7 +730,7 @@ export const useDesktopStore = create<DesktopStore>()(
           zIndex,
           state: 'normal',
           sessionId: opts?.sessionId,
-          cliProvider: type === 'chat' ? cliProv : undefined,
+          cliProvider: undefined,
           pluginId: opts?.pluginId,
           roleId: opts?.roleId,
           modifierIds: opts?.modifierIds ?? [],
@@ -862,9 +927,22 @@ export const useDesktopStore = create<DesktopStore>()(
       },
 
       // ─── Flow Connectors (max 1 per window) ────────────
+      // Retired (F0 decision 2/4, 2026-07-10): flow-attach-to-WINDOW was only
+      // ever valid for chat windows (the sole drop target it supported,
+      // enforced by the guard below) — 'chat' no longer exists, and flows
+      // themselves change nature from "attach to a window" to "prebuilt
+      // pipeline copied to the board" (market F4 task, insertPipelineAssembly
+      // directly). No window can satisfy `isChatWindowTarget` anymore, so
+      // this always fails now — identical observable behavior to before for
+      // every window type that still exists (they never passed the old
+      // `win.type === 'chat'` gate either). Kept as a no-op (not deleted) so
+      // AttachableFlow.tsx/RightFlowAttachment.tsx — retired by the market
+      // F4 task, not yet landed as of this task — still compile; safe to
+      // delete alongside them.
       connectFlow: (windowId, flowName) => {
         const win = get().windows.find(w => w.id === windowId);
-        if (!win || win.type !== 'chat') return false;
+        const isChatWindowTarget = false; // was: win.type === 'chat' — 'chat' retired
+        if (!win || !isChatWindowTarget) return false;
         get()._updateWindow(windowId, { flowId: flowName });
         return true;
       },
@@ -1051,7 +1129,14 @@ export const useDesktopStore = create<DesktopStore>()(
         const state = get();
         const att = state.attachables.find(a => a.id === attachableId);
         const win = state.windows.find(w => w.id === windowId);
-        if (!att || !win || win.type !== 'chat') return false;
+        // Retired (F0 decision 2, 2026-07-10): attaching a role/mod to a
+        // WINDOW (vs. a step) was only ever valid for chat windows, the sole
+        // drop target this supported — 'chat' no longer exists, so no window
+        // can ever satisfy this anymore. Same "always false, zero observable
+        // change for surviving window types" reasoning as connectFlow above
+        // — see that comment for why this is kept rather than deleted.
+        const isChatWindowTarget = false; // was: win.type === 'chat' — 'chat' retired
+        if (!att || !win || !isChatWindowTarget) return false;
 
         // Flows and steps are independent — they cannot be linked to a chat window.
         if (att.type === 'flow' || att.type === 'step') return false;
@@ -2136,6 +2221,26 @@ export const useDesktopStore = create<DesktopStore>()(
       })),
       clearNotifications: () => set({ notifications: [], unreadCount: 0 }),
 
+      // ─── Auto-chat panel — lightweight intent history (NOT persisted,
+      // deliberately absent from `partialize` below — see the
+      // AutoChatHistoryEntry doc comment) ─────────────────────
+      autoChatHistory: [],
+      addAutoChatHistoryEntry: (entry) => set((s) => {
+        const full: AutoChatHistoryEntry = {
+          id: `auto-chat-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          ...entry,
+        };
+        // Capped like `notifications` above — a lightweight log, not an
+        // ever-growing transcript.
+        return { autoChatHistory: [full, ...s.autoChatHistory].slice(0, 20) };
+      }),
+      clearAutoChatHistory: () => set({ autoChatHistory: [] }),
+
+      // ─── Mono-step gesture (W2) — see the interface doc comment above ──
+      pendingStepFocusId: null,
+      setPendingStepFocusId: (id) => set({ pendingStepFocusId: id }),
+
       // Navigator highlight
       hoveredWindowId: null,
       setHoveredWindowId: (id) => set({ hoveredWindowId: id }),
@@ -2246,7 +2351,7 @@ export const useDesktopStore = create<DesktopStore>()(
     }),
     {
       name: 'fluxor-desktop',
-      version: 18,
+      version: 20,
       // Debounce localStorage writes: `partialize` below now includes
       // `boards[]` (the full mental graph of EVERY board, not just the one
       // on screen), so persist's default synchronous stringify-and-write on
@@ -2584,6 +2689,69 @@ export const useDesktopStore = create<DesktopStore>()(
           if (typeof persisted.canvasZoom !== 'number') persisted.canvasZoom = 1;
         }
 
+        // v18 → v19: retire the 'chat' window type (chats→steps
+        // re-architecture, F0 decision 2, 2026-07-10) — general chat is no
+        // longer a window surface; code-editing work happens through
+        // launched steps, and the single automation chat lives outside the
+        // window system (HudAutoChatPanel, a fixed HUD panel — see the v20
+        // migration below for its own HUD-widget-slot rename). Two
+        // migrations bundled here (same idiom as v13→v14's unrelated
+        // zoom+arena bundle above):
+        // (a) Tombstone: any persisted 'chat' window is dropped rather than
+        //     left to hydrate with a type DesktopWindow['type'] no longer
+        //     declares (which would crash the render switch) — mirrors the
+        //     v14 arena-window drop and v5 mind-map-window drop above.
+        //     Never a silent surprise: a notification tells the user what
+        //     happened and where their new "start work" affordances are.
+        //     Stashed directly onto `persisted.notifications` (not part of
+        //     `partialize`, so merge()'s `{ ...currentState, ...persisted }`
+        //     spread is what actually seeds it — see merge() below).
+        // (b) The Dock's "New Chat" item is relabeled in place to reflect
+        //     its new behavior (reveals the Auto-Chat HUD panel instead of
+        //     spawning a chat window) — `id`/`action` stay 'new-chat' (see
+        //     DEFAULT_DOCK_ITEMS's own comment), only `label` changes, same
+        //     ordered-patch idiom the v3→v4/v15→v16 dock migrations use.
+        if (version < 19 && persisted) {
+          if (Array.isArray(persisted.windows)) {
+            const retiredChatWindows = persisted.windows.filter((w: any) => w?.type === 'chat');
+            if (retiredChatWindows.length > 0) {
+              persisted.windows = persisted.windows.filter((w: any) => w?.type !== 'chat');
+              const n = retiredChatWindows.length;
+              const notice = {
+                id: `notif-migration-chat-retired-${Date.now()}`,
+                message: `${n} chat window${n === 1 ? '' : 's'} from an older version ${n === 1 ? 'was' : 'were'} removed — start new work from the Auto-Chat panel or by double-clicking the canvas.`,
+                timestamp: Date.now(),
+                read: false,
+              };
+              persisted.notifications = [notice, ...(Array.isArray(persisted.notifications) ? persisted.notifications : [])];
+              // `unreadCount` isn't in `partialize` either, but the same
+              // direct-stash-onto-`persisted` trick applies — keeps the
+              // widget-launcher's unread badge honest for this notice
+              // (mirrors `addNotification`'s own +1 bump).
+              persisted.unreadCount = (typeof persisted.unreadCount === 'number' ? persisted.unreadCount : 0) + 1;
+            }
+          }
+          if (Array.isArray(persisted.dockItems)) {
+            persisted.dockItems = persisted.dockItems.map((d: any) =>
+              d?.action === 'new-chat' ? { ...d, label: 'Auto-Chat' } : d
+            );
+          }
+        }
+
+        // v19 → v20: rename the 'text-to-flow' HUD widget to 'auto-chat'.
+        // Same rename idiom as v16→v17's 'text-to-pipeline' → 'text-to-flow'
+        // just above it in this same function — the one-shot intent→flow
+        // widget IS the auto-chat panel the F0 spec calls for (evolved in
+        // place with an intent-history list, not duplicated as a second
+        // overlapping HUD widget). merge()'s alias below is the defensive
+        // backstop for this rename, mirroring the existing 'text-to-pipeline'
+        // alias.
+        if (version < 20 && persisted && Array.isArray(persisted.hudWidgets)) {
+          persisted.hudWidgets = persisted.hudWidgets.map((w: any) =>
+            w?.type === 'text-to-flow' ? { ...w, type: 'auto-chat' } : w,
+          );
+        }
+
         return persisted ?? {};
       },
       merge: (persistedState, currentState) => {
@@ -2591,11 +2759,12 @@ export const useDesktopStore = create<DesktopStore>()(
         const savedWidgets = Array.isArray(persisted.hudWidgets) ? persisted.hudWidgets : [];
         // Reconcile HUD widgets against the canonical defaults: drop unknown/removed
         // types and carry persisted visibility/position by type (aliasing the legacy
-        // 'text-to-pipeline' → 'text-to-flow'), so no invalid type can ever hydrate
-        // and crash the Desktop via WIDGET_META[type].
+        // 'text-to-pipeline' → 'text-to-flow' → 'auto-chat' chain), so no invalid
+        // type can ever hydrate and crash the Desktop via WIDGET_META[type].
         const hudWidgets = DEFAULT_HUD_WIDGETS.map((def) => {
           const saved = savedWidgets.find((w) =>
-            w?.type === def.type || (def.type === 'text-to-flow' && (w?.type as string) === 'text-to-pipeline'),
+            w?.type === def.type ||
+            (def.type === 'auto-chat' && ((w?.type as string) === 'text-to-flow' || (w?.type as string) === 'text-to-pipeline')),
           );
           return saved
             ? {

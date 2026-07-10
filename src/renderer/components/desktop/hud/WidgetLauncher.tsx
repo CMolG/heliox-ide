@@ -21,13 +21,15 @@ import { theme } from '../../../logic/theme';
 
 // ─── Widget label map ────────────────────────────────────────────
 
+// 'text-to-flow' renamed to 'auto-chat' (chats→steps re-architecture) — see
+// the HudWidgetType comment in desktop-store.ts.
 const WIDGET_LABELS: Record<HudWidgetType, { label: string; iconName: string }> = {
   'agent-sessions':   { label: 'Agent Sessions',   iconName: 'Bot' },
-  'text-to-flow':     { label: 'Text to Flow',     iconName: 'Workflow' },
+  'auto-chat':        { label: 'Auto-Chat',        iconName: 'Workflow' },
   'notifications':    { label: 'Notifications',    iconName: 'Bell' },
 };
 
-const WIDGET_ORDER: HudWidgetType[] = ['agent-sessions', 'text-to-flow', 'notifications'];
+const WIDGET_ORDER: HudWidgetType[] = ['agent-sessions', 'auto-chat', 'notifications'];
 
 // ─── Component ───────────────────────────────────────────────────
 
