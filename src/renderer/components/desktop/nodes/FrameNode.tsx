@@ -73,6 +73,24 @@ const POLICY_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'smart-external', label: 'Smart · External (OpenRouter)' },
 ];
 
+// ─── Rosetta context-mode select — flow-level toggle (spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md) ───
+//
+// Pure value<->contextMode mapping, exported so it's unit-testable in
+// isolation (same rationale as policyToValue/valueToPolicy above). Only one
+// direction is needed — the <select>'s value IS already exactly
+// 'blind' | 'feedback' (no composite encoding like modelPolicy's
+// `smart-local:<strategy>`), so the onChange handler below casts
+// `event.target.value` directly instead of round-tripping through a decoder.
+export function contextModeToValue(mode: FrameNodeData['contextMode']): 'blind' | 'feedback' {
+  return mode === 'feedback' ? 'feedback' : 'blind';
+}
+
+const CONTEXT_MODE_OPTIONS: ReadonlyArray<{ value: 'blind' | 'feedback'; label: string }> = [
+  { value: 'blind', label: 'Blind (default)' },
+  { value: 'feedback', label: 'Feedback' },
+];
+
 // Quiet power-user affordance, not a headline — a native <select> keeps full
 // keyboard/AT support for free (same rationale as StepInfoModal's AtomPicker).
 // No dedicated CSS class exists for it (this file is CSS-change-restricted
@@ -127,6 +145,7 @@ export const FrameNode = React.memo(function FrameNode({ id, data }: NodeProps) 
   const bringMentalToFront = useDesktopStore((s) => s.bringMentalToFront);
   const modelPolicy = useDesktopStore((s) => s.settings?.modelPolicy) ?? FIXED_POLICY;
   const setModelPolicy = useDesktopStore((s) => s.setModelPolicy);
+  const updateFrameData = useDesktopStore((s) => s.updateFrameData);
   const compileCurrentCanvas = useHarnessStore((s) => s.compileCurrentCanvas);
   const startExecution = useHarnessStore((s) => s.startExecution);
   const executionStatus = useHarnessStore((s) => s.executionStatus);
@@ -138,6 +157,15 @@ export const FrameNode = React.memo(function FrameNode({ id, data }: NodeProps) 
   const handlePolicyChange = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
     setModelPolicy(valueToPolicy(event.target.value));
   }, [setModelPolicy]);
+
+  // Writes FrameNodeData.contextMode directly (this Frame's own canvas data),
+  // NOT settings.modelPolicy above — contextMode is per-flow, not global. The
+  // full chain: this toggle -> FrameNodeData.contextMode -> harness-compiler.ts
+  // copies it onto the compiled AgenticFlow -> the executor reads
+  // AgenticFlow.contextMode to decide blind vs feedback.
+  const handleContextModeChange = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
+    updateFrameData(id, { contextMode: event.target.value as 'blind' | 'feedback' });
+  }, [id, updateFrameData]);
 
   const isBusy = executionStatus === 'compiling' || executionStatus === 'running';
 
@@ -222,6 +250,35 @@ export const FrameNode = React.memo(function FrameNode({ id, data }: NodeProps) 
           group so Export stays flush next to Run regardless of Run's label
           width (Run/Compiling/Running/Completed/Failed/Paused). */}
       <div className="pipeline-frame-actions">
+        {/* Rosetta context-mode select — flow-level toggle for the context
+            system (docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md).
+            Placed leftmost, before Model policy: it's a structural, set-once-
+            per-flow-design choice (in 'feedback', the executor injects a
+            <flow_awareness> block + per-step context files; 'blind' — the
+            default — stays byte-identical to today), vs. Model policy's more
+            frequently re-tuned routing choice. Reading left to right: "how
+            this flow's steps see each other" -> "which model runs them" ->
+            Export/Run. */}
+        <div
+          className="pipeline-frame-context-mode nodrag"
+          title="Context mode for this flow"
+        >
+          <LucideIcon name="Eye" size={11} />
+          <select
+            className="pipeline-frame-context-mode-select"
+            data-testid={`pipeline-frame-context-mode-${id}`}
+            aria-label="Context mode for this flow"
+            value={contextModeToValue(frameData.contextMode)}
+            onChange={handleContextModeChange}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {CONTEXT_MODE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+
         {/* WS2 model-policy select — a quiet power-user affordance next to
             Export/Run, not a headline. Placed leftmost so Export stays flush
             next to Run (see the comment above this cluster). */}

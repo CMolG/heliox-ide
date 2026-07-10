@@ -20,7 +20,9 @@
  */
 import React from 'react';
 import { LucideIcon } from '../LucideIcon';
+import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
+import { findOwningFrame } from '../../../lib/harness-compiler';
 import type { StepNodeData } from '@/types/desktop';
 import type { AgenticExecutionStatus } from '@/types/harness';
 import type { RoutedModelEvidence } from '@/types/ipc-events';
@@ -82,6 +84,17 @@ const WHY_MODEL_METRICS_STYLE: React.CSSProperties = {
   color: '#a8a8b0',
 };
 
+// ─── Rosetta context-mode badge (spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md) ───
+//
+// Reuses `.step-config-atom-tag` (the same generic accent-pill class the
+// "Why this model" source tag above uses) rather than adding a new CSS rule
+// — this is purely a `--atom-accent` value, not a new visual language. Violet
+// ties it to the same "flow identity" hue FrameNode.tsx's workflow icon/
+// export button/context-mode select already use, distinct from every
+// status/routing color (green/amber/red/blue) this panel uses elsewhere.
+const CONTEXT_MODE_ACCENT = '#A78BFA';
+
 function formatLatency(ms: number): string {
   if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)} min`;
   if (ms >= 1_000) return `${(ms / 1_000).toFixed(2)} s`;
@@ -130,8 +143,41 @@ export function StepRunEvidence({ stepId, connections, status }: StepRunEvidence
   const stepModels = useHarnessStore((s) => s.stepModels) ?? {};
   const stepModelInfo = stepModels[stepId];
 
+  // Rosetta context-mode badge: derived from this step's OWNING FRAME (canvas
+  // data), not from `activeFlow` — a step-config surface must show the truth
+  // before any compile/run has happened, and `findOwningFrame` is the exact
+  // same lookup harness-compiler.ts uses to copy this value onto the compiled
+  // AgenticFlow (see harness-compiler.ts's `flowContextMode`). Plain (non-
+  // `useShallow`) selector returning a primitive — mirrors FrameNode.tsx's
+  // `roleCount` selector: recomputing the `.find()` every render is cheap,
+  // and returning just the primitive lets zustand's default `Object.is` bail
+  // out re-renders whenever it doesn't actually change.
+  const contextMode = useDesktopStore((s) => findOwningFrame(stepId, s.mentalNodes)?.data.contextMode);
+
   return (
     <>
+      {/* ── Rosetta context mode (feedback-only; absent in blind — no clutter
+          for the default/today's-behavior case) ── */}
+      {contextMode === 'feedback' && (
+        <div
+          className="step-config-connection-card"
+          data-testid="step-info-context-mode-card"
+          style={{ marginBottom: 10 }}
+        >
+          <div className="step-config-connection-label">Context</div>
+          <span
+            className="step-config-atom-tag"
+            data-testid="step-info-context-mode-badge"
+            style={{ ['--atom-accent' as string]: CONTEXT_MODE_ACCENT }}
+          >
+            Feedback mode
+          </span>
+          <p className="step-config-hint">
+            This flow's steps read and write shared context files under .fluxor/run-context during the run.
+          </p>
+        </div>
+      )}
+
       {/* ── Why this model (WS2 routing evidence) ── */}
       {stepModelInfo && (
         <div

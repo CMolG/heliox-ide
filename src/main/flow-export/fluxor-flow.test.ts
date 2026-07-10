@@ -605,3 +605,57 @@ describe('legacy format tag compat', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 8 — contextMode round-trip (Rosetta, spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md)
+// ---------------------------------------------------------------------------
+
+describe('contextMode export/import round-trip', () => {
+  it('omits the contextMode key entirely when the flow has no contextMode (blind default) — byte-identical to a pre-feedback export', () => {
+    const exported = exportFlow(makeTestFlow());
+    expect('contextMode' in exported).toBe(false);
+    expect(JSON.stringify(exported)).not.toContain('"contextMode"');
+  });
+
+  it('omits the contextMode key when the flow explicitly declares "blind"', () => {
+    const flow = { ...makeTestFlow(), contextMode: 'blind' as const };
+    const exported = exportFlow(flow);
+    expect('contextMode' in exported).toBe(false);
+    expect(JSON.stringify(exported)).not.toContain('"contextMode"');
+  });
+
+  it('includes contextMode: "feedback" when the flow declares it', () => {
+    const flow = { ...makeTestFlow(), contextMode: 'feedback' as const };
+    const exported = exportFlow(flow);
+    expect(exported.contextMode).toBe('feedback');
+  });
+
+  it('restores contextMode: "feedback" on import', () => {
+    const flow = { ...makeTestFlow(), contextMode: 'feedback' as const };
+    const restored = importFlow(exportFlow(flow));
+    expect(restored.contextMode).toBe('feedback');
+  });
+
+  it('leaves contextMode undefined on import when the export carries none (never defaults it to the literal "blind")', () => {
+    const restored = importFlow(exportFlow(makeTestFlow()));
+    expect(restored.contextMode).toBeUndefined();
+    expect('contextMode' in restored).toBe(false);
+  });
+
+  it('round-trips a feedback-mode flow through export→import→export with a stable result', () => {
+    const flow = { ...makeTestFlow(), contextMode: 'feedback' as const };
+    const exportedOnce = exportFlow(flow);
+    const reimported = importFlow(exportedOnce);
+    const exportedTwice = exportFlow(reimported);
+    expect(exportedTwice).toEqual(exportedOnce);
+  });
+
+  it('does not perturb any other field on the export when contextMode is present', () => {
+    const blindExported = exportFlow(makeTestFlow());
+    const feedbackFlow = { ...makeTestFlow(), contextMode: 'feedback' as const };
+    const feedbackExported = exportFlow(feedbackFlow);
+    const { contextMode: _omit, ...feedbackWithoutContextMode } = feedbackExported;
+    expect(feedbackWithoutContextMode).toEqual(blindExported);
+  });
+});

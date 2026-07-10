@@ -26,6 +26,7 @@ import { verifyApi } from './execution/api-verifier';
 import type { ApiVerificationResult } from './execution/api-verifier';
 import type {
   PFCognitiveTraceEntry,
+  PFContextMode,
   PFConversationEntry,
   PFGroundTruth,
   PFJudgeRunner,
@@ -44,6 +45,17 @@ export interface RunPerformanceFrontierOptions {
   stepTimeoutMs?: number;
   runStep?: PFStepRunner;
   judge?: PFJudgeRunner;
+  /**
+   * Forces every step's `AgenticFlow.contextMode` for this run (Step P1:
+   * docs/superpowers/plans/2026-07-10-flow-context-modes.md). Omitted:
+   * whatever the suite's generated flow(s) already carry — today always
+   * absent/blind, since `case-factory.ts` never sets it. Applied to every
+   * epoch's flow for `progression`; a no-op for `flow-assembler` (it never
+   * calls `executeAgenticFlow` — see the branch below), where the CLI layer
+   * (cli.ts / bench/cli.ts) is responsible for warning the caller instead of
+   * silently doing nothing.
+   */
+  contextMode?: PFContextMode;
   assemblePipeline?: (userIntent: string, options?: AssemblePipelineOptions) => Promise<PipelineAssembly>;
   verifyDevelopment?: (vfsSnapshot: Record<string, string>) => Promise<TestVerificationResult>;
   verifyDesign?: (vfsSnapshot: Record<string, string>) => Promise<A11yVerificationResult>;
@@ -98,6 +110,29 @@ export async function runPerformanceFrontier(
   const ledgerPath = join(outputDir, 'pf-history.jsonl');
   const runId = createRunId(seed);
   const testCase = createPerformanceCase({ suite, seed });
+
+  // `--context-mode` override (Step P1): forces the mode for every flow this
+  // run will execute, taking precedence over whatever `case-factory.ts`
+  // built. Skipped for `flow-assembler`, which never calls
+  // `executeAgenticFlow` — setting it there would write a misleading
+  // "feedback" ledger record for a run where nothing feedback-related
+  // happened; the CLI layer warns the caller about this no-op instead.
+  if (options.contextMode && suite !== 'flow-assembler') {
+    if (suite === 'progression') {
+      for (const epoch of testCase.epochs ?? []) {
+        epoch.flow.contextMode = options.contextMode;
+      }
+    } else {
+      testCase.flow.contextMode = options.contextMode;
+    }
+  }
+
+  // Effective mode actually carried by `testCase.flow` after the override
+  // above — absent reads as `'blind'` (Step P2's ledger contract: records
+  // written before this field existed, or for flows that never set it,
+  // default to blind on read). Recorded verbatim in every ledger branch below.
+  const effectiveContextMode: PFContextMode = testCase.flow.contextMode ?? 'blind';
+
   const telemetry = new PerformanceTelemetryCollector();
   const conversation: PFConversationEntry[] = [];
   const cognitiveTrace: PFCognitiveTraceEntry[] = [];
@@ -192,6 +227,7 @@ export async function runPerformanceFrontier(
       caseId: testCase.id,
       seed,
       modelId,
+      contextMode: effectiveContextMode,
       finalScore: judgeResult.finalScore,
       semanticScore: judgeResult.semanticScore,
       telemetryScore: judgeResult.telemetryScore,
@@ -344,6 +380,7 @@ export async function runPerformanceFrontier(
         caseId: testCase.id,
         seed,
         modelId,
+        contextMode: effectiveContextMode,
         finalScore: judgeResult.finalScore,
         semanticScore: judgeResult.semanticScore,
         telemetryScore: judgeResult.telemetryScore,
@@ -494,6 +531,7 @@ export async function runPerformanceFrontier(
       caseId: testCase.id,
       seed,
       modelId,
+      contextMode: effectiveContextMode,
       finalScore: judgeResult.finalScore,
       semanticScore: judgeResult.semanticScore,
       telemetryScore: judgeResult.telemetryScore,

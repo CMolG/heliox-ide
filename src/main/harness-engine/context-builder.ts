@@ -18,6 +18,19 @@
  * assembled: the Single Persona rule (at most one role per step) and pairwise
  * mod compatibility (no two attached mods may be mutually `incompatibleWith`
  * or share an `exclusiveGroup`).
+ *
+ * `<flow_awareness>` (feedback-mode flows, spec:
+ * docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md): a 100%
+ * harness-generated reference block appended to the system prompt AFTER
+ * `<execution_constraints>` — topology summary, this step's assigned context
+ * file, and the briefing files it should write before finishing. Rendered
+ * only when the caller (executor.ts, feedback mode only) passes
+ * `options.flowAwareness`; entirely absent otherwise, so blind-mode output is
+ * byte-identical to before this block existed. It is reference material, not
+ * law — placed after, never inside, `<execution_constraints>` — and its
+ * CONTENTS are always harness-derived strings (paths, prompts already present
+ * on the step, counts); no other step's LLM-authored briefing text is ever
+ * injected here — those are read by the step itself via its own FS tools.
  */
 import type { AgenticMod, AgenticStep } from '../../types/harness';
 import type { RetrievedChunk } from './retriever';
@@ -26,6 +39,20 @@ export interface StepContext {
   systemPrompt: string;
   userPrompt: string;
   preProcessOutputs: Array<{ modId: string; output: string }>;
+}
+
+/**
+ * Feedback-mode flow-awareness data for one step, precomputed by the executor
+ * from the run's ContextManifest (context-manifest.ts) — this module only
+ * renders it, it never derives flow shape/paths itself.
+ */
+export interface FlowAwarenessInput {
+  /** Deterministic per-flow topology summary lines (see context-manifest.ts's buildTopologySummaryLines). */
+  topologyLines: string[];
+  /** This step's own assigned context file, rootDir-relative — reachable with the step's existing read_file tool. */
+  assignedFile: string;
+  /** Context files (rootDir-relative) this step should write briefings into before finishing. Empty for exempt/terminal steps. */
+  writesTo: string[];
 }
 
 export interface BuildStepContextOptions {
@@ -42,6 +69,13 @@ export interface BuildStepContextOptions {
    * the normal DAG context mechanism.
    */
   injectedChunks?: RetrievedChunk[];
+  /**
+   * Feedback-mode flow awareness (see FlowAwarenessInput). Undefined for
+   * every blind-mode run (the default) and for `retriever` steps (their
+   * branch never reaches buildStepContext with this set) — omission produces
+   * byte-identical output to a build with no knowledge of this feature.
+   */
+  flowAwareness?: FlowAwarenessInput;
 }
 
 function stringifyConfig(config: Record<string, unknown> | undefined): string {
@@ -140,9 +174,42 @@ function buildExecutionConstraints(constraintOutputs: Array<{ modId: string; out
   ].join('\n');
 }
 
+/**
+ * Renders `<flow_awareness>` — reference material, not a constraint (see
+ * module header). Returns '' when `input` is undefined so the caller's
+ * `.filter(Boolean)` drops it entirely, leaving zero trace in the assembled
+ * system prompt for blind-mode runs.
+ */
+function buildFlowAwareness(input: FlowAwarenessInput | undefined): string {
+  if (!input) return '';
+
+  const lines = [
+    '<flow_awareness>',
+    'This flow runs in feedback mode: steps share context through files in the workspace, read/written with your existing file tools. This section is operational reference material, not a constraint — the execution_constraints above still take precedence.',
+    '',
+    'Flow topology:',
+    ...input.topologyLines,
+    '',
+    `Your assigned context file: ${input.assignedFile}`,
+    'Read it with read_file first if it might carry a useful briefing from an earlier step.',
+  ];
+
+  if (input.writesTo.length > 0) {
+    lines.push(
+      '',
+      'Before you finish this step, use write_file to leave a short briefing in each of the following files, for the steps that depend on you:',
+      ...input.writesTo.map((path) => `- ${path}`),
+    );
+  }
+
+  lines.push('</flow_awareness>');
+  return lines.join('\n');
+}
+
 function buildSystemPrompt(
   step: AgenticStep,
   constraintOutputs: Array<{ modId: string; output: string }>,
+  flowAwareness?: FlowAwarenessInput,
 ): string {
   const roleLines = step.roles.length > 0
     ? step.roles.map((role) => `[${role.name}]\n${role.systemPrompt}`).join('\n\n')
@@ -160,6 +227,7 @@ function buildSystemPrompt(
     systemMods.length > 0
       ? ['<system_modifiers>', ...systemMods, '</system_modifiers>'].join('\n')
       : '',
+    buildFlowAwareness(flowAwareness),
   ].filter(Boolean).join('\n\n');
 }
 
@@ -248,7 +316,7 @@ export async function buildStepContext(
   ].filter(Boolean).join('\n\n');
 
   return {
-    systemPrompt: buildSystemPrompt(step, constraintOutputs),
+    systemPrompt: buildSystemPrompt(step, constraintOutputs, options.flowAwareness),
     userPrompt,
     preProcessOutputs,
   };

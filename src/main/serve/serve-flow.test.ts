@@ -19,7 +19,9 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtemp, readFile as nodeReadFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgenticStep } from '@/types/harness';
 import type { HarnessEventPayload } from '@/types/ipc-events';
@@ -437,5 +439,118 @@ describe('createFlowServer — validation', () => {
       rootStepId: 'nonexistent',
     };
     expect(() => createFlowServer(bad)).toThrow(/rootStepId/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// contextMode — Rosetta context system (spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md)
+//
+// serve-flow inherits contextMode from the export (importFlow already
+// restores AgenticFlow.contextMode — see fluxor-flow.test.ts) and accepts an
+// optional per-request override in POST /run's body, validated to
+// 'blind'|'feedback'.
+// ---------------------------------------------------------------------------
+
+describe('POST /run — contextMode', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'fluxor-serve-context-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects an invalid contextMode value with 400, before execution starts', async () => {
+    const p = await pickFreePort();
+    const handle = createFlowServer(exported, { runStep: makeScriptedRunStep(), rootDir: tmpDir });
+    await handle.listen(p);
+    try {
+      const { status, body } = await postRun(
+        `http://127.0.0.1:${p}`,
+        { contextMode: 'bogus' },
+        authHeader(handle.token),
+      );
+      expect(status).toBe(400);
+      expect((body as Record<string, unknown>).error).toMatch(/contextMode/i);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('overriding contextMode: "feedback" in the body materializes a run-context manifest under the given rootDir', async () => {
+    const p = await pickFreePort();
+    const handle = createFlowServer(exported, { runStep: makeScriptedRunStep(), rootDir: tmpDir });
+    await handle.listen(p);
+    try {
+      const { status } = await postRun(
+        `http://127.0.0.1:${p}`,
+        { contextMode: 'feedback' },
+        authHeader(handle.token),
+      );
+      expect(status).toBe(200);
+    } finally {
+      await handle.close();
+    }
+
+    const entries = await import('node:fs/promises').then((fs) => fs.readdir(join(tmpDir, '.fluxor', 'run-context')));
+    expect(entries.length).toBeGreaterThan(0);
+    const manifestPath = join(tmpDir, '.fluxor', 'run-context', entries[0], 'manifest.json');
+    const manifest = JSON.parse(await nodeReadFile(manifestPath, 'utf-8'));
+    expect(manifest.contextMode).toBe('feedback');
+    expect(manifest.flowId).toBe(exported.id);
+  });
+
+  it('a body override does not mutate the shared flow across requests (no cross-request leakage)', async () => {
+    const p = await pickFreePort();
+    const handle = createFlowServer(exported, { runStep: makeScriptedRunStep(), rootDir: tmpDir });
+    await handle.listen(p);
+    try {
+      // First request opts into feedback...
+      await postRun(`http://127.0.0.1:${p}`, { contextMode: 'feedback' }, authHeader(handle.token));
+      // ...a second, plain request must NOT inherit that as a side effect.
+      const before = await import('node:fs/promises').then((fs) => fs.readdir(join(tmpDir, '.fluxor', 'run-context')));
+      await postRun(`http://127.0.0.1:${p}`, {}, authHeader(handle.token));
+      const after = await import('node:fs/promises').then((fs) => fs.readdir(join(tmpDir, '.fluxor', 'run-context')));
+      // No NEW run-context directory was created for the plain (blind) request.
+      expect(after.length).toBe(before.length);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('inherits contextMode: "feedback" from the export itself when the body carries no override', async () => {
+    const feedbackExported: FluxorFlowExport = { ...exported, contextMode: 'feedback' };
+    const p = await pickFreePort();
+    const handle = createFlowServer(feedbackExported, { runStep: makeScriptedRunStep(), rootDir: tmpDir });
+    await handle.listen(p);
+    try {
+      const { status } = await postRun(`http://127.0.0.1:${p}`, {}, authHeader(handle.token));
+      expect(status).toBe(200);
+    } finally {
+      await handle.close();
+    }
+
+    const entries = await import('node:fs/promises').then((fs) => fs.readdir(join(tmpDir, '.fluxor', 'run-context')));
+    expect(entries.length).toBeGreaterThan(0);
+  });
+
+  it('an explicit contextMode: "blind" override wins over a feedback export (no manifest created)', async () => {
+    const feedbackExported: FluxorFlowExport = { ...exported, contextMode: 'feedback' };
+    const p = await pickFreePort();
+    const handle = createFlowServer(feedbackExported, { runStep: makeScriptedRunStep(), rootDir: tmpDir });
+    await handle.listen(p);
+    try {
+      const { status } = await postRun(`http://127.0.0.1:${p}`, { contextMode: 'blind' }, authHeader(handle.token));
+      expect(status).toBe(200);
+    } finally {
+      await handle.close();
+    }
+
+    await expect(
+      import('node:fs/promises').then((fs) => fs.readdir(join(tmpDir, '.fluxor', 'run-context'))),
+    ).rejects.toThrow();
   });
 });

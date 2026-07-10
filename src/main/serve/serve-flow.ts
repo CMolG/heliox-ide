@@ -6,7 +6,14 @@
  *
  *   POST /run    — executes the flow; returns { completedStepIds, stepOutputs, finalOutput }.
  *                  When the request carries Accept: text/event-stream the response is
- *                  streamed as Server-Sent Events.
+ *                  streamed as Server-Sent Events. Body may carry an optional
+ *                  `contextMode: 'blind' | 'feedback'` override (spec:
+ *                  docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md)
+ *                  — absent ⇒ the served flow's own mode (inherited from the
+ *                  export by importFlow) applies unchanged; an invalid value
+ *                  is rejected with 400 before execution starts. The override
+ *                  is applied to a per-request shallow clone, never mutating
+ *                  the shared flow across requests.
  *   GET  /flow   — returns the loaded flow's { id, name, rootStepId, steps }.
  *   GET  /health — returns 200 { ok: true }.
  *
@@ -52,6 +59,15 @@ export interface ServeFlowOptions {
    * there is no way to end up with /run left unauthenticated.
    */
   token?: string;
+  /**
+   * Project root passed straight through to executeAgenticFlow. Matters most
+   * for a `contextMode: 'feedback'` flow (inherited from the export, or from
+   * a per-request body override — see handleRun): feedback-mode genesis
+   * writes the Rosetta run-context directory under this root (defaulting, as
+   * executeAgenticFlow always does, to `process.cwd()` when omitted). Unset
+   * by every existing caller, so behavior for a blind flow is unaffected.
+   */
+  rootDir?: string;
 }
 
 /**
@@ -207,6 +223,25 @@ function writeSseEvent(res: ServerResponse, event: HarnessEventPayload): void {
 }
 
 // ---------------------------------------------------------------------------
+// contextMode override (Rosetta context system, spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads an optional `contextMode` override from the /run request body.
+ * Absent ⇒ undefined (the served flow's own mode — inherited from the export
+ * by importFlow — applies unchanged). Present ⇒ must be exactly 'blind' or
+ * 'feedback'; anything else throws so the caller gets a 400, never a silent
+ * fallback to the export's mode.
+ */
+function resolveContextModeOverride(body: Record<string, unknown>): 'blind' | 'feedback' | undefined {
+  const raw = body.contextMode;
+  if (raw === undefined) return undefined;
+  if (raw === 'blind' || raw === 'feedback') return raw;
+  throw new Error(`Invalid contextMode "${String(raw)}" in request body — must be "blind" or "feedback".`);
+}
+
+// ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
 
@@ -220,6 +255,22 @@ async function handleRun(
   const body = parseJsonBody(raw);
   const modelId =
     typeof body.modelId === 'string' ? body.modelId : options.modelId;
+
+  // Validated BEFORE any SSE headers are written, so an invalid value always
+  // gets a clean 400 — never a silently-degraded stream.
+  let contextModeOverride: 'blind' | 'feedback' | undefined;
+  try {
+    contextModeOverride = resolveContextModeOverride(body);
+  } catch (error) {
+    jsonResponse(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  // A shallow clone (never mutating the shared `flow` closure the server
+  // reuses across every request) so one request's override can never leak
+  // into an unrelated later request against the same server instance.
+  const effectiveFlow: AgenticFlow = contextModeOverride !== undefined
+    ? { ...flow, contextMode: contextModeOverride }
+    : flow;
 
   const acceptSse = (req.headers['accept'] ?? '').includes('text/event-stream');
 
@@ -244,9 +295,10 @@ async function handleRun(
   harnessEventBus.on(HARNESS_EVENT_NAME, onEvent);
 
   try {
-    await executeAgenticFlow(flow, {
+    await executeAgenticFlow(effectiveFlow, {
       modelId,
       runStep: options.runStep,
+      rootDir: options.rootDir,
     });
 
     const result = extractFlowCompleted(collectedEvents);

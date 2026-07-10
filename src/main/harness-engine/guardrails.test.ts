@@ -85,6 +85,37 @@ describe('snapshotWorkspace', () => {
   it('returns empty for an absent file system', async () => {
     await expect(snapshotWorkspace(undefined)).resolves.toEqual({});
   });
+
+  it('never descends into node_modules or .git when walking a real tree', async () => {
+    const dirs: Record<string, string[]> = {
+      '/w': ['node_modules', '.git', 'src', 'a.txt'],
+      '/w/src': ['b.txt'],
+      '/w/node_modules': ['pkg'],
+      '/w/node_modules/pkg': ['huge.js'],
+      '/w/.git': ['HEAD'],
+    };
+    const files: Record<string, string> = {
+      '/w/a.txt': 'a',
+      '/w/src/b.txt': 'b',
+      '/w/node_modules/pkg/huge.js': 'never-read',
+      '/w/.git/HEAD': 'never-read',
+    };
+    const fs = {
+      readdir: async (d: string) => {
+        if (!(d in dirs)) throw new Error('ENOENT');
+        return dirs[d];
+      },
+      readFile: async (f: string) => {
+        if (!(f in files)) throw new Error('ENOENT');
+        return files[f];
+      },
+      stat: async (p: string) => ({ isDirectory: () => p in dirs }),
+    };
+    await expect(snapshotWorkspace(fs, '/w')).resolves.toEqual({
+      '/w/a.txt': 'a',
+      '/w/src/b.txt': 'b',
+    });
+  });
 });
 
 describe('mergeStepContracts — merging runtime mod contract fragments with a step contract', () => {

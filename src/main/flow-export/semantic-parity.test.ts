@@ -15,6 +15,8 @@
  */
 
 import { readFileSync } from 'fs';
+import { mkdtemp, readdir, readFile, rm } from 'fs/promises';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { executeAgenticFlow } from '../harness-engine/executor';
@@ -290,5 +292,166 @@ describe('cross-runtime loop execution parity — golden loop trace', () => {
     expect(stepIds.filter((id) => id === 'step-b2')).toHaveLength(3);
     expect(stepCIndex).toBe(stepIds.lastIndexOf('step-b2') + 1);
     expect(trace[stepCIndex]).toEqual({ stepId: 'step-c', output: 'C output' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite — contextMode: 'feedback' is additive (Rosetta, spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md)
+//
+// Java/Python downgrade contextMode: 'feedback' to blind on import in v1
+// (decision 2) — the cross-runtime CONTRACT this suite otherwise guards is
+// therefore untouched by feedback mode today. What this suite instead proves
+// for the TS runtime itself: turning feedback mode on for the SAME
+// conformance-chain flow this file already golden-traces does not perturb
+// that golden-trace text contract — the Rosetta machinery is confined to
+// side-channel files under .fluxor/run-context/, never the step outputs a
+// future runtime parity check would compare.
+// ---------------------------------------------------------------------------
+
+// Linear chain (confirmed by the "canonical DAG order" test above):
+// step-a → step-b → step-c → step-d → step-e. Each non-terminal step writes
+// a real briefing into its immediate successor's file — satisfying the
+// feedback-mode guardrail on the FIRST attempt, so retries never fire and
+// the trace stays 1:1 with goldenTrace (a retry would otherwise re-invoke
+// runStep and duplicate that step's trace entry).
+const NEXT_STEP_ID: Record<string, string> = {
+  'step-a': 'step-b',
+  'step-b': 'step-c',
+  'step-c': 'step-d',
+  'step-d': 'step-e',
+};
+
+describe('feedback-mode contextMode is additive — does not perturb the golden trace', () => {
+  it('produces the SAME golden-trace text with contextMode: "feedback" added, and materializes a run-context manifest on disk', async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), 'fluxor-semantic-parity-feedback-'));
+    try {
+      const feedbackExportedFlow: FluxorFlowExport = { ...exportedFlow, contextMode: 'feedback' };
+      const flow = importFlow(feedbackExportedFlow);
+      expect(flow.contextMode).toBe('feedback');
+
+      const trace: Array<{ stepId: string; output: string }> = [];
+      const runId = 'run-semantic-parity-feedback';
+
+      await executeAgenticFlow(flow, {
+        rootDir: tmpDir,
+        runId,
+        runStep: async (input) => {
+          const stepId = input.step.id;
+
+          // Satisfy the promised-briefing guardrail on the first attempt.
+          // Generously long (well beyond any single seeded header + a
+          // 140-char purpose line) so it clears minBytes for every target
+          // regardless of that target step's own prompt length.
+          const nextStepId = NEXT_STEP_ID[stepId];
+          if (nextStepId) {
+            await input.tools.write_file.execute?.(
+              {
+                path: `.fluxor/run-context/${runId}/step.${nextStepId}.md`,
+                content: `A real, detailed briefing from ${stepId} for ${nextStepId}. `.repeat(10),
+              },
+              { toolCallId: `briefing-${stepId}`, messages: [] },
+            );
+          }
+
+          if (stepId === 'step-e') {
+            // Same tool-calling scripted shape as the golden-trace suite
+            // above — this suite is about proving feedback mode doesn't
+            // perturb the OUTPUT, not re-proving tool-calling parity.
+            const toolResult = uppercase(UPPERCASE_TOOL_ARGS.text);
+            const finalText = scriptedResponses[stepId] ?? '';
+            const scripted = async () => ({
+              text: finalText,
+              usage: null,
+              toolCalls: [
+                { toolCallId: 'call_conformance_1', toolName: 'uppercase', input: UPPERCASE_TOOL_ARGS },
+              ],
+              toolResults: [
+                { toolCallId: 'call_conformance_1', toolName: 'uppercase', output: toolResult },
+              ],
+              steps: [
+                {
+                  text: '',
+                  content: [
+                    { type: 'tool-call', toolCallId: 'call_conformance_1', toolName: 'uppercase', input: UPPERCASE_TOOL_ARGS },
+                  ],
+                  toolCalls: [
+                    { toolCallId: 'call_conformance_1', toolName: 'uppercase', input: UPPERCASE_TOOL_ARGS },
+                  ],
+                  toolResults: [],
+                },
+                {
+                  text: finalText,
+                  content: [
+                    { type: 'tool-result', toolCallId: 'call_conformance_1', toolName: 'uppercase', output: toolResult },
+                    { type: 'text', text: finalText },
+                  ],
+                  toolCalls: [],
+                  toolResults: [
+                    { toolCallId: 'call_conformance_1', toolName: 'uppercase', output: toolResult },
+                  ],
+                },
+              ],
+            });
+
+            const result = await runLLMStep({ ...input, generateText: scripted });
+            trace.push({ stepId, output: result.text });
+            return result;
+          }
+
+          const scripted = async () => ({
+            text: scriptedResponses[stepId] ?? '',
+            usage: null,
+            toolCalls: [],
+            toolResults: [],
+            steps: [],
+          });
+          const result = await runLLMStep({ ...input, generateText: scripted });
+          trace.push({ stepId, output: result.text });
+          return result;
+        },
+      });
+
+      // The primary claim: feedback mode is additive. Same golden contract.
+      expect(trace).toEqual(goldenTrace);
+
+      // And genesis actually happened (proving "additive" isn't vacuous —
+      // the run-context machinery genuinely ran alongside the golden trace).
+      const manifestPath = join(tmpDir, '.fluxor', 'run-context', runId, 'manifest.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
+      expect(manifest.contextMode).toBe('feedback');
+      expect(Object.keys(manifest.steps).sort()).toEqual(
+        ['step-a', 'step-b', 'step-c', 'step-d', 'step-e'].sort(),
+      );
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('a blind-mode run of the SAME chain (no contextMode) creates no .fluxor/run-context directory at all', async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), 'fluxor-semantic-parity-blind-'));
+    try {
+      const flow = importFlow(exportedFlow); // exportedFlow carries no contextMode — blind
+      expect(flow.contextMode).toBeUndefined();
+
+      await executeAgenticFlow(flow, {
+        rootDir: tmpDir,
+        runStep: async (input) => {
+          const stepId = input.step.id;
+          const scripted = async () => ({
+            text: scriptedResponses[stepId] ?? '',
+            usage: null,
+            toolCalls: [],
+            toolResults: [],
+            steps: [],
+          });
+          return runLLMStep({ ...input, generateText: scripted });
+        },
+      });
+
+      await expect(readdir(join(tmpDir, '.fluxor'))).rejects.toThrow();
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });

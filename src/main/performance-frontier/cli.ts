@@ -1,4 +1,5 @@
 import { loadDotEnv } from './env';
+import { parseContextModeFlag, warnIfContextModeIsNoop } from './context-mode-flag';
 import { runPerformanceFrontier } from './runner';
 import type { PFSuite } from './types';
 
@@ -40,9 +41,15 @@ function parseSuite(): PFSuite | undefined {
 
 async function main(): Promise<void> {
   await loadDotEnv();
+
+  const suite = parseSuite();
+  const contextMode = parseContextModeFlag(process.argv);
+  warnIfContextModeIsNoop(suite, contextMode);
+
   const result = await runPerformanceFrontier({
     seed: parseSeed(),
-    suite: parseSuite(),
+    suite,
+    contextMode,
   });
 
   console.log(JSON.stringify({

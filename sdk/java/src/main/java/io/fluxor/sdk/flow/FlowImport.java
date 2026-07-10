@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Parses the canonical Fluxor flow JSON (exported by the TypeScript IDE) into a
@@ -34,6 +35,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>{@code contract}    → {@link StepConfig#contract()} (carried opaquely, nullable)</li>
  *   <li>{@code model}       → {@link StepConfig#model()} (nullable)</li>
  *   <li>{@code loops}       → {@link FlowDefinition#loops()} (empty list when absent)</li>
+ *   <li>{@code contextMode} → {@link FlowDefinition#contextMode()} (carried opaquely,
+ *       nullable; {@code "feedback"} triggers a one-time downgrade-to-blind warning —
+ *       see {@link #checkContextModeDowngrade})</li>
  * </ul>
  */
 public final class FlowImport {
@@ -76,6 +80,39 @@ public final class FlowImport {
         WARNED_LEGACY_FORMATS.clear();
     }
 
+    /**
+     * Rosetta context mode this runtime cannot honour in v1 (spec decision 2:
+     * {@code docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md}) — importing a
+     * flow declaring it downgrades execution to blind with a one-time warning; see
+     * {@link #checkContextModeDowngrade}. Any other value (including the explicit
+     * {@code "blind"}, absence, or an unrecognized string) is silent: there is nothing to
+     * downgrade.
+     */
+    private static final String FEEDBACK_CONTEXT_MODE = "feedback";
+
+    /**
+     * Exact downgrade warning wording — a frozen cross-runtime contract (Java prints it to
+     * {@code System.err}; Python raises it as a {@code DeprecationWarning}). Trigger and
+     * wording may not vary per runtime.
+     */
+    private static final String FEEDBACK_DOWNGRADE_WARNING =
+        "feedback mode is not supported by this runtime yet; downgrading to blind";
+
+    /**
+     * Whether the feedback-downgrade warning has fired — gives it once-per-process semantics,
+     * the same idiom as {@link #WARNED_LEGACY_FORMATS} (a single flag rather than a seen-value
+     * set because exactly one value, {@code "feedback"}, ever triggers it).
+     */
+    private static final AtomicBoolean WARNED_FEEDBACK_DOWNGRADE = new AtomicBoolean(false);
+
+    /**
+     * Test hook — clears the once-per-process downgrade-warning dedup state (the context-mode
+     * counterpart of {@link #resetLegacyFormatWarningsForTests}). Package-private: tests only.
+     */
+    static void resetContextModeWarningsForTests() {
+        WARNED_FEEDBACK_DOWNGRADE.set(false);
+    }
+
     private FlowImport() {
     }
 
@@ -110,6 +147,11 @@ public final class FlowImport {
         // Legacy compat: advisory-only, never blocks parsing.
         checkLegacyFormat(root);
 
+        // Rosetta context mode: carried opaquely; 'feedback' downgrades execution to blind
+        // with a one-time warning (advisory-only, never blocks parsing).
+        String contextMode = optionalText(root, "contextMode");
+        checkContextModeDowngrade(contextMode);
+
         // Flow-level id.
         JsonNode idNode = root.get("id");
         if (idNode == null || idNode.isNull()) {
@@ -131,7 +173,7 @@ public final class FlowImport {
 
         List<LoopConfig> loops = parseLoops(root.get("loops"), flowId);
 
-        return new FlowDefinition(flowId, steps, loops);
+        return new FlowDefinition(flowId, steps, loops, contextMode);
     }
 
     /**
@@ -180,6 +222,33 @@ public final class FlowImport {
             System.err.println(
                 "Importing a flow in the deprecated \"" + seenAs
                     + "\" format; re-export it to upgrade to \"" + CURRENT_FORMAT_NAME + "\".");
+        }
+    }
+
+    /**
+     * Rosetta context-mode downgrade (spec decision 2,
+     * {@code docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md}): warns (once per
+     * process, to {@code System.err} — the same transport and once-semantics as
+     * {@link #checkLegacyFormat}) when importing a flow declaring
+     * {@code contextMode: "feedback"}, which this runtime cannot honour in v1 (no run-context
+     * manifest/briefing machinery — that lives in the TS harness engine). The frozen
+     * cross-runtime contract:
+     * <ol>
+     *   <li>{@code "feedback"} — one warning ({@link #FEEDBACK_DOWNGRADE_WARNING}); execution
+     *       proceeds in blind mode, the only mode this executor implements.</li>
+     *   <li>{@code "blind"}, absent/null, or any other value — silence: there is nothing to
+     *       downgrade.</li>
+     * </ol>
+     * Never throws, and never mutates the value: {@code contextMode} is preserved verbatim on
+     * the parsed {@link FlowDefinition} (the downgrade changes runtime behaviour, not the
+     * recorded definition) so a re-serialisation round-trips without loss.
+     */
+    private static void checkContextModeDowngrade(String contextMode) {
+        if (!FEEDBACK_CONTEXT_MODE.equals(contextMode)) {
+            return;
+        }
+        if (WARNED_FEEDBACK_DOWNGRADE.compareAndSet(false, true)) {
+            System.err.println(FEEDBACK_DOWNGRADE_WARNING);
         }
     }
 

@@ -12,13 +12,35 @@
  *   - `inputContext`  max 64 KiB (65_536 chars) — trimmed with a marker
  *   - `output`        max 32 KiB (32_768 chars) — trimmed with a marker
  *   - `completedStepIds` serialised as JSON; no separate cap (step-count bounded)
+ *   - `contextFileSnapshot.content` max 16 KiB (16_384 chars) — trimmed with a marker
  */
 
 /** Max character length for the inputContext field before truncation. */
 export const INPUT_CONTEXT_MAX_CHARS = 65_536;
 /** Max character length for the output field before truncation. */
 export const OUTPUT_MAX_CHARS = 32_768;
+/**
+ * Max character length for `contextFileSnapshot.content` before truncation
+ * (feedback-mode runs only — see ContextFileSnapshot). Comfortably above the
+ * Rosetta per-file budget (context-manifest.ts's DEFAULT_CONTEXT_BUDGET_BYTES,
+ * 12,000) so a within-budget briefing never gets clipped here; this is a
+ * hard backstop against an unbounded write, not the primary budget signal
+ * (that's the guardrail's job).
+ */
+export const CONTEXT_FILE_SNAPSHOT_MAX_CHARS = 16_384;
 const TRUNCATION_MARKER = '…[truncated]';
+
+/**
+ * A snapshot of a step's assigned feedback-mode context file (Rosetta, spec:
+ * docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md), captured
+ * after the step completes.
+ */
+export interface ContextFileSnapshot {
+  /** RootDir-relative path (e.g. ".fluxor/run-context/<runId>/step.<stepId>.md"). */
+  path: string;
+  /** File content at checkpoint time, capped at CONTEXT_FILE_SNAPSHOT_MAX_CHARS. */
+  content: string;
+}
 
 /** Immutable snapshot recorded after a step completes. */
 export interface Checkpoint {
@@ -46,6 +68,14 @@ export interface Checkpoint {
   modelId: string | undefined;
   /** Unix epoch milliseconds when the checkpoint was recorded. */
   timestamp: number;
+  /**
+   * Snapshot of this step's assigned feedback-mode context file (see
+   * ContextFileSnapshot). Present only for feedback-mode runs whose step
+   * received a manifest entry AND whose file was readable at checkpoint time
+   * — omitted entirely (never `undefined`-valued) otherwise, so blind-mode
+   * checkpoints and this field's shape are untouched by its addition.
+   */
+  contextFileSnapshot?: ContextFileSnapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +148,15 @@ export class SqliteCheckpointStore implements CheckpointStore {
 
   constructor(db: BetterSqliteDatabase) {
     this.db = db;
+    // NOTE: context_file_path/context_file_content are added directly to the
+    // CREATE TABLE (rather than via a runtime ALTER TABLE migration) because
+    // this store is not yet wired into any production bootstrap path — no
+    // setCheckpointStore(new SqliteCheckpointStore(...)) call exists outside
+    // this file's own doc-comment example and its tests, so there is no
+    // on-disk database anywhere carrying the pre-Rosetta 9-column schema this
+    // would otherwise need to migrate. Whoever wires this store into a real
+    // app boot path MUST add an ALTER-TABLE-style migration at that point if
+    // any database created before that change could already exist on disk.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS harness_checkpoints (
         id               TEXT PRIMARY KEY,
@@ -128,7 +167,9 @@ export class SqliteCheckpointStore implements CheckpointStore {
         output           TEXT NOT NULL,
         completed_step_ids TEXT NOT NULL,
         model_id         TEXT,
-        timestamp        INTEGER NOT NULL
+        timestamp        INTEGER NOT NULL,
+        context_file_path    TEXT,
+        context_file_content TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_checkpoints_run_id
         ON harness_checkpoints (run_id, timestamp);
@@ -138,8 +179,8 @@ export class SqliteCheckpointStore implements CheckpointStore {
   save(checkpoint: Checkpoint): void {
     this.db.prepare(`
       INSERT INTO harness_checkpoints
-        (id, run_id, step_id, iteration, input_context, output, completed_step_ids, model_id, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, run_id, step_id, iteration, input_context, output, completed_step_ids, model_id, timestamp, context_file_path, context_file_content)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       checkpoint.id,
       checkpoint.runId,
@@ -150,6 +191,8 @@ export class SqliteCheckpointStore implements CheckpointStore {
       JSON.stringify(checkpoint.completedStepIds),
       checkpoint.modelId ?? null,
       checkpoint.timestamp,
+      checkpoint.contextFileSnapshot?.path ?? null,
+      checkpoint.contextFileSnapshot?.content ?? null,
     );
   }
 
@@ -180,6 +223,9 @@ export class SqliteCheckpointStore implements CheckpointStore {
       completedStepIds: JSON.parse(String(row.completed_step_ids)) as string[],
       modelId: row.model_id != null ? String(row.model_id) : undefined,
       timestamp: Number(row.timestamp),
+      ...(row.context_file_path != null && row.context_file_content != null
+        ? { contextFileSnapshot: { path: String(row.context_file_path), content: String(row.context_file_content) } }
+        : {}),
     };
   }
 }
@@ -237,6 +283,12 @@ export interface SaveCheckpointInput {
   output: string;
   completedStepIds: string[];
   modelId?: string;
+  /**
+   * Snapshot of this step's assigned feedback-mode context file; omit
+   * entirely for blind-mode runs (see Checkpoint.contextFileSnapshot).
+   * `content` is truncated at CONTEXT_FILE_SNAPSHOT_MAX_CHARS before storage.
+   */
+  contextFileSnapshot?: ContextFileSnapshot;
 }
 
 /**
@@ -264,6 +316,17 @@ export function saveCheckpoint(input: SaveCheckpointInput): Checkpoint {
     completedStepIds: input.completedStepIds,
     modelId: input.modelId,
     timestamp,
+    // Same conditional-spread discipline as `iteration` above — omitted
+    // entirely (not `undefined`-valued) when the caller passes none, so
+    // blind-mode checkpoints (which never pass this) are unaffected.
+    ...(input.contextFileSnapshot !== undefined
+      ? {
+          contextFileSnapshot: {
+            path: input.contextFileSnapshot.path,
+            content: truncate(input.contextFileSnapshot.content, CONTEXT_FILE_SNAPSHOT_MAX_CHARS),
+          },
+        }
+      : {}),
   };
   activeStore.save(checkpoint);
   return checkpoint;

@@ -20,7 +20,8 @@
  *   carried opaquely — this module never interprets it), per-step `model`
  *   override, per-step `description` (human-facing, execution-inert), flow
  *   `meta` (human-facing description/tags/author/version, execution-inert),
- *   and `loops` (bounded loop-back edges).
+ *   `loops` (bounded loop-back edges), and `contextMode` (Rosetta context
+ *   mode — omitted entirely for blind/absent, present only as 'feedback').
  *
  * INTENTIONALLY FLATTENED (lossy but acceptable):
  *   - role ids and role names collapse into a single 'exported-role' sentinel;
@@ -170,6 +171,16 @@ export interface FluxorFlowExport {
    */
   loops?: FluxorFlowLoop[];
   /**
+   * Rosetta context mode (AgenticFlow.contextMode — spec:
+   * docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md). Omitted
+   * entirely (never the literal `'blind'`) when the flow's mode is blind or
+   * absent, so a blind flow's export stays byte-identical to every export
+   * produced before this field existed. Present only as `'feedback'`. A
+   * top-level field (not nested under `meta`) because — unlike `meta`'s
+   * purely human-facing fields — it has real execution semantics.
+   */
+  contextMode?: 'feedback';
+  /**
    * Optional human-facing flow metadata (AgenticFlow.description/tags/author/
    * version), nested under `meta` rather than flattened to top-level keys —
    * the top-level `version` field above is the wire FORMAT version
@@ -279,6 +290,9 @@ export function exportFlow(flow: AgenticFlow): FluxorFlowExport {
   };
   if (loops !== undefined) exported.loops = loops;
   if (meta !== undefined) exported.meta = meta;
+  // Blind or absent ⇒ no key at all (byte-identical to every pre-Rosetta
+  // export); only 'feedback' is ever stamped — see FluxorFlowExport's doc.
+  if (flow.contextMode === 'feedback') exported.contextMode = 'feedback';
 
   return exported;
 }
@@ -386,6 +400,10 @@ export function importFlow(exported: FluxorFlowExport): AgenticFlow {
   if (exported.meta?.tags !== undefined) flow.tags = exported.meta.tags;
   if (exported.meta?.author !== undefined) flow.author = exported.meta.author;
   if (exported.meta?.version !== undefined) flow.version = exported.meta.version;
+  // Only ever restored as 'feedback' — never defaulted to the literal
+  // 'blind', so a re-export of this flow stays byte-identical to the source
+  // export for every blind/absent case (see FluxorFlowExport.contextMode doc).
+  if (exported.contextMode === 'feedback') flow.contextMode = 'feedback';
 
   return flow;
 }

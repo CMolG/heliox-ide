@@ -8,6 +8,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   type CheckpointStore,
+  CONTEXT_FILE_SNAPSHOT_MAX_CHARS,
   InMemoryCheckpointStore,
   INPUT_CONTEXT_MAX_CHARS,
   OUTPUT_MAX_CHARS,
@@ -234,6 +235,100 @@ describe('field truncation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// contextFileSnapshot — additive field for feedback-mode runs (Rosetta, spec:
+// docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md)
+// ---------------------------------------------------------------------------
+
+describe('contextFileSnapshot (feedback-mode checkpoints)', () => {
+  it('stores contextFileSnapshot when provided', () => {
+    useInMemoryStore();
+
+    const saved = saveCheckpoint({
+      runId: 'run-ctx',
+      stepId: 'step-a',
+      inputContext: '',
+      output: '',
+      completedStepIds: ['step-a'],
+      contextFileSnapshot: { path: '.fluxor/run-context/run-ctx/step.step-a.md', content: '# Contexto para step-a\n\nDo the thing.' },
+    });
+
+    expect(saved.contextFileSnapshot).toEqual({
+      path: '.fluxor/run-context/run-ctx/step.step-a.md',
+      content: '# Contexto para step-a\n\nDo the thing.',
+    });
+  });
+
+  it('omits the contextFileSnapshot key entirely when not provided, rather than storing it as undefined', () => {
+    useInMemoryStore();
+
+    const saved = saveCheckpoint({
+      runId: 'run-no-ctx',
+      stepId: 'step-b',
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+    });
+
+    expect('contextFileSnapshot' in saved).toBe(false);
+    expect(saved.contextFileSnapshot).toBeUndefined();
+  });
+
+  it('truncates contextFileSnapshot.content that exceeds CONTEXT_FILE_SNAPSHOT_MAX_CHARS', () => {
+    useInMemoryStore();
+
+    const longContent = 'z'.repeat(CONTEXT_FILE_SNAPSHOT_MAX_CHARS + 500);
+    const saved = saveCheckpoint({
+      runId: 'run-ctx-trunc',
+      stepId: 'step-c',
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+      contextFileSnapshot: { path: '.fluxor/run-context/run-ctx-trunc/step.step-c.md', content: longContent },
+    });
+
+    expect(saved.contextFileSnapshot?.content.length).toBeLessThanOrEqual(CONTEXT_FILE_SNAPSHOT_MAX_CHARS);
+    expect(saved.contextFileSnapshot?.content).toContain('[truncated]');
+  });
+
+  it('does not truncate contextFileSnapshot.content within the limit', () => {
+    useInMemoryStore();
+
+    const content = 'a short briefing';
+    const saved = saveCheckpoint({
+      runId: 'run-ctx-short',
+      stepId: 'step-d',
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+      contextFileSnapshot: { path: '.fluxor/run-context/run-ctx-short/step.step-d.md', content },
+    });
+
+    expect(saved.contextFileSnapshot?.content).toBe(content);
+  });
+
+  it('does not disturb the existing shape (iteration/modelId/completedStepIds) when contextFileSnapshot is also present', () => {
+    useInMemoryStore();
+
+    const saved = saveCheckpoint({
+      runId: 'run-ctx-shape',
+      stepId: 'step-e',
+      iteration: 2,
+      inputContext: 'ctx',
+      output: 'out',
+      completedStepIds: ['step-e'],
+      modelId: 'gpt-4o',
+      contextFileSnapshot: { path: 'p', content: 'c' },
+    });
+
+    expect(saved.iteration).toBe(2);
+    expect(saved.modelId).toBe('gpt-4o');
+    expect(saved.completedStepIds).toEqual(['step-e']);
+    expect(saved.inputContext).toBe('ctx');
+    expect(saved.output).toBe('out');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SqliteCheckpointStore with a mock database
 // ---------------------------------------------------------------------------
 
@@ -369,5 +464,122 @@ describe('SqliteCheckpointStore (mock database)', () => {
     const found = store.get('ckpt_run-sql4_step-plain_0');
     expect(found).toBeDefined();
     expect('iteration' in found!).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SqliteCheckpointStore — context_file_path / context_file_content columns
+//
+// A SEPARATE mock database (not the `buildMockDb()` above, which every
+// pre-existing test in this file depends on staying untouched) that also
+// captures the two new columns the INSERT statement carries for
+// contextFileSnapshot, so these NEW tests can prove the SQLite backend
+// round-trips the additive field exactly like InMemoryCheckpointStore does.
+// ---------------------------------------------------------------------------
+
+describe('SqliteCheckpointStore (mock database) — context_file_path/context_file_content', () => {
+  function buildMockDbWithContextColumns() {
+    const rows = new Map<string, Record<string, unknown>>();
+
+    return {
+      exec: (_sql: string): void => {
+        // No-op: mock doesn't actually execute DDL.
+      },
+      prepare: (sql: string) => ({
+        run: (...args: unknown[]) => {
+          const trimmed = sql.trim().toLowerCase();
+          if (trimmed.startsWith('insert')) {
+            // Column order mirrors the real INSERT in checkpoints.ts:
+            // (id, run_id, step_id, iteration, input_context, output,
+            //  completed_step_ids, model_id, timestamp, context_file_path,
+            //  context_file_content).
+            const [
+              id, runId, stepId, iteration, inputContext, output,
+              completedStepIds, modelId, timestamp, contextFilePath, contextFileContent,
+            ] = args;
+            rows.set(String(id), {
+              id,
+              run_id: runId,
+              step_id: stepId,
+              iteration,
+              input_context: inputContext,
+              output,
+              completed_step_ids: completedStepIds,
+              model_id: modelId,
+              timestamp,
+              context_file_path: contextFilePath,
+              context_file_content: contextFileContent,
+            });
+          }
+        },
+        get: (...args: unknown[]) => rows.get(String(args[0])),
+        all: (...args: unknown[]) => {
+          const runId = String(args[0]);
+          return [...rows.values()]
+            .filter((r) => String(r.run_id) === runId)
+            .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+        },
+      }),
+    };
+  }
+
+  it('round-trips path + content when contextFileSnapshot is provided', () => {
+    const store = new SqliteCheckpointStore(buildMockDbWithContextColumns() as any);
+
+    store.save({
+      id: 'ckpt_run-ctx-sql_step-a_0',
+      runId: 'run-ctx-sql',
+      stepId: 'step-a',
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+      modelId: undefined,
+      timestamp: 0,
+      contextFileSnapshot: { path: '.fluxor/run-context/run-ctx-sql/step.step-a.md', content: 'briefing text' },
+    });
+
+    const found = store.get('ckpt_run-ctx-sql_step-a_0');
+    expect(found?.contextFileSnapshot).toEqual({
+      path: '.fluxor/run-context/run-ctx-sql/step.step-a.md',
+      content: 'briefing text',
+    });
+  });
+
+  it('omits contextFileSnapshot (rather than a null-filled object) when both columns are null', () => {
+    const store = new SqliteCheckpointStore(buildMockDbWithContextColumns() as any);
+
+    store.save({
+      id: 'ckpt_run-ctx-sql2_step-b_0',
+      runId: 'run-ctx-sql2',
+      stepId: 'step-b',
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+      modelId: undefined,
+      timestamp: 0,
+    });
+
+    const found = store.get('ckpt_run-ctx-sql2_step-b_0');
+    expect(found).toBeDefined();
+    expect('contextFileSnapshot' in found!).toBe(false);
+  });
+
+  it('round-trips through list() as well as get()', () => {
+    const store = new SqliteCheckpointStore(buildMockDbWithContextColumns() as any);
+
+    store.save({
+      id: 'ckpt_run-ctx-sql3_step-c_0',
+      runId: 'run-ctx-sql3',
+      stepId: 'step-c',
+      inputContext: '',
+      output: '',
+      completedStepIds: [],
+      modelId: undefined,
+      timestamp: 5,
+      contextFileSnapshot: { path: 'p', content: 'c' },
+    });
+
+    const [listed] = store.list('run-ctx-sql3');
+    expect(listed.contextFileSnapshot).toEqual({ path: 'p', content: 'c' });
   });
 });

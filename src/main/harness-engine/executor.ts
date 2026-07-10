@@ -4,10 +4,12 @@
  * The scheduler preserves DAG dependency semantics while each step delegates to
  * the LLM runner and MCP-backed tool surface.
  */
+import { mkdir as nodeMkdir, readdir as nodeReaddir, readFile as nodeReadFile, stat as nodeStat, writeFile as nodeWriteFile } from 'fs/promises';
+import { posix, resolve as resolvePath } from 'path';
 import type { AgenticFlow, AgenticMod, AgenticStep, StepContract } from '../../types/harness';
 import { harnessEventBus } from './event-bus';
-import { buildStepContext } from './context-builder';
-import { createLocalMcpToolSet, type LocalMcpOptions } from './mcp-adapter';
+import { buildStepContext, type FlowAwarenessInput } from './context-builder';
+import { createLocalMcpToolSet, type LocalMcpOptions, type McpFileSystem } from './mcp-adapter';
 import { getMcpClientModToolSet } from './mcp-client-mod';
 import { createBrowserToolSet } from './browser-toolset';
 import { runLLMStep, type LLMStepResult, type RunLLMStepInput } from './llm-runner';
@@ -26,6 +28,137 @@ import {
 import { createModelRouter, isSealed, loadDefaultLeaderboard, type ModelRouterDeps } from './model-router';
 import type { ArenaLeaderboardEntry } from '../performance-frontier/arena/arena-runner';
 import type { ConnectionResolver, ModelPolicy, RoutedModelEvidence } from '../../types/ipc-events';
+import {
+  buildContextManifest,
+  buildTopologySummaryLines,
+  contextArtifactPathPattern,
+  contextRunDir,
+  DEFAULT_CONTEXT_BUDGET_BYTES,
+  manifestKeyForInstance,
+  relativeContextFilePath,
+  seedContextFiles,
+  type ContextManifest,
+} from './context-manifest';
+
+// ---------------------------------------------------------------------------
+// Effective rootDir + real-FS adapter (feedback mode only)
+//
+// Mirrors mcp-adapter.ts's private `normalizeRootDir`/`nodeFileSystem`
+// (McpFileSystem shape) rather than importing/exporting them — this task's
+// territory fence excludes editing mcp-adapter.ts, and the spec explicitly
+// sanctions "export it or replicate it" (spec "Notas de implementación" —
+// "rootDir efectivo"). MUST stay byte-for-byte equivalent: createLocalMcpToolSet
+// resolves the model's own read_file/write_file/list_directory tools against
+// this exact computation, so genesis (context dir creation) and the
+// guardrail's workspace snapshots must agree with it — otherwise a step's
+// assigned context file would live at a path its own FS tools can never see.
+// ---------------------------------------------------------------------------
+
+const toPosixPath = (value: string): string => value.replace(/\\/g, '/');
+const isAbsoluteAnyPlatform = (value: string): boolean => (
+  posix.isAbsolute(value) || /^[A-Za-z]:\//.test(value)
+);
+
+function resolveEffectiveRootDir(rootDir?: string): string {
+  const raw = toPosixPath(rootDir ?? process.cwd());
+  const absolute = isAbsoluteAnyPlatform(raw) ? raw : toPosixPath(resolvePath(raw));
+  return posix.normalize(absolute);
+}
+
+/**
+ * Minimal real-filesystem adapter used ONLY when `contextMode` is 'feedback'
+ * and the caller passed no `options.fileSystem` — every production surface
+ * (IDE/serve/webhook/mcp) omits it; only the Performance Frontier sandbox
+ * supplies its own VFS. Blind-mode runs never construct or touch this.
+ */
+const realFileSystemAdapter: McpFileSystem = {
+  mkdir: nodeMkdir,
+  readdir: nodeReaddir as McpFileSystem['readdir'],
+  readFile: nodeReadFile as McpFileSystem['readFile'],
+  stat: nodeStat as McpFileSystem['stat'],
+  writeFile: nodeWriteFile as McpFileSystem['writeFile'],
+};
+
+/**
+ * Feedback-mode plumbing computed once per run (executeAgenticFlow) and
+ * threaded into every executeStep call — undefined for every blind-mode run,
+ * which is what keeps blind execution byte-identical: every new code path
+ * below is gated behind `runContext` being defined.
+ */
+interface FeedbackRunContext {
+  manifest: ContextManifest;
+  runId: string;
+  /** Absolute-ish path (contextRunDir(effectiveRootDir, runId)) where genesis/checkpoint I/O happens. */
+  runDir: string;
+  topologyLines: string[];
+  /** Bare filename → seed content, so each writesTo target's exact minBytes floor is computable. */
+  seeds: Record<string, string>;
+  /** options.fileSystem, or the synthesized real-FS adapter when the caller passed none. */
+  fileSystem: McpFileSystem;
+}
+
+/** This instance's own <flow_awareness> input, or undefined outside feedback mode / when it has no manifest entry. */
+function computeFlowAwareness(
+  runContext: FeedbackRunContext | undefined,
+  instance: StepInstance | undefined,
+): FlowAwarenessInput | undefined {
+  if (!runContext || !instance) return undefined;
+  const entry = runContext.manifest.steps[manifestKeyForInstance(instance)];
+  if (!entry) return undefined;
+
+  return {
+    topologyLines: runContext.topologyLines,
+    assignedFile: relativeContextFilePath(runContext.runId, entry.contextFile),
+    writesTo: entry.writesTo.map((filename) => relativeContextFilePath(runContext.runId, filename)),
+  };
+}
+
+/**
+ * A StepContract fragment requiring every briefing this instance promises
+ * (its manifest entry's `writesTo`) to exist with MORE bytes than its own
+ * seed — mere existence would trivially always pass since genesis seeds
+ * every context file up front, so minBytes (an existing, established
+ * mechanism — see StepArtifactRequirement.minBytes's "rejects empty stubs"
+ * doc) is set just above each SPECIFIC target's known seed length, making
+ * the check meaningfully verify a real briefing was written, not merely that
+ * the seeded stub survived. Composed into the step's effective contract via
+ * the EXISTING mergeStepContracts (guardrails.ts) — no new StepContract
+ * field, no mutation of the step's own AST contract.
+ */
+function computeContextContract(
+  runContext: FeedbackRunContext | undefined,
+  instance: StepInstance | undefined,
+): StepContract | undefined {
+  if (!runContext || !instance) return undefined;
+  const entry = runContext.manifest.steps[manifestKeyForInstance(instance)];
+  if (!entry || entry.writesTo.length === 0) return undefined;
+
+  return {
+    requiredArtifacts: entry.writesTo.map((filename) => ({
+      description: `context briefing "${filename}" for a downstream step`,
+      pathPattern: contextArtifactPathPattern(runContext.runId, filename),
+      minBytes: Buffer.byteLength(runContext.seeds[filename] ?? '', 'utf-8') + 1,
+    })),
+  };
+}
+
+/** Reads back this instance's own assigned context file for the checkpoint's contextFileSnapshot. Never throws — a read failure is logged and simply omits the field. */
+async function readContextFileSnapshot(
+  runContext: FeedbackRunContext,
+  instance: StepInstance,
+): Promise<{ path: string; content: string } | undefined> {
+  const entry = runContext.manifest.steps[manifestKeyForInstance(instance)];
+  if (!entry) return undefined;
+
+  const relPath = relativeContextFilePath(runContext.runId, entry.contextFile);
+  try {
+    const content = await runContext.fileSystem.readFile(`${runContext.runDir}/${entry.contextFile}`, 'utf-8');
+    return { path: relPath, content };
+  } catch (error) {
+    console.warn(`[context-manifest] failed to snapshot context file "${relPath}" for checkpoint: ${getErrorMessage(error)}`);
+    return undefined;
+  }
+}
 
 export interface HarnessStepRunnerInput extends RunLLMStepInput {
   flowId: string;
@@ -276,9 +409,11 @@ async function executeStep(
   flow: AgenticFlow,
   step: AgenticStep,
   options: ExecuteAgenticFlowOptions,
+  effectiveRootDir: string,
   instance?: StepInstance,
   routing?: StepRouting,
   sealedIds?: Set<string>,
+  runContext?: FeedbackRunContext,
 ): Promise<LLMStepResult> {
   // Loop-body progress, if this instance is a pass of a loop body. Kept as a
   // plain object (not spread further here) so Phase 3 can layer modelId /
@@ -318,10 +453,14 @@ async function executeStep(
   }
 
   // ---------------------------------------------------------------------------
-  // Default LLM path (unchanged)
+  // Default LLM path
   // ---------------------------------------------------------------------------
+  // Feedback mode only (runContext undefined ⇒ flowAwareness undefined ⇒
+  // buildStepContext's output is byte-identical to before this feature).
+  const flowAwareness = computeFlowAwareness(runContext, instance);
   const context = await buildStepContext(step, {
     onModStatus: (mod, status, logs) => emitModStatus(flow.id, step.id, mod, status, logs),
+    ...(flowAwareness ? { flowAwareness } : {}),
   });
 
   // Declarative mod runtime: aggregate blockTools/attachTools/contract
@@ -382,14 +521,36 @@ async function executeStep(
 
   // ── Model-agnostic guardrail: verify a step's completion contract and re-run
   // it with concrete corrective feedback until it passes or the budget is spent.
-  // Steps without a `contract` (own or mod-contributed) keep the original
-  // single-pass behaviour exactly.
-  const contract = mergeStepContracts(step.contract, modRuntime.contracts);
-  const guardrailActive = Boolean(contract) && Boolean(options.fileSystem);
+  // Steps without a `contract` (own, mod-contributed, or feedback-mode
+  // context-derived) keep the original single-pass behaviour exactly.
+  //
+  // Feedback mode additionally composes a requiredArtifacts fragment from
+  // this instance's promised writesTo (computeContextContract) — this is the
+  // ONLY way a step with no `contract` of its own can still have
+  // guardrailActive become true, and only ever in feedback mode.
+  const contextContract = computeContextContract(runContext, instance);
+  const contract = mergeStepContracts(
+    step.contract,
+    contextContract ? [...modRuntime.contracts, contextContract] : modRuntime.contracts,
+  );
+  // Plumbing fix (spec "Notas de implementación" — "Guardrail fuera del PF"):
+  // guardrailActive requires options.fileSystem, which NO production surface
+  // (IDE/serve/webhook/mcp) ever passes — only the PF sandbox does. Solely in
+  // feedback mode, when options.fileSystem is absent, fall back to the
+  // real-FS adapter (+ the materialized effective rootDir, fixing
+  // snapshotWorkspace's independent '/workspace' default disagreeing with the
+  // model's own FS tools) so a promised-briefing guardrail can actually
+  // activate on every surface, not just the PF sandbox. In blind mode this
+  // expression is UNCHANGED — `runContext` is always undefined there, so both
+  // operands fall through to exactly what they evaluated to before this
+  // feature existed.
+  const effectiveGuardrailFileSystem = runContext ? runContext.fileSystem : options.fileSystem;
+  const effectiveGuardrailRootDir = runContext ? effectiveRootDir : options.rootDir;
+  const guardrailActive = Boolean(contract) && Boolean(effectiveGuardrailFileSystem);
   const maxAttempts = guardrailActive
     ? Math.max(1, contract!.maxAttempts ?? options.guardrailMaxAttempts ?? DEFAULT_GUARDRAIL_MAX_ATTEMPTS)
     : 1;
-  const vfsBefore = guardrailActive ? await snapshotWorkspace(options.fileSystem, options.rootDir) : {};
+  const vfsBefore = guardrailActive ? await snapshotWorkspace(effectiveGuardrailFileSystem, effectiveGuardrailRootDir) : {};
 
   try {
     let result!: LLMStepResult;
@@ -423,7 +584,7 @@ async function executeStep(
 
       if (!guardrailActive) break;
 
-      const vfsAfter = await snapshotWorkspace(options.fileSystem, options.rootDir);
+      const vfsAfter = await snapshotWorkspace(effectiveGuardrailFileSystem, effectiveGuardrailRootDir);
       const findings = verifyStepContract(contract!, vfsBefore, vfsAfter);
       if (findings.length === 0) {
         if (attempt > 1) {
@@ -506,6 +667,31 @@ export async function executeAgenticFlow(
     const remaining = new Map(plan.remainingDeps);
     const runId = options.runId ?? `${flow.id}_${now()}`;
 
+    // ── Rosetta context genesis (feedback mode only) ───────────────────────
+    // Materialized ONCE, regardless of mode — pure/side-effect-free, so
+    // computing it costs blind runs nothing observable. Actually CONSUMED
+    // (génesis I/O, guardrail fallback, checkpoint reads) only when
+    // `runContext` below is defined, i.e. only in feedback mode — a blind run
+    // creates no directory, no manifest, and injects zero prompt bytes (spec
+    // criterion 1: byte-identical to today).
+    const effectiveRootDir = resolveEffectiveRootDir(options.rootDir);
+    let runContext: FeedbackRunContext | undefined;
+    if (flow.contextMode === 'feedback') {
+      const contextManifest = buildContextManifest(flow, plan, runId, DEFAULT_CONTEXT_BUDGET_BYTES);
+      const topologyLines = buildTopologySummaryLines(flow, plan);
+      const seeds = seedContextFiles(contextManifest);
+      const fileSystem = options.fileSystem ?? realFileSystemAdapter;
+      const runDir = contextRunDir(effectiveRootDir, runId);
+
+      await fileSystem.mkdir(runDir, { recursive: true });
+      await fileSystem.writeFile(`${runDir}/manifest.json`, JSON.stringify(contextManifest, null, 2), 'utf-8');
+      for (const [filename, content] of Object.entries(seeds)) {
+        await fileSystem.writeFile(`${runDir}/${filename}`, content, 'utf-8');
+      }
+
+      runContext = { manifest: contextManifest, runId, runDir, topologyLines, seeds, fileSystem };
+    }
+
     harnessEventBus.emitHarnessEvent({
       type: 'FlowStarted',
       flowId: flow.id,
@@ -558,10 +744,16 @@ export async function executeAgenticFlow(
       }
       const effectiveModelId = routing.modelId ?? options.modelId;
 
-      const result = await executeStep(flow, step, options, instance, routing, sealedIds);
+      const result = await executeStep(flow, step, options, effectiveRootDir, instance, routing, sealedIds, runContext);
       stepOutputs[instance.stepId] = result.text; // final pass wins
       completedInstanceKeys.add(key);
       completedStepIds.add(instance.stepId);
+
+      // Feedback mode only: re-read this instance's own assigned context file
+      // so the checkpoint can carry a contextFileSnapshot (path + content).
+      // Never throws — a read failure is logged and simply omits the field,
+      // since this is supplementary telemetry, not core execution state.
+      const contextFileSnapshot = runContext ? await readContextFileSnapshot(runContext, instance) : undefined;
 
       // Persist an immutable checkpoint capturing state-so-far — one per
       // instance, i.e. one per iteration for a step inside a loop body.
@@ -570,7 +762,8 @@ export async function executeAgenticFlow(
       // so a loop's 3 checkpoints for the same real stepId carry 1, 2, 3 and
       // the time-travel panel can tell them apart. Conditional spread keeps
       // the field entirely absent — never `iteration: undefined` — for the
-      // first/only pass of a non-loop step.
+      // first/only pass of a non-loop step. `contextFileSnapshot` follows the
+      // exact same discipline for blind-mode runs (always absent there).
       const checkpoint = saveCheckpoint({
         runId,
         stepId: instance.stepId,
@@ -579,6 +772,7 @@ export async function executeAgenticFlow(
         output: result.text,
         completedStepIds: [...completedStepIds],
         modelId: effectiveModelId,
+        ...(contextFileSnapshot ? { contextFileSnapshot } : {}),
       });
       harnessEventBus.emitHarnessEvent({
         type: 'CheckpointCreated',

@@ -201,4 +201,24 @@ export interface AgenticFlow {
    * Distinct from FLUXOR_FLOW_FORMAT_VERSION (the export wire-format version).
    */
   version?: string;
+  /**
+   * Per-flow execution mode for the Rosetta context system (spec:
+   * docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md).
+   *
+   *   - `'blind'` (today's behavior, and the default when this field is
+   *     absent): each step sees only the workspace + its own prompt — zero
+   *     cross-step awareness, zero side effects tied to this field.
+   *   - `'feedback'`: the executor materializes a per-run context directory
+   *     + manifest (`context-manifest.ts`) under the run's workspace and
+   *     injects a deterministic `<flow_awareness>` block (topology summary +
+   *     assigned file + promised briefing paths) into the system prompt so
+   *     steps can read/write per-step briefing files with their existing FS
+   *     tools.
+   *
+   * Absent is equivalent to `'blind'` — every pre-existing flow (authored
+   * before this field existed, or one that simply never sets it) keeps
+   * executing byte-identically: no context directory, no manifest, no
+   * `<flow_awareness>` block.
+   */
+  contextMode?: 'blind' | 'feedback';
 }

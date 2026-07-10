@@ -254,6 +254,15 @@ export interface FrameNodeData {
   author?: string;
   /** Optional user-defined flow version; flows through to AgenticFlow.version. */
   version?: string;
+  /**
+   * Per-flow execution mode for the Rosetta context system; flows through to
+   * AgenticFlow.contextMode. Absent (today's default) or `'blind'` means zero
+   * cross-step context awareness and zero side effects — see
+   * `AgenticFlow.contextMode`'s doc (src/types/harness.ts) for the full
+   * contract and docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md
+   * for the spec.
+   */
+  contextMode?: 'blind' | 'feedback';
   childIds: string[];
   missingCapabilitiesRequested?: string[];
   [key: string]: unknown;

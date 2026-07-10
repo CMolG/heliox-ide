@@ -43,6 +43,31 @@ LOOP_MAX_ITERATIONS_CAP = 50
 _CURRENT_FORMAT_NAME = "fluxor-flow"
 _LEGACY_FORMAT_NAME = "heliox-flow"
 
+# ---------------------------------------------------------------------------
+# Rosetta context-mode downgrade (spec decision 2:
+# docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md).
+#
+# Frozen cross-runtime contract (canonical reference: AgenticFlow.contextMode
+# in src/types/harness.ts; mirrored by the Java FlowImport):
+#   1. contextMode == "feedback"  -> one DeprecationWarning (the exact message
+#                                    below); execution proceeds in blind mode,
+#                                    the only mode this runtime implements —
+#                                    it has no run-context manifest/briefing
+#                                    machinery (that lives in the TS harness).
+#   2. "blind", absent/null, or   -> silence: there is nothing to downgrade.
+#      any other value
+# Never raises, never blocks parsing, and never mutates the value: the mode
+# is preserved verbatim on the parsed FlowDefinition (``context_mode``) so a
+# re-serialisation round-trips without loss. Same channel and once-semantics
+# as the legacy-format shim above (``_check_legacy_format``): warnings.warn +
+# DeprecationWarning, dedup delegated to the stdlib warnings filter.
+# ---------------------------------------------------------------------------
+
+_FEEDBACK_CONTEXT_MODE = "feedback"
+_FEEDBACK_DOWNGRADE_WARNING = (
+    "feedback mode is not supported by this runtime yet; downgrading to blind"
+)
+
 
 def _clamp_loop_iterations(value: Any) -> int:
     """Clamp a raw ``maxIterations`` value into [1, 50].
@@ -98,11 +123,22 @@ class StepConfig:
 
 @dataclass(frozen=True)
 class FlowDefinition:
-    """An in-memory DAG produced by FlowImport."""
+    """An in-memory DAG produced by FlowImport.
+
+    ``context_mode`` is the Rosetta context mode (``AgenticFlow.contextMode``
+    in src/types/harness.ts), carried opaquely like ``StepConfig.contract`` /
+    ``StepConfig.model``: this runtime never branches on it. ``None`` when the
+    flow declares none (blind default). ``"feedback"`` is NOT supported by
+    this runtime in v1 — ``FlowImport`` emits a one-time downgrade warning at
+    import and execution proceeds in blind mode (the only mode this executor
+    implements); the recorded value stays ``"feedback"`` so the definition
+    round-trips without loss (spec decision 2: downgrade, not parity).
+    """
 
     id: str
     steps: list[StepConfig]
     loops: list[LoopConfig] = field(default_factory=list)
+    context_mode: str | None = None
 
 
 class FlowImport:
@@ -132,6 +168,10 @@ class FlowImport:
         # Legacy compat: advisory-only, never blocks parsing.
         FlowImport._check_legacy_format(root)
 
+        # Rosetta context mode: carried opaquely; 'feedback' downgrades
+        # execution to blind with a one-time warning (advisory-only).
+        FlowImport._check_context_mode_downgrade(root)
+
         flow_id = root.get("id")
         if not flow_id:
             raise ValueError("Canonical flow JSON is missing the required 'id' field.")
@@ -151,7 +191,12 @@ class FlowImport:
                 )
             loops = [FlowImport._parse_loop(node, flow_id) for node in loops_node]
 
-        return FlowDefinition(id=flow_id, steps=steps, loops=loops)
+        return FlowDefinition(
+            id=flow_id,
+            steps=steps,
+            loops=loops,
+            context_mode=root.get("contextMode"),
+        )
 
     @staticmethod
     def from_canonical_file(path: str | Path) -> FlowDefinition:
@@ -187,6 +232,37 @@ class FlowImport:
         warnings.warn(
             f'Importing a flow in the deprecated "{seen_as}" format; '
             f're-export it to upgrade to "{_CURRENT_FORMAT_NAME}".',
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+    @staticmethod
+    def _check_context_mode_downgrade(root: dict) -> None:
+        """Rosetta context-mode downgrade (spec decision 2,
+        docs/superpowers/specs/2026-07-10-rosetta-context-manifest.md): warn
+        when importing a flow declaring ``contextMode: "feedback"``, which
+        this runtime cannot honour in v1 (no run-context manifest/briefing
+        machinery — that lives in the TS harness engine). Mirrors the Java
+        ``FlowImport.checkContextModeDowngrade`` — the frozen contract:
+
+        1. ``"feedback"`` — one ``DeprecationWarning`` (the exact
+           ``_FEEDBACK_DOWNGRADE_WARNING`` message); execution proceeds in
+           blind mode, the only mode this executor implements.
+        2. ``"blind"``, absent/null, or any other value — silence: there is
+           nothing to downgrade.
+
+        Never raises, and never mutates the value: ``contextMode`` is
+        preserved verbatim on the parsed FlowDefinition (the downgrade changes
+        runtime behaviour, not the recorded definition). Same transport and
+        once-semantics as ``_check_legacy_format``: dedup is delegated to the
+        stdlib warnings filter (the default action dedups repeated identical
+        warnings — Python's native equivalent of the Java once-per-process
+        flag / TS ``warnOnce``).
+        """
+        if root.get("contextMode") != _FEEDBACK_CONTEXT_MODE:
+            return
+        warnings.warn(
+            _FEEDBACK_DOWNGRADE_WARNING,
             DeprecationWarning,
             stacklevel=3,
         )
