@@ -14,7 +14,7 @@
  */
 import React, { useCallback, useRef } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
-import { detectLanguage, HELIOX_MONACO_THEME, configureLinting } from '../../logic/monaco-config';
+import { detectLanguage, FLUXOR_MONACO_THEME, configureLinting } from '../../logic/monaco-config';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ let _widgetRoot: HTMLElement | null = null;
 function getWidgetRoot(): HTMLElement {
   if (_widgetRoot && document.body.contains(_widgetRoot)) return _widgetRoot;
   _widgetRoot = document.createElement('div');
-  _widgetRoot.id = 'heliox-monaco-widgets';
+  _widgetRoot.id = 'fluxor-monaco-widgets';
   _widgetRoot.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:99999;overflow:visible;';
   document.body.appendChild(_widgetRoot);
   return _widgetRoot;
@@ -81,8 +81,8 @@ export function CodeEditor({
   const resolvedLanguage = language ?? (fileName ? detectLanguage(fileName) : 'plaintext');
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
-    monaco.editor.defineTheme('heliox-dark', HELIOX_MONACO_THEME);
-    monaco.editor.setTheme('heliox-dark');
+    monaco.editor.defineTheme('fluxor-dark', FLUXOR_MONACO_THEME);
+    monaco.editor.setTheme('fluxor-dark');
     if (enableLinting) configureLinting(monaco);
     if (onSave) {
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, onSave);
@@ -97,7 +97,7 @@ export function CodeEditor({
       value={value}
       onChange={onChange ? (v) => onChange(v ?? '') : undefined}
       onMount={handleMount}
-      theme="heliox-dark"
+      theme="fluxor-dark"
       options={{
         readOnly,
         fontSize,

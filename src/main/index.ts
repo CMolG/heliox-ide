@@ -29,6 +29,7 @@ import { initializeStorage, shutdownStorage } from './storage';
 import { settingsGet, settingsSet } from './storage/settings-store';
 import { browserController } from './browser/browser-controller';
 import { sendTelemetryLaunchPing } from './telemetry-ping';
+import { migrateLegacyDirectories } from './lib/legacy-migration';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -41,7 +42,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 // request; nothing here is transmitted automatically.
 crashReporter.start({
   uploadToServer: false,
-  productName: 'Heliox IDE',
+  productName: 'Fluxor IDE',
   ignoreSystemCrashHandler: false,
 });
 
@@ -142,7 +143,7 @@ function createWindow(): BrowserWindow {
     y: savedState.y,
     minWidth: 1024,
     minHeight: 700,
-    title: 'Heliox IDE',
+    title: 'Fluxor IDE',
     titleBarStyle: 'hiddenInset',
     icon: iconPath,
     backgroundColor: '#0c0a09',
@@ -209,6 +210,13 @@ app.on('web-contents-created', (_e, contents) => {
 });
 
 app.whenReady().then(() => {
+  // Legacy compat: rename any pre-Fluxor `heliox/`/`.heliox/` dirs at the cwd
+  // before anything else touches disk — best-effort, never blocks startup.
+  // Per-project dirs are additionally migrated on project open (see
+  // context-map/store.ts's ensureContextMap), since `process.cwd()` here
+  // isn't necessarily the user's opened project.
+  migrateLegacyDirectories(process.cwd());
+
   // ── Phase 0: Initialize all storage before anything else ────────────────────
   // Order: SQLite migrations → electron-store → fs roots → storage IPC handlers
   initializeStorage();
@@ -233,7 +241,7 @@ app.whenReady().then(() => {
     try {
       if (settingsGet('autoUpdateEnabled')) {
         updateElectronApp({
-          repo: 'CMolG/heliox-ide',
+          repo: 'CMolG/fluxor-ide',
           updateInterval: '1 hour',
           notifyUser: true,
         });
@@ -283,7 +291,7 @@ app.whenReady().then(() => {
           accelerator: 'CmdOrCtrl+O',
           click: () => {
             const win = BrowserWindow.getFocusedWindow();
-            if (win) win.webContents.send('heliox:menu-open-project');
+            if (win) win.webContents.send('fluxor:menu-open-project');
           },
         },
         {
@@ -291,7 +299,7 @@ app.whenReady().then(() => {
           accelerator: 'CmdOrCtrl+W',
           click: () => {
             const win = BrowserWindow.getFocusedWindow();
-            if (win) win.webContents.send('heliox:menu-close-project');
+            if (win) win.webContents.send('fluxor:menu-close-project');
           },
         },
         { type: 'separator' },
@@ -300,7 +308,7 @@ app.whenReady().then(() => {
           accelerator: 'CmdOrCtrl+Shift+P',
           click: () => {
             const win = BrowserWindow.getFocusedWindow();
-            if (win) win.webContents.send('heliox:menu-switch-project');
+            if (win) win.webContents.send('fluxor:menu-switch-project');
           },
         },
       ],

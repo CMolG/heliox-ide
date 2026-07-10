@@ -9,7 +9,7 @@
  *   same pattern as NodeTree.flows.test.tsx.
  * - Mock harness-store (hoisted fixture) for `executionStatus` +
  *   `stopExecution` — the real store's execution actions dispatch through
- *   IPC/`window.helioxAPI`, which isn't available here and isn't what this
+ *   IPC/`window.fluxorAPI`, which isn't available here and isn't what this
  *   file exercises. `useHarnessStore.getState` is stubbed too (StepNode.dnd
  *   .test.tsx precedent) since BoardSwitcher calls it directly whenever the
  *   active board actually changes — switch, new board, or deleting the

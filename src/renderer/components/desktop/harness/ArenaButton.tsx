@@ -9,7 +9,7 @@
  *   `model-selector.ts` (ARCH-065) so the canvas and deploy recommendation
  *   are always consistent.
  * - Provide a "Use for deploy" affordance that records the chosen model so
- *   `heliox serve --select` can pick it up.
+ *   `fluxor serve --select` can pick it up.
  *
  * Boundaries:
  * - Owns: presentation, local formatting, ARIA annotations.
@@ -393,7 +393,7 @@ function ResultsView({ result, chosenModelId, onChoose }: ResultsViewProps) {
             <div className="ab-deploy-notice" role="status" aria-live="polite">
               <LucideIcon name="Server" size={13} aria-hidden="true" />
               <strong>{chosenModelId}</strong> will run this flow when its Model policy is{' '}
-              <em>Fixed</em>, and is picked up by <code>heliox serve --select</code>.
+              <em>Fixed</em>, and is picked up by <code>fluxor serve --select</code>.
             </div>
           )}
         </section>

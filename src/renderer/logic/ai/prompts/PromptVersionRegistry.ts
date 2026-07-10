@@ -85,7 +85,7 @@ export class PromptVersionRegistry {
    * Computes content hash and persists to the database via IPC.
    * Skips DB write if the same key+version is already registered.
    */
-  async register(key: string, version: string, content: string, author = 'heliox'): Promise<RegisteredPrompt> {
+  async register(key: string, version: string, content: string, author = 'fluxor'): Promise<RegisteredPrompt> {
     const mapKey = `${key}@${version}`;
 
     // Already registered this session — skip

@@ -8,7 +8,7 @@ let outputDir: string;
 
 describe('performance frontier runner', () => {
   beforeEach(async () => {
-    outputDir = await mkdtemp(join(tmpdir(), 'heliox-pf-run-'));
+    outputDir = await mkdtemp(join(tmpdir(), 'fluxor-pf-run-'));
   });
 
   afterEach(async () => {

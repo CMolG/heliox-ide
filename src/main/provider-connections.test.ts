@@ -56,7 +56,7 @@ describe('provider-connections', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(path.join(tmpdir(), 'heliox-provider-connections-test-'));
+    tempDir = mkdtempSync(path.join(tmpdir(), 'fluxor-provider-connections-test-'));
     setUserDataDir(tempDir);
     setEncryptionAvailable(true);
   });

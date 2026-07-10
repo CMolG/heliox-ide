@@ -13,7 +13,7 @@
  *   its own, same as it does in the real app.
  * - `harness-store` IS mocked (hoisted spies for `runStep`/`runFromStep` +
  *   a `stepStatuses` fixture) since the real implementation dispatches
- *   through IPC/`window.helioxAPI`, which isn't available here.
+ *   through IPC/`window.fluxorAPI`, which isn't available here.
  * - `../desktop/StepInfoModal` is mocked SHALLOWLY (a stub exposing
  *   `stepId` and a serialized `connections` as data attributes) — its own
  *   internals (evidence content, focus trap, etc.) are covered by
@@ -45,7 +45,7 @@ import React, { Profiler } from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDesktopStore } from '../../store/desktop-store';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { InspectorPanel } from './InspectorPanel';
 import type { StepNodeData } from '@/types/desktop';
 import type { MarketMod, MarketRole } from '@/types/market';
@@ -134,16 +134,16 @@ function freshFrameData(frameId: string) {
   return (useDesktopStore.getState().mentalNodes.find((n) => n.id === frameId) as { data: import('@/types/desktop').FrameNodeData }).data;
 }
 
-// ── window.helioxAPI stub (FlowInspector's Export Flow/Export Markdown —
+// ── window.fluxorAPI stub (FlowInspector's Export Flow/Export Markdown —
 // real logic/flow-actions.ts, real IPC bridge shape) ────────────────────────
 
-function stubHelioxAPI(overrides: {
+function stubFluxorAPI(overrides: {
   exportFlow?: (...args: unknown[]) => unknown;
   saveFile?: (...args: unknown[]) => unknown;
 } = {}) {
   const exportFlow = vi.fn(overrides.exportFlow ?? (() => Promise.resolve({ success: true })));
   const saveFile = vi.fn(overrides.saveFile ?? (() => Promise.resolve(true)));
-  Object.defineProperty(window, 'helioxAPI', {
+  Object.defineProperty(window, 'fluxorAPI', {
     value: { exportFlow, saveFile },
     writable: true,
     configurable: true,
@@ -153,14 +153,14 @@ function stubHelioxAPI(overrides: {
 
 beforeEach(() => {
   useDesktopStore.setState(useDesktopStore.getInitialState(), true);
-  useHelioxStore.setState(useHelioxStore.getInitialState(), true);
+  useFluxorStore.setState(useFluxorStore.getInitialState(), true);
   mockHarness.stepStatuses = {};
   mockHarness.runStep.mockClear();
   mockHarness.runFromStep.mockClear();
   mockHarness.executionStatus = 'idle';
   mockHarness.compileCurrentCanvas.mockReset();
   mockHarness.startExecution.mockReset();
-  delete (window as { helioxAPI?: unknown }).helioxAPI;
+  delete (window as { fluxorAPI?: unknown }).fluxorAPI;
 });
 
 afterEach(() => {
@@ -793,10 +793,10 @@ describe('InspectorPanel — FlowInspector actions', () => {
     expect(screen.getByTestId('inspector-frame-run')).toBeDisabled();
   });
 
-  it('Export Flow compiles the canvas and calls window.helioxAPI.exportFlow with the compiled flow', async () => {
+  it('Export Flow compiles the canvas and calls window.fluxorAPI.exportFlow with the compiled flow', async () => {
     const compiledFlow = { id: 'flow-1', name: 'My Flow', rootStepId: 'root', stepsRecord: {} };
     mockHarness.compileCurrentCanvas.mockReturnValue(compiledFlow);
-    const api = stubHelioxAPI({ exportFlow: () => Promise.resolve({ success: true, path: '/tmp/flow-1.flow.json' }) });
+    const api = stubFluxorAPI({ exportFlow: () => Promise.resolve({ success: true, path: '/tmp/flow-1.flow.json' }) });
     seedFlowSelection();
     render(<InspectorPanel />);
 
@@ -806,10 +806,10 @@ describe('InspectorPanel — FlowInspector actions', () => {
     await waitFor(() => expect(api.exportFlow).toHaveBeenCalledWith(compiledFlow));
   });
 
-  it('Export Markdown compiles the canvas and calls window.helioxAPI.saveFile with a .md default name', async () => {
+  it('Export Markdown compiles the canvas and calls window.fluxorAPI.saveFile with a .md default name', async () => {
     const compiledFlow = { id: 'flow-42', name: 'My Flow', rootStepId: 'root', stepsRecord: {} };
     mockHarness.compileCurrentCanvas.mockReturnValue(compiledFlow);
-    const api = stubHelioxAPI();
+    const api = stubFluxorAPI();
     seedFlowSelection();
     render(<InspectorPanel />);
 
@@ -821,14 +821,14 @@ describe('InspectorPanel — FlowInspector actions', () => {
 
   it('Export Markdown shows an error toast and never calls saveFile when the canvas fails to compile', async () => {
     mockHarness.compileCurrentCanvas.mockReturnValue(null);
-    const api = stubHelioxAPI();
+    const api = stubFluxorAPI();
     seedFlowSelection();
     render(<InspectorPanel />);
 
     fireEvent.click(screen.getByTestId('inspector-frame-export-md'));
 
     await waitFor(() => {
-      expect(useHelioxStore.getState().toasts.some((t) => t.type === 'error')).toBe(true);
+      expect(useFluxorStore.getState().toasts.some((t) => t.type === 'error')).toBe(true);
     });
     expect(api.saveFile).not.toHaveBeenCalled();
   });

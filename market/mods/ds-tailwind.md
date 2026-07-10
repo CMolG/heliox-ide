@@ -2,7 +2,7 @@
 
 Pins all styling to Tailwind CSS utility classes and design tokens; no ad-hoc CSS or competing styling systems.
 
-> **Exclusive group: `design-system`.** This mod belongs to the `design-system` exclusive group. Only one design-system mod may be active in a session at a time — it cannot be stacked with `ds-shadcn` or any other design-system mod. The Heliox loader enforces this automatically and will reject configurations that activate more than one.
+> **Exclusive group: `design-system`.** This mod belongs to the `design-system` exclusive group. Only one design-system mod may be active in a session at a time — it cannot be stacked with `ds-shadcn` or any other design-system mod. The Fluxor loader enforces this automatically and will reject configurations that activate more than one.
 
 ## Rules
 

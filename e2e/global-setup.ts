@@ -31,13 +31,13 @@ function waitForRenderer(serverPid: number, logPath: string): Promise<void> {
           process.kill(serverPid, 0);
         } catch {
           const logs = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
-          reject(new Error(`Heliox renderer dev server exited before startup.\n${logs}`));
+          reject(new Error(`Fluxor renderer dev server exited before startup.\n${logs}`));
           return;
         }
 
         if (Date.now() - startedAt > timeoutMs) {
           const logs = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
-          reject(new Error(`Timed out waiting for Heliox renderer on ${RENDERER_HOST}:${RENDERER_PORT}.\n${logs}`));
+          reject(new Error(`Timed out waiting for Fluxor renderer on ${RENDERER_HOST}:${RENDERER_PORT}.\n${logs}`));
           return;
         }
 
@@ -54,15 +54,15 @@ function waitForRenderer(serverPid: number, logPath: string): Promise<void> {
 }
 
 export default async function globalSetup() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'heliox-e2e-'));
-  process.env.HELIOX_E2E_USER_DATA = tmpDir;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fluxor-e2e-'));
+  process.env.FLUXOR_E2E_USER_DATA = tmpDir;
 
   // Write the path to a well-known file so test workers can read it
   const markerPath = path.join(__dirname, '.e2e-user-data-dir');
   fs.writeFileSync(markerPath, tmpDir, 'utf-8');
 
   // The compiled Electron main process loads http://localhost:5173 in dev.
-  // Start Heliox's renderer explicitly so Electron never attaches to a
+  // Start Fluxor's renderer explicitly so Electron never attaches to a
   // different project that happens to be running on the default Vite port.
   const repoRoot = path.join(__dirname, '..');
   const vitePidPath = path.join(__dirname, '.e2e-vite-pid');
@@ -86,7 +86,7 @@ export default async function globalSetup() {
   });
 
   if (!renderer.pid) {
-    throw new Error('Failed to start Heliox renderer dev server for E2E.');
+    throw new Error('Failed to start Fluxor renderer dev server for E2E.');
   }
 
   fs.writeFileSync(vitePidPath, String(renderer.pid), 'utf-8');

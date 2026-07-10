@@ -63,7 +63,7 @@ describe('snapshot-browser-installer', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(path.join(tmpdir(), 'heliox-pw-browsers-test-'));
+    tempDir = mkdtempSync(path.join(tmpdir(), 'fluxor-pw-browsers-test-'));
     setPackaged(false);
     setUserDataDir(tempDir);
     spawnMock.mockClear();

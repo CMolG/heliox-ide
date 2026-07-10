@@ -181,7 +181,7 @@ describe('design-system feature removal (now only a mod exclusive group)', () =>
 
 describe('exclusive-group mods (design systems as mutually-exclusive mods)', () => {
   it('auto-derives mutual incompatibility within an exclusive group', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'heliox-market-'));
+    const tmp = mkdtempSync(join(tmpdir(), 'fluxor-market-'));
     mkdirSync(join(tmp, 'mods'), { recursive: true });
     writeFileSync(join(tmp, 'mods', 'ds-alpha.md'), '# alpha design system', 'utf-8');
     writeFileSync(join(tmp, 'mods', 'ds-beta.md'), '# beta design system', 'utf-8');
@@ -197,8 +197,8 @@ describe('exclusive-group mods (design systems as mutually-exclusive mods)', () 
       'utf-8',
     );
 
-    const previous = process.env.HELIOX_MARKET_DIR;
-    process.env.HELIOX_MARKET_DIR = tmp;
+    const previous = process.env.FLUXOR_MARKET_DIR;
+    process.env.FLUXOR_MARKET_DIR = tmp;
     clearMarketModCache();
     try {
       const alpha = getMarketMod('ds-alpha');
@@ -212,14 +212,14 @@ describe('exclusive-group mods (design systems as mutually-exclusive mods)', () 
       expect(plain.config?.incompatibleWith).toBeUndefined();
       expect(plain.config?.exclusiveGroup).toBeUndefined();
     } finally {
-      if (previous === undefined) delete process.env.HELIOX_MARKET_DIR;
-      else process.env.HELIOX_MARKET_DIR = previous;
+      if (previous === undefined) delete process.env.FLUXOR_MARKET_DIR;
+      else process.env.FLUXOR_MARKET_DIR = previous;
       clearMarketModCache();
     }
   });
 
   it('symmetrizes a manually-authored asymmetric incompatibleWith list (A lists B, B never lists back)', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'heliox-market-'));
+    const tmp = mkdtempSync(join(tmpdir(), 'fluxor-market-'));
     mkdirSync(join(tmp, 'mods'), { recursive: true });
     writeFileSync(join(tmp, 'mods', 'mod-a.md'), '# mod a', 'utf-8');
     writeFileSync(join(tmp, 'mods', 'mod-b.md'), '# mod b', 'utf-8');
@@ -234,8 +234,8 @@ describe('exclusive-group mods (design systems as mutually-exclusive mods)', () 
       'utf-8',
     );
 
-    const previous = process.env.HELIOX_MARKET_DIR;
-    process.env.HELIOX_MARKET_DIR = tmp;
+    const previous = process.env.FLUXOR_MARKET_DIR;
+    process.env.FLUXOR_MARKET_DIR = tmp;
     clearMarketModCache();
     try {
       const a = getMarketMod('mod-a');
@@ -245,8 +245,8 @@ describe('exclusive-group mods (design systems as mutually-exclusive mods)', () 
       // "mod-b" never declared the pairing itself — the loader must symmetrize it.
       expect(b.config?.incompatibleWith).toEqual(['mod-a']);
     } finally {
-      if (previous === undefined) delete process.env.HELIOX_MARKET_DIR;
-      else process.env.HELIOX_MARKET_DIR = previous;
+      if (previous === undefined) delete process.env.FLUXOR_MARKET_DIR;
+      else process.env.FLUXOR_MARKET_DIR = previous;
       clearMarketModCache();
     }
   });

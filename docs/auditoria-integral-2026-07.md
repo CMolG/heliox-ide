@@ -1,8 +1,8 @@
-# Auditoría integral de Heliox IDE — Julio 2026
+# Auditoría integral de Fluxor IDE — Julio 2026
 
-**Fecha:** 2026-07-01 (rev. 2 mismo día: añade la auditoría del frontend `../heliox-ide-web` / helioxide.com, el workstream de release engineering y la migración de docs a Nextra) · **Alcance:** diseño, contenido, herramientas adjuntas, desktop, DevOps, seguridad, marketing, escalabilidad, repercusión y modelo de partners · **Método:** cada afirmación sobre Heliox está anclada a un fichero del repo o a un comando ejecutado durante la auditoría (Anexo A). Las afirmaciones de mercado citan fuentes externas.
+**Fecha:** 2026-07-01 (rev. 2 mismo día: añade la auditoría del frontend `../heliox-ide-web` / helioxide.com, el workstream de release engineering y la migración de docs a Nextra) · **Alcance:** diseño, contenido, herramientas adjuntas, desktop, DevOps, seguridad, marketing, escalabilidad, repercusión y modelo de partners · **Método:** cada afirmación sobre Fluxor está anclada a un fichero del repo o a un comando ejecutado durante la auditoría (Anexo A). Las afirmaciones de mercado citan fuentes externas.
 
-> **Veredicto en una frase:** Heliox tiene ingeniería de nivel "ganador de categoría" atrapada dentro de un producto que, a efectos del mundo exterior, **no existe**: el repo público lleva sin push desde el 12 de abril, tiene 1 estrella, 0 releases, sin instaladores firmados, una web viva (helioxide.com) cuyos botones de descarga no descargan nada, y sin una sola captura de pantalla en el README. El plan de acción no es "mejorar el producto hasta que brille": es **shippear el brillo que ya existe**, blindar la confianza (firma, CSP, cadena de suministro del market) y construir la máquina de distribución que convierta tres fosos técnicos reales en una comunidad.
+> **Veredicto en una frase:** Fluxor tiene ingeniería de nivel "ganador de categoría" atrapada dentro de un producto que, a efectos del mundo exterior, **no existe**: el repo público lleva sin push desde el 12 de abril, tiene 1 estrella, 0 releases, sin instaladores firmados, una web viva (helioxide.com) cuyos botones de descarga no descargan nada, y sin una sola captura de pantalla en el README. El plan de acción no es "mejorar el producto hasta que brille": es **shippear el brillo que ya existe**, blindar la confianza (firma, CSP, cadena de suministro del market) y construir la máquina de distribución que convierta tres fosos técnicos reales en una comunidad.
 
 ---
 
@@ -50,7 +50,7 @@ El orden correcto es **Ship → Trust → Tell → Scale**: (0) publicar lo que 
 | Sin i18n de la UI | UI solo en inglés | Barrera para el objetivo de "millones de usuarios"; el español es el segundo mercado dev natural del proyecto |
 | Accesibilidad no auditada end-to-end en la app | axe se usa en la PF (para código generado), no contra el propio IDE | Riesgo de incoherencia: "valida a11y de tus agentes" con un IDE no auditado |
 
-**Recomendación clave:** self-hostear todas las fuentes vía `@fontsource-*` (Doto ya lo está — el patrón existe), y correr el propio `design-verifier` de la PF contra el IDE. *Dogfooding literal: que Heliox se audite con Heliox.*
+**Recomendación clave:** self-hostear todas las fuentes vía `@fontsource-*` (Doto ya lo está — el patrón existe), y correr el propio `design-verifier` de la PF contra el IDE. *Dogfooding literal: que Fluxor se audite con Fluxor.*
 
 ---
 
@@ -84,7 +84,7 @@ Esta es el área más fuerte del proyecto y la base de todo el valor de partners
 
 - **Sistema de attachables** (roles arriba, mods abajo, flows a la derecha de cada ventana): compositional, con validación de compatibilidad pendiente (`.backlog/ARCH-021`).
 - **Performance Frontier + Arena:** el roadmap completo de 5 fases está **implementado y validado en vivo** (`docs/cutting-edge-roadmap.md`, STATUS 2026-06-24): sandbox que ejecuta vitest real, design-verifier con axe-core, api-verifier que bootea Express, bench con IC 95 % (Student-t), juez con calibración bajo fallos conocidos (0 overrules), y **conformance TS↔Java byte-idéntica incluyendo tool-calling** (19 tests TS + 50 Java verdes).
-- **Runtime de producción temprano:** `heliox serve` con Bearer auth y bind loopback por defecto (`src/main/serve/serve-flow.ts`), triggers cron + webhook con guard de solapamiento (`src/main/triggers/`), RAG local con vector store + ingesta + step `retriever` (`src/main/harness-engine/knowledge/`), checkpoints + replay (`checkpoints.ts`, `replay.ts`).
+- **Runtime de producción temprano:** `fluxor serve` con Bearer auth y bind loopback por defecto (`src/main/serve/serve-flow.ts`), triggers cron + webhook con guard de solapamiento (`src/main/triggers/`), RAG local con vector store + ingesta + step `retriever` (`src/main/harness-engine/knowledge/`), checkpoints + replay (`checkpoints.ts`, `replay.ts`).
 - **MCP en ambas direcciones:** cliente stdio/HTTP/SSE (`mcp-adapter.ts`), directorio curado (`src/main/market/mcp-directory.ts`), y telemetría `missingCapabilitiesRequested` como product-discovery de qué conectores faltan.
 - **SDKs:** Java (`sdk/java`, con suite de conformance) y Python embrionario (`sdk/python` con provider/executor/flow_import — aún sin la suite de conformance completa).
 - **Bridge móvil:** QR + PIN de 6 dígitos con expiración (`src/main/bridge/auth.ts`).
@@ -93,7 +93,7 @@ Esta es el área más fuerte del proyecto y la base de todo el valor de partners
 
 1. **El SDK Python no está en la matriz de conformance.** Es el movimiento P2-6 del roadmap competitivo ("abre el universo LangChain") y ya está empezado; sin la suite de `sdk/conformance/` pasando en Python, no es publicable como foso.
 2. **El default del retriever es un stub de hashing** (documentado honestamente en `retriever.ts`): sin proveedor de embeddings real configurado out-of-the-box, el RAG "existe" pero no es útil para un usuario nuevo.
-3. **Los nuevos motores no tienen UI de primera clase.** Serve/triggers/RAG se manejan por CLI/config; el diferencial de Heliox es el canvas — estos deben ser ventanas/attachables.
+3. **Los nuevos motores no tienen UI de primera clase.** Serve/triggers/RAG se manejan por CLI/config; el diferencial de Fluxor es el canvas — estos deben ser ventanas/attachables.
 4. **Las herramientas heredan la confianza del market sin verificación criptográfica** (ver §6).
 
 ---
@@ -150,13 +150,13 @@ Estado verificado de la deuda conocida:
 |---|---|---|
 | Auth del serve | ✅ **CERRADO** | Bearer token obligatorio, loopback por defecto (`serve-flow.ts` cabecera "Security") |
 | Flags Electron | ✅ Correctos | §4 |
-| **RCE vía tool-provider MCP** | ✅ **CERRADO** (2026-07-02) | `mcp-command-policy.ts`: gate en la frontera de spawn — match de prefijo contra el directorio curado, aprobaciones exactas persistidas, `HELIOX_MCP_ALLOW_ALL` como escape de dev; IPC approve/revoke. Pendiente follow-up: allowlist equivalente para MCP HTTP/SSE (SSRF) |
+| **RCE vía tool-provider MCP** | ✅ **CERRADO** (2026-07-02) | `mcp-command-policy.ts`: gate en la frontera de spawn — match de prefijo contra el directorio curado, aprobaciones exactas persistidas, `FLUXOR_MCP_ALLOW_ALL` como escape de dev; IPC approve/revoke. Pendiente follow-up: allowlist equivalente para MCP HTTP/SSE (SSRF) |
 | **Inyección vía .md del market** | 🟡 MITIGADO en autenticidad | La *autenticidad* la cubre el root-of-trust (fila siguiente); el riesgo *semántico* (prompt malicioso firmado) sigue siendo inherente al modelo de market curado por humanos |
 | **PIN del bridge sobre HTTP** | 🟡 **MITIGADO** (2026-07-02) | Token de pairing one-time (TTL 120 s) en fragment de URL (nunca llega a logs), intercambio por POST body, lockout 5/60 s, `timingSafeEqual`, WS token en subprotocolo, endpoint `/bridge/qr` sin auth eliminado. Residual: HTTP plano en LAN hasta TLS/PAKE (threat model en `SECURITY.md`) |
 | **Sin root-of-trust del market** | 🟡 IMPLEMENTADO en bootstrap | `market-trust.ts` (ed25519, manifest sha256, fail-closed empaquetado) + `scripts/market-sign.ts`. Inerte hasta que el maintainer genere la clave (`--gen-key`) y publique el pubkey en `TRUSTED_MARKET_KEYS` |
 | CSP | ✅ **CERRADO** (2026-07-02) | Inyectada vía `onHeadersReceived` solo en app empaquetada; webview de previews exento por partición de sesión propia; Monaco auto-hosteado (cargaba del CDN — habría roto bajo CSP) |
 
-**Por qué esto es estratégico y no solo técnico:** el pitch de Heliox es *confianza verificada* ("demuestras que tus agentes funcionan"). Un marketplace de prompts/tools sin firma, con un adaptador que spawnea comandos de config, es la contradicción exacta de ese pitch — y será lo primero que un evaluador serio (o un post de HN) encuentre. La seguridad aquí **es** marketing.
+**Por qué esto es estratégico y no solo técnico:** el pitch de Fluxor es *confianza verificada* ("demuestras que tus agentes funcionan"). Un marketplace de prompts/tools sin firma, con un adaptador que spawnea comandos de config, es la contradicción exacta de ese pitch — y será lo primero que un evaluador serio (o un post de HN) encuentre. La seguridad aquí **es** marketing.
 
 **Paquete mínimo "trust-ready":** (1) allowlist + confirmación explícita de usuario para cualquier `command` de MCP no incluido en el directorio curado; (2) firma de items del market (sigstore/minisign) + verificación en `market-loader.ts`; (3) HTTPS o secure pairing (SRP/PAKE) para el bridge; (4) meta CSP estricta; (5) `SECURITY.md` con política de divulgación.
 
@@ -207,28 +207,28 @@ El mercado, mientras tanto, está en su pico de atención: Dify y Langflow >100k
 ### Escalabilidad técnica
 
 - **Código:** 312 ficheros TS / 69k LOC con separación limpia main/renderer/sdk/snapshot-engine; stores Zustand modularizados; SQLite con migraciones. Escala bien a equipos de 3-10 contributors.
-- **Producto:** hoy single-user desktop. La ruta a escala ya está construida en embrión: `heliox serve` (flows como servicio), triggers (producción), SDKs (runtime sin IDE). Falta: colaboración multi-usuario (correctamente priorizada como P2 en el análisis) y cualquier forma de uso sin instalación.
+- **Producto:** hoy single-user desktop. La ruta a escala ya está construida en embrión: `fluxor serve` (flows como servicio), triggers (producción), SDKs (runtime sin IDE). Falta: colaboración multi-usuario (correctamente priorizada como P2 en el análisis) y cualquier forma de uso sin instalación.
 - **Riesgo dominante: bus-factor = 1.** Un solo autor, una sola máquina, trabajo sin push. La escalabilidad empieza por eliminar ese punto único de fallo.
 
 ### Repercusión potencial (honesta)
 
-La categoría es enorme y validada (ver §7). La posición de Heliox es única y defendible con evidencia en código. Pero seamos aritméticamente honestos con "millones de usuarios": **ningún IDE desktop de nicho llega a millones solo con instaladores**. Langflow con >100k estrellas tiene cientos de miles de usuarios activos, no millones. Los caminos reales a 7 cifras son:
+La categoría es enorme y validada (ver §7). La posición de Fluxor es única y defendible con evidencia en código. Pero seamos aritméticamente honestos con "millones de usuarios": **ningún IDE desktop de nicho llega a millones solo con instaladores**. Langflow con >100k estrellas tiene cientos de miles de usuarios activos, no millones. Los caminos reales a 7 cifras son:
 
-1. **Que el formato gane, no (solo) la app.** `HelioxFlowExport` + conformance multi-runtime es la jugada "Terraform/WASM de agentes": si flows Heliox corren en TS, JVM **y Python**, cualquier equipo puede adoptar el formato sin adoptar el IDE. Los estándares alcanzan millones; las apps, decenas de miles.
+1. **Que el formato gane, no (solo) la app.** `FluxorFlowExport` + conformance multi-runtime es la jugada "Terraform/WASM de agentes": si flows Fluxor corren en TS, JVM **y Python**, cualquier equipo puede adoptar el formato sin adoptar el IDE. Los estándares alcanzan millones; las apps, decenas de miles.
 2. **Superficie web sin instalación:** un playground (canvas de solo-lectura + run de flows de ejemplo en servidor) convierte cada link compartido en un usuario potencial sin pasar por Gatekeeper.
-3. **Insertarse en ecosistemas existentes:** servidor MCP oficial "run-heliox-flow" (cada cliente MCP del mundo se vuelve usuario indirecto), y más adelante extensión VS Code que consuma flows.
+3. **Insertarse en ecosistemas existentes:** servidor MCP oficial "run-fluxor-flow" (cada cliente MCP del mundo se vuelve usuario indirecto), y más adelante extensión VS Code que consuma flows.
 
 ### Rentabilidad de partners (Apache-2.0 lo permite todo)
 
 La licencia Apache 2.0 es la correcta para adopción y partners (permisiva, con patent grant). Modelos ordenados por encaje con los fosos:
 
-| Modelo | Qué se vende | Por qué Heliox puede y otros no |
+| Modelo | Qué se vende | Por qué Fluxor puede y otros no |
 |---|---|---|
-| **1. Marketplace certificado "Heliox Verified"** | Rev-share (70/30) sobre flows/roles/mods de partners, **certificados por la Performance Frontier** — cada item se publica con su benchmark ejecutado, IC estadístico y badge | Nadie más puede certificar con *ejecución real* (vitest/axe/HTTP) en vez de opinión de LLM. El `market-integrity` + firma (§6) son el prerequisito técnico |
-| **2. Open-core cloud** | Heliox Cloud: colaboración multi-usuario, RBAC, observabilidad hosted, Arena-as-a-Service (benchmarks bajo demanda), registry privado de flows | El desktop queda 100 % libre (adopción); lo cloud es lo que las empresas ya esperan pagar |
+| **1. Marketplace certificado "Fluxor Verified"** | Rev-share (70/30) sobre flows/roles/mods de partners, **certificados por la Performance Frontier** — cada item se publica con su benchmark ejecutado, IC estadístico y badge | Nadie más puede certificar con *ejecución real* (vitest/axe/HTTP) en vez de opinión de LLM. El `market-integrity` + firma (§6) son el prerequisito técnico |
+| **2. Open-core cloud** | Fluxor Cloud: colaboración multi-usuario, RBAC, observabilidad hosted, Arena-as-a-Service (benchmarks bajo demanda), registry privado de flows | El desktop queda 100 % libre (adopción); lo cloud es lo que las empresas ya esperan pagar |
 | **3. Serving informado por benchmark** | Partnership con plataformas de deploy (Fly/Railway/Vercel): "despliega la config ganadora de tu Arena en un clic", con rev-share de infra | Combinación Arena→deploy que el análisis competitivo ya identificó como irrepetible ([05](competitive-analysis/05-brechas-y-roadmap.md)) |
 | **4. Directorio MCP patrocinado** | Placement curado de servers MCP de vendors, priorizado por la telemetría real `missingCapabilitiesRequested` | El directorio ya existe (`mcp-directory.ts`) y la telemetría de demanda también — es inventario publicitario honesto |
-| **5. Enterprise support + certificación** | SLA, formación "Heliox Certified Engineer", auditorías de flows | Estándar COSS; viable cuando haya tracción |
+| **5. Enterprise support + certificación** | SLA, formación "Fluxor Certified Engineer", auditorías de flows | Estándar COSS; viable cuando haya tracción |
 
 **Secuencia realista de ingresos:** (año 1) sponsors GitHub + directorio MCP patrocinado → (año 1-2) marketplace certificado → (año 2+) cloud. Intentar monetizar antes de las 5k estrellas mataría la adopción.
 
@@ -270,7 +270,7 @@ El producto tiene el perfil exacto para: **Show HN** (la conformance byte-idént
 | 1.7 | Playwright browsers como descarga bajo demanda | Instalador < 150 MB |
 | 1.8 | Crash reporting + telemetría **opt-in** (contador de instalaciones/DAU anónimo) | Dashboard con nº real de usuarios |
 | 1.9 | E2E en CI (xvfb) aunque sea suite reducida smoke | El pitch "snapshot-verified" se auto-aplica |
-| 1.10 | **Release engineering formal (preparación de versiones GitHub + ejecutables):** semver + conventional commits; CHANGELOG.md generado por release; matriz de artefactos por plataforma y arquitectura con naming estable (`Heliox-IDE-vX.Y.Z-{os}-{arch}.{ext}`: dmg arm64 + x64, exe/Squirrel x64, deb/rpm x64) firmados según 1.1; `SHA256SUMS` publicado como asset de cada release; flujo draft-release → checklist de QA (instalar en máquina virgen por SO) → publish; canales `alpha`/`beta` (prerelease) → `stable`; `npm ci` en release.yml | Release reproducible, verificable por checksum, instalable en máquina virgen en las 3 plataformas |
+| 1.10 | **Release engineering formal (preparación de versiones GitHub + ejecutables):** semver + conventional commits; CHANGELOG.md generado por release; matriz de artefactos por plataforma y arquitectura con naming estable (`Fluxor-IDE-vX.Y.Z-{os}-{arch}.{ext}`: dmg arm64 + x64, exe/Squirrel x64, deb/rpm x64) firmados según 1.1; `SHA256SUMS` publicado como asset de cada release; flujo draft-release → checklist de QA (instalar en máquina virgen por SO) → publish; canales `alpha`/`beta` (prerelease) → `stable`; `npm ci` en release.yml | Release reproducible, verificable por checksum, instalable en máquina virgen en las 3 plataformas |
 | 1.11 | **Conectar las releases al frontend (helioxide.com):** `Download.tsx` deja de ser placeholder — datos de la GitHub Releases API resueltos en build/ISR con revalidación (sin rate-limit en cliente), detección de SO+arquitectura del visitante, botón principal con enlace directo al asset correcto mostrando versión, tamaño y SHA256; página `/download` con la matriz completa de plataformas, checksums e instrucciones (incluida la nota Gatekeeper mientras 1.1 no esté desplegado); fallback a la página de releases de GitHub; sustituir los emoji 🍎🪟🐧 por SVG (regla del propio proyecto); badge de versión en el Hero | Click en helioxide.com → el instalador correcto descargándose; la web muestra siempre la última versión sin tocar código |
 
 ### Fase 2 — "Que se conozca" (mes 2-4) · lanzamiento
@@ -291,8 +291,8 @@ El producto tiene el perfil exacto para: **Show HN** (la conformance byte-idént
 |---|---|---|
 | 3.1 | **SDK Python a paridad de conformance** (la suite `sdk/conformance/` completa en 3 runtimes) | `pytest` verde con los mismos golden files; post "un flow, tres runtimes" |
 | 3.2 | Playground web (canvas read-only + flows de ejemplo servidos) | Usuarios sin instalación; link compartible por flow |
-| 3.3 | Servidor MCP oficial "heliox-flows" (ejecutar flows exportados desde cualquier cliente MCP) | Listado en directorios MCP |
-| 3.4 | Programa de partners v1: marketplace con firma + badge "Heliox Verified" (PF adjunta al item) + rev-share | 5 partners fundadores publicando items certificados |
+| 3.3 | Servidor MCP oficial "fluxor-flows" (ejecutar flows exportados desde cualquier cliente MCP) | Listado en directorios MCP |
+| 3.4 | Programa de partners v1: marketplace con firma + badge "Fluxor Verified" (PF adjunta al item) + rev-share | 5 partners fundadores publicando items certificados |
 | 3.5 | Directorio MCP patrocinado (inventario según `missingCapabilitiesRequested`) | Primer ingreso recurrente |
 | 3.6 | Exportar trazas a Langfuse/LangSmith (integrar, no construir — P2-8 del análisis) | Observabilidad de producción sin plataforma propia |
 | 3.7 | Candidaturas: GitHub Accelerator, charlas (AI Engineer Summit), showcase Electron | 1 aceptación |

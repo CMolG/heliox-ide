@@ -15,7 +15,7 @@
  * will diverge unless a scripted `runStep` function is injected via
  * `ExecuteAgenticFlowOptions.runStep`.
  *
- * This is consistent with Heliox's commitment to honesty: we surface the fork
+ * This is consistent with Fluxor's commitment to honesty: we surface the fork
  * as a new exploration branch, not as a deterministic "undo".
  */
 

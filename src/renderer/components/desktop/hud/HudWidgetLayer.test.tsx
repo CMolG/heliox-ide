@@ -6,7 +6,7 @@
  *   position, size and the move/resize actions are fully controlled.
  * - Mock WidgetWrapper and the three widget bodies shallowly — their own
  *   behaviour is covered by dedicated tests elsewhere, and they pull in
- *   useHelioxStore/IPC-backed deps this file doesn't want to bring along.
+ *   useFluxorStore/IPC-backed deps this file doesn't want to bring along.
  *
  * Bug under test: the widget container used to set only `width` (no
  * `height`), so WidgetWrapper's `height:100%` + inner `flex:1; overflow:auto`

@@ -15,12 +15,12 @@
 import React from 'react';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { theme } from '@/renderer/logic/theme';
-import { useHelioxStore } from '@/renderer/store';
+import { useFluxorStore } from '@/renderer/store';
 
 // ─── Component ───────────────────────────────────────────────────
 
 export function CollapseSideBarButton() {
-  const toggleSidebar = useHelioxStore(s => s.toggleSidebar);
+  const toggleSidebar = useFluxorStore(s => s.toggleSidebar);
 
   return (
     <button

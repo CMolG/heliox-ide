@@ -75,7 +75,7 @@ export interface SettingsSchema {
   telemetryAnonymousId: string | null;
   /**
    * Optional settings-based override for the telemetry ping endpoint, used
-   * when the HELIOX_TELEMETRY_ENDPOINT env var isn't set. Null means "no
+   * when the FLUXOR_TELEMETRY_ENDPOINT env var isn't set. Null means "no
    * endpoint configured" — the ping stays a no-op either way.
    */
   telemetryEndpoint: string | null;

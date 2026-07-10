@@ -1,12 +1,12 @@
-# brainstorm-cards: Heliox Idea → Agentic Cards Pipeline
+# brainstorm-cards: Fluxor Idea → Agentic Cards Pipeline
 
-You are running the **Heliox Brainstorm-with-Vitamins** pipeline. It is *not* a free-form chat: it is a strict five-phase, single-shot pipeline that turns a raw human idea into one or more **Agentic Cards** ready for autonomous execution.
+You are running the **Fluxor Brainstorm-with-Vitamins** pipeline. It is *not* a free-form chat: it is a strict five-phase, single-shot pipeline that turns a raw human idea into one or more **Agentic Cards** ready for autonomous execution.
 
 Brainstorming alone is too soft (it diverges forever); requirement engineering alone is too cold (it kills exploration). This flow is the intersection — open exploration **with structured discovery on top** — and it terminates by *writing files*: one `.md` card per atomic deliverable inside `.backlog/`.
 
 ## Operating principles (non-negotiable)
 
-1. **Heliox cards are the only output.** No tickets, no Jira, no Notion. The artifacts are `.backlog/*.md` files using the Heliox frontmatter contract (see "Card contract" below).
+1. **Fluxor cards are the only output.** No tickets, no Jira, no Notion. The artifacts are `.backlog/*.md` files using the Fluxor frontmatter contract (see "Card contract" below).
 2. **No architectural invention.** You ask functional, product, and operational questions. You do **not** prescribe library choices, file paths, or class names unless the user explicitly asks. Architecture lives in the cards' Directive, written by future agents.
 3. **Single-shot, not infinite.** Each invocation produces a finite set of cards and stops. Never loop.
 4. **Read-only until the final write.** Phases 1–4 do not touch the filesystem. Only Phase 5 writes cards.
@@ -27,7 +27,7 @@ Internally — do **not** dump this analysis on the user — score the idea agai
 - **business_goal_clarity**     — is the user benefit explicit and singular?
 - **functional_entities**       — what nouns/objects must exist?
 - **user_actions**              — what verbs/flows must work?
-- **affected_surfaces**         — which Heliox atoms (apps, widgets, plugins, roles, flows, market items, backlog) are touched?
+- **affected_surfaces**         — which Fluxor atoms (apps, widgets, plugins, roles, flows, market items, backlog) are touched?
 - **missing_decisions**         — what *must* be decided before any agent can build this?
 
 If `business_goal_clarity` < 0.65 or `missing_decisions` ≥ 3, you stay in Phase 3 and gate. Otherwise you may produce cards even if some signals are mid-range.
@@ -123,11 +123,11 @@ Then **terminate**. Do not start another brainstorm round in the same session.
 
 - **NEVER** invent answers the user did not give. If a question went unanswered, either ask once more, or skip that card.
 - **NEVER** write outside `.backlog/`. No source-file edits in this flow.
-- **NEVER** mention Jira, Linear, GitHub Issues, or any external tracker. Heliox cards are the canonical surface.
+- **NEVER** mention Jira, Linear, GitHub Issues, or any external tracker. Fluxor cards are the canonical surface.
 - **NEVER** chain into other flows. This one ends with the summary line above.
 - If the user types `/skip` at any phase, jump directly to Phase 5 with whatever you have (mark unanswered slots as "open risk" in the card).
 - If the user types `/stop`, abort cleanly with no cards written.
 
 ## One-line mission
 
-> Take a rough idea, push it through structured discovery, and crystallize it into Heliox cards — fast, lossless, and self-contained.
+> Take a rough idea, push it through structured discovery, and crystallize it into Fluxor cards — fast, lossless, and self-contained.

@@ -15,7 +15,7 @@
 // src/renderer/components/atoms/apps/FileExplorerAppp.tsx — Split-pane file explorer with tree, tabbed Monaco editor, and drag-out
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useHelioxStore } from '../../../store';
+import { useFluxorStore } from '../../../store';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { LucideIcon } from '../../desktop/LucideIcon';
 import { theme } from '../../../logic/theme';
@@ -70,7 +70,7 @@ function getFileColor(name: string): string {
 }
 
 export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const projectPath = useFluxorStore(s => s.projectPath);
   const addWindow = useDesktopStore(s => s.addWindow);
 
   // Persistent state from store (survives minimize/maximize/restart)
@@ -107,9 +107,9 @@ export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
 
   // ── Directory Loading ─────────────────────────────────────────
   const loadDir = useCallback(async (dirPath: string): Promise<TreeNode[]> => {
-    if (!window.helioxAPI || !projectPath) return [];
+    if (!window.fluxorAPI || !projectPath) return [];
     try {
-      const entries = await window.helioxAPI.readDirectory(dirPath);
+      const entries = await window.fluxorAPI.readDirectory(dirPath);
       return entries
         .filter(e => !e.name.startsWith('.') || e.name === '.gitignore' || e.name === '.env')
         .map(e => ({
@@ -168,11 +168,11 @@ export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
 
       // Restore open tabs by re-reading file contents from disk
       const tabMetas = savedState.openTabs || [];
-      if (tabMetas.length > 0 && window.helioxAPI) {
+      if (tabMetas.length > 0 && window.fluxorAPI) {
         const tabs: FileTab[] = [];
         for (const meta of tabMetas) {
           try {
-            const content = await window.helioxAPI.readFile(meta.path);
+            const content = await window.fluxorAPI.readFile(meta.path);
             if (content !== null) {
               tabs.push({ path: meta.path, relPath: meta.relPath, name: meta.name, content, dirty: false });
             }
@@ -224,7 +224,7 @@ export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
 
   // ── Tab Operations ────────────────────────────────────────────
   const openFileInTab = useCallback(async (node: TreeNode) => {
-    if (!window.helioxAPI) return;
+    if (!window.fluxorAPI) return;
     setSelectedPath(node.path);
 
     // If already open, just activate
@@ -234,7 +234,7 @@ export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
       return;
     }
 
-    const content = await window.helioxAPI.readFile(node.path);
+    const content = await window.fluxorAPI.readFile(node.path);
     if (content !== null) {
       const newTab: FileTab = {
         path: node.path,
@@ -268,9 +268,9 @@ export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
 
   const saveTab = useCallback(async (tabPath: string) => {
     const tab = openTabs.find(t => t.path === tabPath);
-    if (!tab || !tab.dirty || !window.helioxAPI) return;
+    if (!tab || !tab.dirty || !window.fluxorAPI) return;
     setSaving(true);
-    const ok = await window.helioxAPI.writeFile(tab.path, tab.content);
+    const ok = await window.fluxorAPI.writeFile(tab.path, tab.content);
     if (ok) {
       setOpenTabs(prev => prev.map(t =>
         t.path === tabPath ? { ...t, dirty: false } : t
@@ -415,30 +415,30 @@ export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
   }, [loadDir, projectPath]);
 
   const commitInlineCreate = useCallback(async () => {
-    if (!inlineInput || !inlineInput.value.trim() || !window.helioxAPI) return;
+    if (!inlineInput || !inlineInput.value.trim() || !window.fluxorAPI) return;
     const name = inlineInput.value.trim();
     const fullPath = `${inlineInput.parentPath}/${name}`;
     const ok = inlineInput.type === 'folder'
-      ? await window.helioxAPI.createDirectory(fullPath)
-      : await window.helioxAPI.createFile(fullPath);
+      ? await window.fluxorAPI.createDirectory(fullPath)
+      : await window.fluxorAPI.createFile(fullPath);
     if (ok) await refreshDir(inlineInput.parentPath);
     setInlineInput(null);
   }, [inlineInput, refreshDir]);
 
   const commitRename = useCallback(async () => {
-    if (!renameInput || !renameInput.value.trim() || !window.helioxAPI) return;
+    if (!renameInput || !renameInput.value.trim() || !window.fluxorAPI) return;
     const parentDir = renameInput.node.path.replace(/\/[^/]+$/, '');
     const newPath = `${parentDir}/${renameInput.value.trim()}`;
-    const ok = await window.helioxAPI.renamePath(renameInput.node.path, newPath);
+    const ok = await window.fluxorAPI.renamePath(renameInput.node.path, newPath);
     if (ok) await refreshDir(parentDir);
     setRenameInput(null);
   }, [renameInput, refreshDir]);
 
   const deleteNode = useCallback(async (node: TreeNode) => {
-    if (!window.helioxAPI) return;
+    if (!window.fluxorAPI) return;
     const ok = node.isDirectory
-      ? await window.helioxAPI.deleteDirectory(node.path)
-      : await window.helioxAPI.deleteFile(node.path);
+      ? await window.fluxorAPI.deleteDirectory(node.path)
+      : await window.fluxorAPI.deleteFile(node.path);
     if (ok) {
       const parentDir = node.path.replace(/\/[^/]+$/, '');
       await refreshDir(parentDir);
@@ -472,8 +472,8 @@ export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
         setActiveTabPath(filePath);
         return;
       }
-      if (!window.helioxAPI) return;
-      const content = await window.helioxAPI.readFile(filePath);
+      if (!window.fluxorAPI) return;
+      const content = await window.fluxorAPI.readFile(filePath);
       if (content !== null) {
         const name = filePath.split('/').pop() ?? filePath;
         const relPath = filePath; // best-effort, matches existing pattern
@@ -482,8 +482,8 @@ export function FileExplorerAppp({ windowId }: FileExplorerWindowProps) {
         setActiveTabPath(filePath);
       }
     };
-    window.addEventListener('heliox:absorb-file-viewer', handler);
-    return () => window.removeEventListener('heliox:absorb-file-viewer', handler);
+    window.addEventListener('fluxor:absorb-file-viewer', handler);
+    return () => window.removeEventListener('fluxor:absorb-file-viewer', handler);
   }, [windowId, openTabs]);
 
   // ── Tree Rendering ────────────────────────────────────────────

@@ -86,7 +86,7 @@ export class DevSessionLogger {
     log.info(`[DevSessionLogger] Logging session to ${this.logPath}`);
 
     this.line('═'.repeat(80));
-    this.line(`HELIOX DEV SESSION LOG`);
+    this.line(`FLUXOR DEV SESSION LOG`);
     this.line('═'.repeat(80));
     this.line(`Session ID  : ${this.agentId}`);
     this.line(`Started     : ${new Date(this.startTime).toISOString()}`);

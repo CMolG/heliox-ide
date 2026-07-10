@@ -18,7 +18,7 @@ let rootDir: string;
 
 describe('local MCP adapter', () => {
   beforeEach(async () => {
-    rootDir = await mkdtemp(join(tmpdir(), 'heliox-mcp-'));
+    rootDir = await mkdtemp(join(tmpdir(), 'fluxor-mcp-'));
     await writeFile(join(rootDir, 'README.md'), 'hello', 'utf-8');
   });
 

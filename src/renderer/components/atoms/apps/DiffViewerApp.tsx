@@ -15,8 +15,8 @@
 // src/renderer/components/atoms/apps/DiffViewerApp.tsx — Side-by-side Monaco diff viewer spawned from agentic sessions
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DiffEditor, type DiffOnMount } from '@monaco-editor/react';
-import { useHelioxStore } from '../../../store';
-import { detectLanguage, HELIOX_MONACO_THEME, configureLinting } from '../../../logic/monaco-config';
+import { useFluxorStore } from '../../../store';
+import { detectLanguage, FLUXOR_MONACO_THEME, configureLinting } from '../../../logic/monaco-config';
 import { getFileIcon } from '../../../logic/file-icons';
 import { theme } from '../../../logic/theme';
 import { LucideIcon } from '../../desktop/LucideIcon';
@@ -50,7 +50,7 @@ let _diffWidgetRoot: HTMLElement | null = null;
 function getDiffWidgetRoot(): HTMLElement {
   if (_diffWidgetRoot && document.body.contains(_diffWidgetRoot)) return _diffWidgetRoot;
   _diffWidgetRoot = document.createElement('div');
-  _diffWidgetRoot.id = 'heliox-diff-widgets';
+  _diffWidgetRoot.id = 'fluxor-diff-widgets';
   _diffWidgetRoot.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:99999;overflow:visible;';
   document.body.appendChild(_diffWidgetRoot);
   return _diffWidgetRoot;
@@ -59,8 +59,8 @@ function getDiffWidgetRoot(): HTMLElement {
 // ─── Component ───────────────────────────────────────────────────
 
 export function DiffViewerApp({ windowId, sessionId }: DiffViewerAppProps) {
-  const projectPath = useHelioxStore(s => s.projectPath);
-  const sessionChangedFiles = useHelioxStore(s => s.sessionChangedFiles);
+  const projectPath = useFluxorStore(s => s.projectPath);
+  const sessionChangedFiles = useFluxorStore(s => s.sessionChangedFiles);
 
   const [files, setFiles] = useState<DiffFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -74,10 +74,10 @@ export function DiffViewerApp({ windowId, sessionId }: DiffViewerAppProps) {
 
   // Merge session files with git status to build the file list
   const loadFiles = useCallback(async () => {
-    if (!projectPath || !window.helioxAPI) return;
+    if (!projectPath || !window.fluxorAPI) return;
     setLoading(true);
     try {
-      const gitStatuses = await window.helioxAPI.gitFileStatuses(projectPath).catch(() => []);
+      const gitStatuses = await window.fluxorAPI.gitFileStatuses(projectPath).catch(() => []);
 
       // Session files get priority
       const sessionFiles = sessionId ? (sessionChangedFiles[sessionId] ?? []) : [];
@@ -110,7 +110,7 @@ export function DiffViewerApp({ windowId, sessionId }: DiffViewerAppProps) {
 
   // Load original (HEAD) and modified (working copy) for selected file
   useEffect(() => {
-    if (!selectedFile || !projectPath || !window.helioxAPI) return;
+    if (!selectedFile || !projectPath || !window.fluxorAPI) return;
     let cancelled = false;
     setFileLoading(true);
 
@@ -121,11 +121,11 @@ export function DiffViewerApp({ windowId, sessionId }: DiffViewerAppProps) {
       // Original from git HEAD (null for new/untracked files)
       fileInfo?.status === 'added' || fileInfo?.status === 'untracked'
         ? Promise.resolve(null)
-        : window.helioxAPI.gitShowFile(projectPath, selectedFile),
+        : window.fluxorAPI.gitShowFile(projectPath, selectedFile),
       // Modified from working tree (null for deleted files)
       fileInfo?.status === 'deleted'
         ? Promise.resolve(null)
-        : window.helioxAPI.readFile(absolutePath),
+        : window.fluxorAPI.readFile(absolutePath),
     ]).then(([original, modified]) => {
       if (cancelled) return;
       setOriginalContent(original ?? '');
@@ -143,8 +143,8 @@ export function DiffViewerApp({ windowId, sessionId }: DiffViewerAppProps) {
 
   // Monaco diff editor mount handler
   const handleDiffMount: DiffOnMount = useCallback((editor, monaco) => {
-    monaco.editor.defineTheme('heliox-dark', HELIOX_MONACO_THEME);
-    monaco.editor.setTheme('heliox-dark');
+    monaco.editor.defineTheme('fluxor-dark', FLUXOR_MONACO_THEME);
+    monaco.editor.setTheme('fluxor-dark');
     configureLinting(monaco);
   }, []);
 
@@ -413,7 +413,7 @@ export function DiffViewerApp({ windowId, sessionId }: DiffViewerAppProps) {
                 original={originalContent}
                 modified={modifiedContent}
                 language={language}
-                theme="heliox-dark"
+                theme="fluxor-dark"
                 onMount={handleDiffMount}
                 options={{
                   readOnly: true,

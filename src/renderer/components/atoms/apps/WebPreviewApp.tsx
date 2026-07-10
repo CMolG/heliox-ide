@@ -106,10 +106,10 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
   // Both paths are guarded by linkPending to prevent racing IPC calls.
   const handleAgentLinkToggle = useCallback(async () => {
     if (linkPending || webContentsId == null) return;
-    // helioxAPI is always present in Electron renderer — the bridge is set up before
+    // fluxorAPI is always present in Electron renderer — the bridge is set up before
     // any React code runs. The optional type is a TypeScript precaution for non-Electron
     // test environments; we guard here to satisfy strict mode cleanly.
-    const api = window.helioxAPI;
+    const api = window.fluxorAPI;
     if (!api) return;
     setLinkPending(true);
     try {
@@ -299,7 +299,7 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
       {/* ── Webview (+ dead-URL overlay) ────────────────────────────── */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
         {/*
-            partition="persist:heliox-preview" keeps session cookies across reloads
+            partition="persist:fluxor-preview" keeps session cookies across reloads
             but isolated from the main renderer session.
             Popups/new windows are denied in the MAIN process via setWindowOpenHandler
             (the did-attach-webview guard in src/main/index.ts). The `allowpopups`
@@ -311,7 +311,7 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
         <webview
           ref={webviewRef as React.Ref<HTMLElement>}
           src={initialUrl}
-          partition="persist:heliox-preview"
+          partition="persist:fluxor-preview"
           style={{ width: '100%', height: '100%', border: 'none' }}
         />
 
@@ -352,7 +352,7 @@ export function WebPreviewApp({ windowId, url: initialUrl }: WebPreviewAppProps)
             </div>
             {addressValue.includes(':8080') && (
               <div style={{ fontSize: 11, color: theme.textFaint, maxWidth: 380 }}>
-                Heliox Serve is not running — start it with <code style={{ fontFamily: theme.fontMono }}>npm run heliox:serve</code>
+                Fluxor Serve is not running — start it with <code style={{ fontFamily: theme.fontMono }}>npm run fluxor:serve</code>
               </div>
             )}
             <button

@@ -74,14 +74,14 @@ export interface ExecuteAgenticFlowOptions {
   retrieverK?: number;
   /**
    * Verify-and-retry attempt budget for steps that declare a `contract`
-   * (default: DEFAULT_GUARDRAIL_MAX_ATTEMPTS / HELIOX_GUARDRAIL_MAX_ATTEMPTS).
+   * (default: DEFAULT_GUARDRAIL_MAX_ATTEMPTS / FLUXOR_GUARDRAIL_MAX_ATTEMPTS).
    */
   guardrailMaxAttempts?: number;
   /**
    * Injected lookup so a step's `conn:<connectionId>/<modelId>` modelId
    * (Settings → Connections) can be resolved to an AI SDK client — see
    * `llm-runner.ts#resolveHarnessModel`. The ipc/executor boundary
-   * (`heliox:start-harness`) builds this once per run from
+   * (`fluxor:start-harness`) builds this once per run from
    * `provider-connections.ts`; production callers otherwise leave it
    * undefined, in which case a `conn:` modelId fails with the same
    * descriptive "unknown connection" error as an unresolvable id today.

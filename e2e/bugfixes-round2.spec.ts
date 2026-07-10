@@ -32,13 +32,13 @@ test.beforeAll(async () => {
   await page.waitForLoadState('domcontentloaded');
 
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 
   // Navigate to desktop
   await page.evaluate(() => {
-    const store = (window as any).__HELIOX_STORE__;
+    const store = (window as any).__FLUXOR_STORE__;
     if (store) store.getState().setProjectPath('/tmp/test-project');
   });
   await page.locator('[data-testid="seamless-desktop"]').waitFor({ state: 'visible', timeout: 10_000 });
@@ -255,9 +255,9 @@ test.describe('Design system previews use light palette', () => {
 
 test.describe('Hard reset clears state', () => {
   test('hard reset button exists in settings modal', async () => {
-    // Open settings via Heliox store (not desktop store)
+    // Open settings via Fluxor store (not desktop store)
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().setShowSettings(true);
     });
     await page.waitForTimeout(300);
@@ -267,7 +267,7 @@ test.describe('Hard reset clears state', () => {
 
     // Close settings
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().setShowSettings(false);
     });
     await page.waitForTimeout(200);
@@ -275,7 +275,7 @@ test.describe('Hard reset clears state', () => {
 
   test('hard reset shows confirmation before executing', async () => {
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().setShowSettings(true);
     });
     await page.waitForTimeout(300);
@@ -291,7 +291,7 @@ test.describe('Hard reset clears state', () => {
 
     // Close settings without confirming
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().setShowSettings(false);
     });
     await page.waitForTimeout(200);

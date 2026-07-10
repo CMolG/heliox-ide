@@ -102,7 +102,7 @@ export function registerContextMapIpcHandlers(mainWindow: BrowserWindow): void {
       }
     }
     await attachmentRegistry.attach(projectPath, req.attachableId, req.sessionId, 'user');
-    mainWindow.webContents.send('heliox:attachable-updated', {
+    mainWindow.webContents.send('fluxor:attachable-updated', {
       type: 'attached',
       attachableId: req.attachableId,
       sessionId: req.sessionId,
@@ -111,7 +111,7 @@ export function registerContextMapIpcHandlers(mainWindow: BrowserWindow): void {
 
   registerHandler('attachable:detach', async (_event, projectPath: string, attachableId: string, sessionId: string) => {
     await attachmentRegistry.detach(projectPath, attachableId, sessionId);
-    mainWindow.webContents.send('heliox:attachable-updated', {
+    mainWindow.webContents.send('fluxor:attachable-updated', {
       type: 'detached',
       attachableId,
       sessionId,
@@ -134,7 +134,7 @@ export function registerContextMapIpcHandlers(mainWindow: BrowserWindow): void {
     });
     await attachmentRegistry.refresh(projectPath);
     const sessions = (node.attachments ?? []).filter(a => a.active).map(a => a.sessionId);
-    mainWindow.webContents.send('heliox:attachable-updated', {
+    mainWindow.webContents.send('fluxor:attachable-updated', {
       type: 'updated',
       attachableId,
       affectedSessions: sessions,

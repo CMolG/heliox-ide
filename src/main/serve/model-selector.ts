@@ -1,5 +1,5 @@
 /**
- * model-selector.ts — Arena-informed model selection for `heliox serve`
+ * model-selector.ts — Arena-informed model selection for `fluxor serve`
  *
  * Reads the latest Arena leaderboard and picks the best model for a given
  * deployment strategy. Accepts an injectable results source so it can be
@@ -34,7 +34,7 @@ export interface ModelSelection {
 /**
  * Injectable source of Arena leaderboard entries.
  * Defaults to reading the on-disk ledger at
- * `.heliox/performance-frontier/heliox-leaderboard.json`.
+ * `.fluxor/performance-frontier/fluxor-leaderboard.json`.
  */
 export type LedgerSource = () => Promise<ArenaLeaderboardEntry[]>;
 
@@ -44,9 +44,9 @@ export type LedgerSource = () => Promise<ArenaLeaderboardEntry[]>;
 
 const DEFAULT_LEDGER_PATH = join(
   process.cwd(),
-  '.heliox',
+  '.fluxor',
   'performance-frontier',
-  'heliox-leaderboard.json',
+  'fluxor-leaderboard.json',
 );
 
 async function loadDefaultLedger(): Promise<ArenaLeaderboardEntry[]> {
@@ -67,7 +67,7 @@ async function loadDefaultLedger(): Promise<ArenaLeaderboardEntry[]> {
  *                   per-flow filtering in a future card without breaking the API.
  * @param strategy - One of the four selection strategies.
  * @param getLedger - Optional injectable source of Arena entries; defaults to
- *                   reading `.heliox/performance-frontier/heliox-leaderboard.json`.
+ *                   reading `.fluxor/performance-frontier/fluxor-leaderboard.json`.
  *
  * @returns A `ModelSelection` with the winning model id and evidence, or
  *          `null` when no suitable Arena data is available.

@@ -2,7 +2,7 @@
  * TimeTravelPanel.test.tsx — Component tests for the ARCH-073 time-travel UI
  *
  * Strategy:
- * - Mount <TimeTravelPanel /> with a mocked `window.helioxAPI` + zustand store reset
+ * - Mount <TimeTravelPanel /> with a mocked `window.fluxorAPI` + zustand store reset
  *   before each test.
  * - The mocked `listCheckpoints` returns a deterministic list of 3 checkpoints.
  * - The mocked `harnessReplayFrom` resolves immediately with a synthetic forkRunId.
@@ -110,7 +110,7 @@ const MOCK_FLOW = {
   },
 };
 
-// ── Mock `window.helioxAPI` ───────────────────────────────────────────────────
+// ── Mock `window.fluxorAPI` ───────────────────────────────────────────────────
 
 function setupMockAPI(overrides?: {
   listCheckpoints?: (runId: string) => Promise<ListCheckpointsResponse>;
@@ -133,7 +133,7 @@ function setupMockAPI(overrides?: {
       })
     );
 
-  Object.defineProperty(window, 'helioxAPI', {
+  Object.defineProperty(window, 'fluxorAPI', {
     value: { listCheckpoints, harnessReplayFrom },
     writable: true,
     configurable: true,

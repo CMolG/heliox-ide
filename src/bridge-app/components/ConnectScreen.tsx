@@ -34,7 +34,7 @@ export function ConnectScreen({ pairing, error, onConnect }: Props) {
   return (
     <div className="connect-screen">
       <div className="connect-card">
-        <div className="connect-logo">⚡ Heliox Remote</div>
+        <div className="connect-logo">⚡ Fluxor Remote</div>
         <p className="connect-subtitle">Enter the PIN shown in your IDE settings</p>
         <input
           ref={inputRef}

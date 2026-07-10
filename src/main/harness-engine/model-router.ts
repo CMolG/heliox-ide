@@ -7,7 +7,7 @@
  * the decision into the LLM runner and the emitted `StepStatusChanged` event.
  *
  * Product framing (do not violate elsewhere in this codebase either):
- *   - Heliox only vouches for models it actually benchmarked in the Arena.
+ *   - Fluxor only vouches for models it actually benchmarked in the Arena.
  *     The seal word is "Benchmarked" (`sealed: true`) — NEVER "verified".
  *   - Smart (Local) — `smart-local` — routes ONLY among Arena-benchmarked
  *     ("sealed") models: the `completed` entries of the Arena leaderboard.
@@ -67,7 +67,7 @@ export interface ModelRouterDeps {
 // Default deps
 // ---------------------------------------------------------------------------
 
-const DEFAULT_LEADERBOARD_PATH = join(process.cwd(), '.heliox', 'performance-frontier', 'heliox-leaderboard.json');
+const DEFAULT_LEADERBOARD_PATH = join(process.cwd(), '.fluxor', 'performance-frontier', 'fluxor-leaderboard.json');
 
 /**
  * Default Arena leaderboard loader. Exported so the executor can reuse the

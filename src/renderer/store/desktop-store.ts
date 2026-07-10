@@ -127,22 +127,22 @@ const BUILTIN_PLUGINS: Plugin[] = [
   {
     id: 'tool-flows', name: 'E2E Flows', iconName: 'Route', category: 'tools',
     description: 'Define and manage E2E test flows for visual regression',
-    author: 'Heliox', installed: true, componentKey: 'flows-editor',
+    author: 'Fluxor', installed: true, componentKey: 'flows-editor',
   },
   {
     id: 'tool-actions', name: 'Actions', iconName: 'Zap', category: 'tools',
     description: 'Predefined orchestration prompts for systematic analysis',
-    author: 'Heliox', installed: true, componentKey: 'actions-panel',
+    author: 'Fluxor', installed: true, componentKey: 'actions-panel',
   },
   {
     id: 'tool-logs', name: 'Logs Viewer', iconName: 'ScrollText', category: 'tools',
     description: 'View application and agent logs',
-    author: 'Heliox', installed: true, componentKey: 'logs-panel',
+    author: 'Fluxor', installed: true, componentKey: 'logs-panel',
   },
   {
     id: 'tool-terminal', name: 'Terminal Output', iconName: 'Terminal', category: 'tools',
     description: 'Agent reasoning, tool calls, and raw CLI output',
-    author: 'Heliox', installed: true, componentKey: 'terminal-panel',
+    author: 'Fluxor', installed: true, componentKey: 'terminal-panel',
   },
 ];
 
@@ -641,7 +641,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'diff-viewer' ? (opts?.title ?? 'Diff Viewer')
           : type === 'prompt-dev-zone' ? 'Prompt Dev Zone'
           : type === 'web-preview' ? (opts?.title ?? 'Preview')
-          : type === 'arena' ? 'Heliox Arena'
+          : type === 'arena' ? 'Fluxor Arena'
           : 'Plugin';
         const defaultIcon = type === 'chat'
           ? CLI_ICON_NAMES[cliProv]
@@ -917,7 +917,7 @@ export const useDesktopStore = create<DesktopStore>()(
             description: flow.description,
             iconName: flow.icon || 'MdBolt',
             category: 'flows',
-            author: 'Heliox Market',
+            author: 'Fluxor Market',
             installed: true,
           });
         }
@@ -928,7 +928,7 @@ export const useDesktopStore = create<DesktopStore>()(
             description: role.description,
             iconName: role.icon || 'MdAccessibility',
             category: 'roles',
-            author: 'Heliox Market',
+            author: 'Fluxor Market',
             installed: true,
           });
         }
@@ -939,7 +939,7 @@ export const useDesktopStore = create<DesktopStore>()(
             description: mod.description,
             iconName: mod.icon || 'MdBuild',
             category: 'modifiers',
-            author: 'Heliox Market',
+            author: 'Fluxor Market',
             installed: true,
           });
         }
@@ -950,7 +950,7 @@ export const useDesktopStore = create<DesktopStore>()(
             description: step.description,
             iconName: step.icon || 'MdLayers',
             category: 'steps',
-            author: 'Heliox Market',
+            author: 'Fluxor Market',
             installed: true,
           });
         }
@@ -1076,7 +1076,7 @@ export const useDesktopStore = create<DesktopStore>()(
             const zoom = state.canvasZoom;
             const screenX = pan.x + (win.position.x + win.size.width / 2) * zoom;
             const screenY = pan.y + (win.position.y + win.size.height / 2) * zoom;
-            window.dispatchEvent(new CustomEvent('heliox:canvas-wave', {
+            window.dispatchEvent(new CustomEvent('fluxor:canvas-wave', {
               detail: { x: screenX, y: screenY },
             }));
           }
@@ -2243,7 +2243,7 @@ export const useDesktopStore = create<DesktopStore>()(
       })),
     }),
     {
-      name: 'heliox-desktop',
+      name: 'fluxor-desktop',
       version: 18,
       // Debounce localStorage writes: `partialize` below now includes
       // `boards[]` (the full mental graph of EVERY board, not just the one

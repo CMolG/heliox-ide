@@ -52,7 +52,7 @@ for moderation decisions when appropriate.
 ## Scope
 
 This Code of Conduct applies within all community spaces (this repository's
-issues, pull requests, discussions, and any other official Heliox
+issues, pull requests, discussions, and any other official Fluxor
 communication channels), and also applies when an individual is officially
 representing the community in public spaces.
 
@@ -61,7 +61,7 @@ representing the community in public spaces.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the project maintainers via GitHub — either by opening a
 confidential report at
-[github.com/CMolG/heliox-ide/security/advisories/new](https://github.com/CMolG/heliox-ide/security/advisories/new)
+[github.com/CMolG/fluxor-ide/security/advisories/new](https://github.com/CMolG/fluxor-ide/security/advisories/new)
 (GitHub notifies maintainers privately) or by contacting
 [@CMolG](https://github.com/CMolG) directly through GitHub. All complaints
 will be reviewed and investigated promptly and fairly.

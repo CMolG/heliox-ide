@@ -18,7 +18,7 @@
  */
 import React, { useCallback } from 'react';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
-import { useHelioxStore } from '@/renderer/store';
+import { useFluxorStore } from '@/renderer/store';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { PRIORITY_LABELS } from './BacklogKanbanWidget';
 import type { BacklogCard } from '@/types/market';
@@ -46,7 +46,7 @@ export function FlowDeckCard({
 }) {
   const addWindow = useDesktopStore(s => s.addWindow);
   const connectFlow = useDesktopStore(s => s.connectFlow);
-  const addSession = useHelioxStore(s => s.addSession);
+  const addSession = useFluxorStore(s => s.addSession);
   const setBacklogCards = useDesktopStore(s => s.setBacklogCards);
   const backlogCards = useDesktopStore(s => s.backlogCards);
 

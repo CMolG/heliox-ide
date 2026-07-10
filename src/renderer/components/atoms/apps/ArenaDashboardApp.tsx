@@ -23,7 +23,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { theme } from '../../../logic/theme';
 import { LucideIcon } from '../../desktop/LucideIcon';
-import { useHelioxStore } from '../../../store';
+import { useFluxorStore } from '../../../store';
 import type { ArenaLeaderboardEntry } from '@/types/arena';
 
 // ─── Props ────────────────────────────────────────────────────────
@@ -225,7 +225,7 @@ function Th({ label, sortKey, currentKey, currentDir, onSort, numeric }: ThProps
 // ─── Main component ──────────────────────────────────────────────
 
 export function ArenaDashboardApp({ windowId: _windowId }: ArenaDashboardAppProps) {
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const projectPath = useFluxorStore(s => s.projectPath);
 
   // ── Data state ──────────────────────────────────────────────────
   const [entries, setEntries] = useState<ArenaLeaderboardEntry[]>([]);
@@ -239,13 +239,13 @@ export function ArenaDashboardApp({ windowId: _windowId }: ArenaDashboardAppProp
   const [tierFilter, setTierFilter] = useState<TierFilter>('all');
 
   // ── Data fetcher ────────────────────────────────────────────────
-  // helioxAPI is always present in the Electron renderer — the contextBridge
+  // fluxorAPI is always present in the Electron renderer — the contextBridge
   // is wired before React mounts. The optional type in the global declaration
   // is a TypeScript precaution for non-Electron test environments; we guard
   // here to satisfy strict mode cleanly.
   const load = useCallback(async () => {
     if (!projectPath) return;
-    const api = window.helioxAPI;
+    const api = window.fluxorAPI;
     if (!api) return;
     setLoading(true);
     setError(null);
@@ -322,7 +322,7 @@ export function ArenaDashboardApp({ windowId: _windowId }: ArenaDashboardAppProp
           fontSize: 11, fontWeight: 700, color: theme.textPrimary,
           fontFamily: theme.fontInter, letterSpacing: '-0.01em',
         }}>
-          Heliox Arena
+          Fluxor Arena
         </span>
         <span style={{ fontSize: 10, color: theme.textGhost, fontFamily: theme.fontInter }}>
           Model Intelligence Leaderboard

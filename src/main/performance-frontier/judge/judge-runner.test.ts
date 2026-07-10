@@ -507,9 +507,9 @@ describe('performance frontier judge', () => {
       expect(generateObject).toHaveBeenCalledTimes(3);
     });
 
-    it('configurable model: resolveJudgeModel does not throw when HELIOX_JUDGE_MODEL is unset and MIMO key is present', () => {
-      const original = process.env.HELIOX_JUDGE_MODEL;
-      delete process.env.HELIOX_JUDGE_MODEL;
+    it('configurable model: resolveJudgeModel does not throw when FLUXOR_JUDGE_MODEL is unset and MIMO key is present', () => {
+      const original = process.env.FLUXOR_JUDGE_MODEL;
+      delete process.env.FLUXOR_JUDGE_MODEL;
 
       // Guard: skip assertion if neither API key is present (CI without secrets).
       const hasKey = !!(process.env.MIMO_API_KEY ?? process.env.AGENT_API_KEY);
@@ -521,7 +521,7 @@ describe('performance frontier judge', () => {
       }
 
       if (original !== undefined) {
-        process.env.HELIOX_JUDGE_MODEL = original;
+        process.env.FLUXOR_JUDGE_MODEL = original;
       }
     });
   });

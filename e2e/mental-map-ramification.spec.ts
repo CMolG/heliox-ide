@@ -37,13 +37,13 @@ test.beforeAll(async () => {
   await page.waitForLoadState('domcontentloaded');
 
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 
   // Set project path
   await page.evaluate(() => {
-    const store = (window as any).__HELIOX_STORE__;
+    const store = (window as any).__FLUXOR_STORE__;
     if (store) store.getState().setProjectPath('/tmp/test-project');
   });
   await page.waitForTimeout(500);

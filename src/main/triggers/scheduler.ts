@@ -1,5 +1,5 @@
 /**
- * scheduler.ts — Cron/interval scheduler for Heliox flow triggers (ARCH-071).
+ * scheduler.ts — Cron/interval scheduler for Fluxor flow triggers (ARCH-071).
  *
  * Supports two schedule forms:
  *   { everyMs }  — fires every N milliseconds via setInterval.
@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgenticFlow } from '../../types/harness';
 import type { ExecuteAgenticFlowOptions } from '../harness-engine/executor';
 import { executeAgenticFlow } from '../harness-engine/executor';
-import { importFlow, type HelioxFlowExport } from '../flow-export/heliox-flow';
+import { importFlow, type FluxorFlowExport } from '../flow-export/fluxor-flow';
 import { readFileSync } from 'node:fs';
 
 // ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ export type FlowLoader = (flowPath: string) => AgenticFlow;
 
 function defaultFlowLoader(flowPath: string): AgenticFlow {
   const raw = readFileSync(flowPath, 'utf-8');
-  const exported: HelioxFlowExport = JSON.parse(raw) as HelioxFlowExport;
+  const exported: FluxorFlowExport = JSON.parse(raw) as FluxorFlowExport;
   return importFlow(exported);
 }
 

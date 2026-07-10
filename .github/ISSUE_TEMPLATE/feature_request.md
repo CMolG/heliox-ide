@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for Heliox IDE
+about: Suggest an idea for Fluxor IDE
 title: "[Feature] "
 labels: enhancement
 ---
@@ -14,7 +14,7 @@ solution.
 
 What would you like to happen? If it touches the UI, consider whether it
 fits as a command-palette action or an inline interaction before proposing a
-new panel — Heliox is deliberately minimalist (see `AGENTS.md`).
+new panel — Fluxor is deliberately minimalist (see `AGENTS.md`).
 
 ## Alternatives considered
 

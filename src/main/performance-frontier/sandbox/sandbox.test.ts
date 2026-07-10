@@ -8,7 +8,7 @@ let outputDir: string;
 
 describe('performance frontier sandbox', () => {
   beforeEach(async () => {
-    outputDir = await mkdtemp(join(tmpdir(), 'heliox-pf-artifacts-'));
+    outputDir = await mkdtemp(join(tmpdir(), 'fluxor-pf-artifacts-'));
   });
 
   afterEach(async () => {
@@ -59,10 +59,10 @@ describe('performance frontier sandbox', () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
-  it('intercepts Heliox ticket telemetry by default', async () => {
+  it('intercepts Fluxor ticket telemetry by default', async () => {
     const sandbox = createPerformanceSandbox();
 
-    const response = await sandbox.fetch('https://api.javadaba.com/v1/heliox/ticket', {
+    const response = await sandbox.fetch('https://api.javadaba.com/v1/fluxor/ticket', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

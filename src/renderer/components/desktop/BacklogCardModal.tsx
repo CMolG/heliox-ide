@@ -20,7 +20,7 @@
 import React, { useEffect, useCallback } from 'react';
 import Markdown from 'react-markdown';
 import { useDesktopStore } from '../../store/desktop-store';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
 import type { ChatMessage } from '@/types';
 
@@ -35,7 +35,7 @@ export function BacklogCardModal() {
   const modalCard = useDesktopStore(s => s.canvasModalCard);
   const closeModal = useDesktopStore(s => s.closeCanvasModal);
   const marketInventory = useDesktopStore(s => s.marketInventory);
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const projectPath = useFluxorStore(s => s.projectPath);
 
   useEffect(() => {
     if (!modalCard) return;
@@ -47,17 +47,17 @@ export function BacklogCardModal() {
   }, [modalCard, closeModal]);
 
   const executeFromModal = useCallback(async () => {
-    if (!modalCard || !window.helioxAPI || !projectPath) return;
+    if (!modalCard || !window.fluxorAPI || !projectPath) return;
 
     const flowMeta = marketInventory?.flows.find(f => f.name === modalCard.targetAgent);
     if (!flowMeta) return;
 
-    const flowPrompt = await window.helioxAPI.readMarketPrompt(projectPath, 'flows', modalCard.targetAgent);
+    const flowPrompt = await window.fluxorAPI.readMarketPrompt(projectPath, 'flows', modalCard.targetAgent);
     if (!flowPrompt) return;
 
     const taskAbsPath = `${projectPath}/.backlog/${modalCard.filename}`;
     const flowAbsPath = `${projectPath}/market/flows/${modalCard.targetAgent}.md`;
-    const taskContent = await window.helioxAPI.readFile(taskAbsPath);
+    const taskContent = await window.fluxorAPI.readFile(taskAbsPath);
     if (!taskContent) return;
 
     const wrapperPrompt = `Read the @${flowAbsPath} and begin the @${taskAbsPath}`;
@@ -73,7 +73,7 @@ export function BacklogCardModal() {
       wrapperPrompt,
     ].join('\n');
 
-    const store = useHelioxStore.getState();
+    const store = useFluxorStore.getState();
     const dStore = useDesktopStore.getState();
 
     const sessionId = store.addSession();
@@ -87,9 +87,9 @@ export function BacklogCardModal() {
     const model = flowMeta.betterOn || 'opencode/claude-sonnet-4-6';
     store.setSessionModel(sessionId, model);
 
-    const createdSession = useHelioxStore.getState().sessions.find(s => s.id === sessionId);
-    if (window.helioxAPI && projectPath && createdSession) {
-      window.helioxAPI.contextMapUpsertSessionNode(projectPath, {
+    const createdSession = useFluxorStore.getState().sessions.find(s => s.id === sessionId);
+    if (window.fluxorAPI && projectPath && createdSession) {
+      window.fluxorAPI.contextMapUpsertSessionNode(projectPath, {
         sessionId,
         label: `Session #${createdSession.number}: ${modalCard.title}`,
         status: 'running',
@@ -119,7 +119,7 @@ export function BacklogCardModal() {
     closeModal();
 
     try {
-      await window.helioxAPI.runAgent({
+      await window.fluxorAPI.runAgent({
         agentId: sessionId,
         instruction,
         flows: store.flows,

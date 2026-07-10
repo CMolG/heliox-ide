@@ -9,7 +9,7 @@ let rootDir: string;
 
 describe('performance frontier report outputs', () => {
   beforeEach(async () => {
-    rootDir = await mkdtemp(join(tmpdir(), 'heliox-pf-report-'));
+    rootDir = await mkdtemp(join(tmpdir(), 'fluxor-pf-report-'));
   });
 
   afterEach(async () => {
@@ -28,7 +28,7 @@ describe('performance frontier report outputs', () => {
     expect(JSON.parse(lines[1])).toMatchObject({ runId: 'run-2', finalScore: 72 });
   });
 
-  it('renders a standalone Heliox-styled HTML report', () => {
+  it('renders a standalone Fluxor-styled HTML report', () => {
     const html = renderHtmlReport({
       runId: 'run-1',
       suite: 'architecture',

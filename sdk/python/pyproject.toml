@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.backends.legacy:build"
 
 [project]
-name = "heliox-sdk"
+name = "fluxor-sdk"
 version = "0.2.0"
-description = "Heliox Python runtime — cross-runtime conformance"
+description = "Fluxor Python runtime — cross-runtime conformance"
 requires-python = ">=3.10"
 dependencies = []
 
@@ -16,7 +16,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["heliox_sdk*"]
+include = ["fluxor_sdk*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

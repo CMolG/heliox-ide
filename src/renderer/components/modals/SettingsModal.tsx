@@ -14,7 +14,7 @@
  */
 // src/renderer/components/SettingsModal.tsx — App settings modal (white/light theme)
 import React, { useCallback, useEffect, useState } from 'react';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { useDesktopStore } from '../../store/desktop-store';
 import { ToggleSetting } from './ToggleSetting';
 import { ConnectionsSection } from './ConnectionsSection';
@@ -25,19 +25,19 @@ function RemoteControlSection() {
   const {
     bridgeRunning, bridgePin, bridgeUrl, bridgeQrDataUrl, bridgeLocalIp, bridgePort,
     setBridgeState, clearBridgeState, addToast,
-  } = useHelioxStore();
+  } = useFluxorStore();
   const [loading, setLoading] = useState(false);
 
   const handleToggle = async () => {
-    if (!window.helioxAPI) return;
+    if (!window.fluxorAPI) return;
     setLoading(true);
     try {
       if (bridgeRunning) {
-        await window.helioxAPI.bridgeStop();
+        await window.fluxorAPI.bridgeStop();
         clearBridgeState();
         addToast('Remote bridge stopped', 'info');
       } else {
-        const result = await window.helioxAPI.bridgeStart();
+        const result = await window.fluxorAPI.bridgeStart();
         if (result.success) {
           setBridgeState({
             running: true,
@@ -59,12 +59,12 @@ function RemoteControlSection() {
   };
 
   const handleRefreshPin = async () => {
-    if (!window.helioxAPI || !bridgeRunning) return;
+    if (!window.fluxorAPI || !bridgeRunning) return;
     setLoading(true);
     try {
       // Restart to get a new PIN
-      await window.helioxAPI.bridgeStop();
-      const result = await window.helioxAPI.bridgeStart();
+      await window.fluxorAPI.bridgeStop();
+      const result = await window.fluxorAPI.bridgeStart();
       if (result.success) {
         setBridgeState({
           running: true,
@@ -173,7 +173,7 @@ const TUTORIAL_GROUPS: { label: string; ids: TutorialScenarioId[] }[] = [
 ];
 
 export function SettingsModal() {
-  const { appSettings, updateAppSettings, showSettings, setShowSettings, addToast } = useHelioxStore();
+  const { appSettings, updateAppSettings, showSettings, setShowSettings, addToast } = useFluxorStore();
   const desktopSettings = useDesktopStore(s => s.settings);
   const updateDesktopSettings = useDesktopStore(s => s.updateSettings);
   const setActiveTutorial = useDesktopStore(s => s.setActiveTutorial);
@@ -379,10 +379,10 @@ export function SettingsModal() {
                 data-testid="settings-hard-reset-confirm"
                 onClick={async () => {
                   // Delete electron-store config + app.db via IPC (backend first)
-                  try { await window.helioxAPI?.appHardReset?.(); } catch (_) {}
+                  try { await window.fluxorAPI?.appHardReset?.(); } catch (_) {}
                   // Use Zustand's persist API to clear storage and prevent writeback
                   useDesktopStore.persist.clearStorage();
-                  useHelioxStore.persist.clearStorage();
+                  useFluxorStore.persist.clearStorage();
                   // Belt-and-suspenders: also wipe all localStorage
                   localStorage.clear();
                   window.location.reload();
@@ -415,7 +415,7 @@ export function SettingsModal() {
         <div className="settings-footer">
           <div>
             <span className="settings-footer-brand">
-              Heliox
+              Fluxor
             </span>
             <span className="settings-footer-version">v0.1.0 — AI Agent IDE</span>
           </div>

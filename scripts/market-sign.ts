@@ -2,7 +2,7 @@
 // Usage:
 //   npx tsx scripts/market-sign.ts --gen-key
 //     Generates an ed25519 keypair, writes the private key to
-//     ~/.heliox/market-signing/<keyId>.private.pem (mode 0600 — never in the
+//     ~/.fluxor/market-signing/<keyId>.private.pem (mode 0600 — never in the
 //     repo) and the public key alongside it, and prints a TRUSTED_MARKET_KEYS
 //     snippet to paste into src/main/market/market-trust.ts.
 //
@@ -20,7 +20,11 @@ import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { buildManifest, generateMarketSigningKeyPair, signMarket } from '../src/main/market/market-trust';
 
-const KEY_DIR = join(homedir(), '.heliox', 'market-signing');
+const KEY_DIR = join(homedir(), '.fluxor', 'market-signing');
+// Legacy compat: pre-Fluxor keys generated under ~/.heliox/market-signing/
+// are never moved automatically (signing keys are security-sensitive — no
+// silent file movement) but are still readable as a fallback below.
+const LEGACY_KEY_DIR = join(homedir(), '.heliox', 'market-signing');
 
 function parseArgs(argv: string[]): { mode: '--gen-key' | '--sign' | null; dir?: string; keyId?: string } {
   const mode = argv.includes('--gen-key') ? '--gen-key' : argv.includes('--sign') ? '--sign' : null;
@@ -35,7 +39,7 @@ function parseArgs(argv: string[]): { mode: '--gen-key' | '--sign' | null; dir?:
 
 function generateKeyId(): string {
   const date = new Date().toISOString().slice(0, 10);
-  return `heliox-market-${date}-${randomBytes(4).toString('hex')}`;
+  return `fluxor-market-${date}-${randomBytes(4).toString('hex')}`;
 }
 
 function runGenKey(): void {
@@ -58,33 +62,52 @@ function runGenKey(): void {
   console.log(`  '${keyId}': \`${publicKeyPem.trim()}\`,`);
 }
 
-/** Resolves the private key to sign with: explicit --key-id, else the newest one in KEY_DIR. */
+/**
+ * Legacy compat: resolves the directory to READ keys from — the current
+ * KEY_DIR if it exists, else the pre-Fluxor LEGACY_KEY_DIR (with a one-time
+ * notice). New keys are always WRITTEN to KEY_DIR (see runGenKey) — this
+ * fallback only covers reading keys generated before the rename.
+ */
+function resolveReadKeyDir(): string {
+  if (existsSync(KEY_DIR)) return KEY_DIR;
+  if (existsSync(LEGACY_KEY_DIR)) {
+    console.warn(
+      `Legacy compat: no keys found at ${KEY_DIR} — reading from deprecated ${LEGACY_KEY_DIR} instead. ` +
+      `Run --gen-key to provision a key at the current location.`,
+    );
+    return LEGACY_KEY_DIR;
+  }
+  return KEY_DIR;
+}
+
+/** Resolves the private key to sign with: explicit --key-id, else the newest one in the resolved key dir. */
 function resolvePrivateKeyPath(keyId?: string): { keyId: string; privateKeyPem: string } {
-  if (!existsSync(KEY_DIR)) {
+  const dir = resolveReadKeyDir();
+  if (!existsSync(dir)) {
     throw new Error(`No signing keys found at ${KEY_DIR}. Run --gen-key first.`);
   }
 
   if (keyId) {
-    const privatePath = join(KEY_DIR, `${keyId}.private.pem`);
+    const privatePath = join(dir, `${keyId}.private.pem`);
     if (!existsSync(privatePath)) {
       throw new Error(`No private key found for "${keyId}" at ${privatePath}.`);
     }
     return { keyId, privateKeyPem: readFileSync(privatePath, 'utf-8') };
   }
 
-  const candidates = readdirSync(KEY_DIR)
+  const candidates = readdirSync(dir)
     .filter((file) => file.endsWith('.private.pem'))
-    .map((file) => ({ file, mtime: statSync(join(KEY_DIR, file)).mtimeMs }))
+    .map((file) => ({ file, mtime: statSync(join(dir, file)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime);
 
   if (candidates.length === 0) {
-    throw new Error(`No private keys found at ${KEY_DIR}. Run --gen-key first.`);
+    throw new Error(`No private keys found at ${dir}. Run --gen-key first.`);
   }
 
   const newest = candidates[0].file;
   return {
     keyId: newest.replace(/\.private\.pem$/, ''),
-    privateKeyPem: readFileSync(join(KEY_DIR, newest), 'utf-8'),
+    privateKeyPem: readFileSync(join(dir, newest), 'utf-8'),
   };
 }
 

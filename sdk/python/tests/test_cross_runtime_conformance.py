@@ -1,7 +1,7 @@
 """
 Cross-runtime conformance test — Python runtime (ARCH-076).
 
-Proves that the Python HelioxRuntime:
+Proves that the Python Fluxor runtime:
   (a) imports the canonical conformance-chain.flow.json correctly,
   (b) traverses the DAG in the same deterministic topological order as
       the TypeScript and Java runtimes,
@@ -59,14 +59,14 @@ def _load_fixture(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Make sure the heliox_sdk package is importable when running from repo root
+# Make sure the fluxor_sdk package is importable when running from repo root
 # ---------------------------------------------------------------------------
 
 _SDK_PYTHON = _REPO_ROOT / "sdk" / "python"
 if str(_SDK_PYTHON) not in sys.path:
     sys.path.insert(0, str(_SDK_PYTHON))
 
-from heliox_sdk import (  # noqa: E402
+from fluxor_sdk import (  # noqa: E402
     FlowImport,
     FlowExecutor,
     StepExecutor,
@@ -439,3 +439,95 @@ def test_contract_and_model_are_carried() -> None:
     assert step_b.model == "openai/gpt-4o-mini", (
         f"step-b.model must survive parsing byte-for-byte, got {step_b.model}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 7: legacy flow-format compat shim (rebranding Heliox -> Fluxor)
+#
+# Frozen cross-runtime contract (orchestrator ruling 2026-07-10; canonical
+# reference: warnIfLegacyFormat in src/main/flow-export/fluxor-flow.ts):
+#   1. format == "fluxor-flow"   -> silence.
+#   2. format absent/null        -> ONE DeprecationWarning, reported as the
+#                                   assumed "heliox-flow" (no pre-rebrand
+#                                   export ever stamped the field, so absence
+#                                   IS the legacy format).
+#   3. any other value (incl.    -> ONE DeprecationWarning mentioning the
+#      the literal "heliox-flow")   seen value.
+# The import NEVER blocks. Once-per-distinct-value dedup is delegated to the
+# stdlib warnings filter (Python's native equivalent of the TS warnOnce);
+# pytest installs an "always" filter, so each test observes its own warning.
+# ---------------------------------------------------------------------------
+
+def test_legacy_format_imports_with_deprecation_warning() -> None:
+    """Rule 3, explicit legacy value: a flow exported under the pre-rebrand
+    ``"heliox-flow"`` format marker still imports cleanly (structurally
+    identical to a current export) and triggers exactly one
+    ``DeprecationWarning`` mentioning the seen value. TS proof:
+    fluxor-flow.test.ts suite 7 ("legacy format tag compat")."""
+    raw = _load_fixture("conformance-legacy-heliox-flow.flow.json")
+
+    with pytest.warns(DeprecationWarning, match="heliox-flow") as record:
+        flow = FlowImport.from_canonical_json(raw)
+
+    assert flow.id == "conformance-legacy-format"
+    assert len(flow.steps) == 1
+    assert flow.steps[0].id == "step-a"
+    assert len(record) == 1, f"Expected exactly one DeprecationWarning, got {len(record)}"
+
+
+def test_current_format_flows_never_warn(recwarn: pytest.WarningsRecorder) -> None:
+    """Rule 1: the canonical fixtures carry ``"format": "fluxor-flow"`` (the
+    current wire format, stamped by the TS exporter on every export) and must
+    import in total silence."""
+    raw = _load_fixture("conformance-chain.flow.json")
+    FlowImport.from_canonical_json(raw)
+
+    assert len(recwarn) == 0, (
+        f"Expected no warnings for a current-format flow, got {[str(w.message) for w in recwarn]}"
+    )
+
+
+def test_absent_format_warns_assuming_legacy_heliox_flow() -> None:
+    """Rule 2: a flow with NO ``format`` field at all (every real export of
+    the Heliox era — the field did not exist before the rebrand) imports fine
+    but warns, reporting the assumed legacy ``"heliox-flow"`` format."""
+    raw = json.dumps(
+        {
+            "version": "1",
+            "id": "legacy-absent-format",
+            "name": "Legacy Absent Format",
+            "rootStepId": "step-a",
+            "steps": [
+                {"id": "step-a", "type": "llm_call", "prompt": "Step A.", "dependsOn": [], "tools": []}
+            ],
+        }
+    )
+
+    with pytest.warns(DeprecationWarning, match="heliox-flow") as record:
+        flow = FlowImport.from_canonical_json(raw)
+
+    assert flow.id == "legacy-absent-format", "An absent format tag must never block parsing"
+    assert len(record) == 1, f"Expected exactly one DeprecationWarning, got {len(record)}"
+
+
+def test_unknown_format_warns_mentioning_seen_value() -> None:
+    """Rule 3, arbitrary unknown value: any ``format`` other than
+    ``"fluxor-flow"`` warns mentioning the value actually seen, and never
+    blocks parsing."""
+    raw = json.dumps(
+        {
+            "version": "1",
+            "id": "unknown-format",
+            "name": "Unknown Format",
+            "format": "quantum-flow",
+            "rootStepId": "step-a",
+            "steps": [
+                {"id": "step-a", "type": "llm_call", "prompt": "Step A.", "dependsOn": [], "tools": []}
+            ],
+        }
+    )
+
+    with pytest.warns(DeprecationWarning, match="quantum-flow"):
+        flow = FlowImport.from_canonical_json(raw)
+
+    assert flow.id == "unknown-format", "An unknown format tag must never block parsing"

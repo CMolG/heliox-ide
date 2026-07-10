@@ -62,7 +62,7 @@ export function PluginCard({ plugin, onOpen }: PluginCardProps) {
         <span className="plugin-card-title">{plugin.name}</span>
         <span className="plugin-card-desc">{subString(plugin.description, 80)}…</span>
 
-        <span className="plugin-card-author">{plugin.author ?? 'Heliox'}</span>
+        <span className="plugin-card-author">{plugin.author ?? 'Fluxor'}</span>
         <span className="plugin-card-type">{badge.label}</span>
       </button>
     </li>

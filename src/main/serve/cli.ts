@@ -1,10 +1,10 @@
 /**
- * cli.ts — `heliox serve` entrypoint
+ * cli.ts — `fluxor serve` entrypoint
  *
  * Usage:
  *   npx tsx src/main/serve/cli.ts <flow.json> [--port <n>] [--host <host>] [--token <token>] [--model <id>] [--mcp] [--select <strategy>]
  *
- * Loads the supplied HelioxFlowExport, validates the DAG, and either:
+ * Loads the supplied FluxorFlowExport, validates the DAG, and either:
  *   - (default) binds an HTTP server and prints the address to stdout.
  *   - (--mcp)   starts an MCP server over stdio for use by MCP clients.
  *
@@ -16,18 +16,21 @@
  *   - Binds 127.0.0.1 (loopback) by default. Pass --host 0.0.0.0 (or another
  *     address) to deliberately expose the server beyond localhost.
  *   - /run and /flow require `Authorization: Bearer <token>`; /health does not.
- *     The token comes from --token, else the HELIOX_SERVE_TOKEN env var, else
- *     a random token generated at startup and printed to stdout.
+ *     The token comes from --token, else the FLUXOR_SERVE_TOKEN env var
+ *     (legacy compat: HELIOX_SERVE_TOKEN, deprecated), else a random token
+ *     generated at startup and printed to stdout.
  *
  * Responds to SIGINT / SIGTERM for graceful shutdown.
  */
 
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { HelioxFlowExport } from '../flow-export/heliox-flow';
+import type { FluxorFlowExport } from '../flow-export/fluxor-flow';
 import { createFlowServer } from './serve-flow';
 import { createMcpFlowServer } from './mcp-server';
 import { selectModel, type SelectionStrategy } from './model-selector';
+import { readBrandEnv } from '../lib/env-compat';
+import { migrateLegacyDirectories } from '../lib/legacy-migration';
 
 // ---------------------------------------------------------------------------
 // Argument parsing
@@ -102,7 +105,7 @@ function parseArgs(argv: string[]): CliArgs {
 
   if (!flowPath) {
     throw new Error(
-      'Usage: heliox serve <flow.json> [--port 7878] [--host 127.0.0.1] [--token <token>] ' +
+      'Usage: fluxor serve <flow.json> [--port 7878] [--host 127.0.0.1] [--token <token>] ' +
       '[--model <id>] [--mcp] [--select best-score|cheapest|fastest|best-value]',
     );
   }
@@ -111,13 +114,14 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 /**
- * Resolve the effective bearer token: --token wins, else HELIOX_SERVE_TOKEN,
- * else undefined (createFlowServer then generates one). An empty string from
- * either source is treated as "not provided" rather than as a literal token.
+ * Resolve the effective bearer token: --token wins, else FLUXOR_SERVE_TOKEN
+ * (legacy compat: HELIOX_SERVE_TOKEN, deprecated), else undefined
+ * (createFlowServer then generates one). An empty string from either source
+ * is treated as "not provided" rather than as a literal token.
  */
 function resolveToken(cliToken: string | undefined): string | undefined {
   if (cliToken && cliToken.length > 0) return cliToken;
-  const envToken = process.env.HELIOX_SERVE_TOKEN;
+  const envToken = readBrandEnv('FLUXOR_SERVE_TOKEN');
   return envToken && envToken.length > 0 ? envToken : undefined;
 }
 
@@ -126,6 +130,10 @@ function resolveToken(cliToken: string | undefined): string | undefined {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  // Legacy compat: rename any pre-Fluxor `heliox/`/`.heliox/` dirs at the cwd
+  // before doing anything else — best-effort, never blocks startup.
+  migrateLegacyDirectories(process.cwd());
+
   let args: CliArgs;
   try {
     args = parseArgs(process.argv);
@@ -144,9 +152,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let exported: HelioxFlowExport;
+  let exported: FluxorFlowExport;
   try {
-    exported = JSON.parse(raw) as HelioxFlowExport;
+    exported = JSON.parse(raw) as FluxorFlowExport;
   } catch {
     process.stderr.write(`error: "${absolutePath}" is not valid JSON\n`);
     process.exit(1);
@@ -194,7 +202,7 @@ async function main(): Promise<void> {
     }
 
     process.stderr.write(
-      `heliox serve --mcp: "${exported.name}" (id: ${exported.id}) starting over stdio\n`,
+      `fluxor serve --mcp: "${exported.name}" (id: ${exported.id}) starting over stdio\n`,
     );
 
     const shutdown = async (): Promise<void> => {
@@ -244,7 +252,7 @@ async function main(): Promise<void> {
     effectiveHost === '127.0.0.1' || effectiveHost === '::1' || effectiveHost === 'localhost';
 
   process.stdout.write(
-    `heliox serve: "${exported.name}" listening on http://${effectiveHost}:${boundPort}\n`,
+    `fluxor serve: "${exported.name}" listening on http://${effectiveHost}:${boundPort}\n`,
   );
   process.stdout.write(`  auth token: ${flowServer.token}\n`);
   process.stdout.write(`  send requests with header: Authorization: Bearer ${flowServer.token}\n`);

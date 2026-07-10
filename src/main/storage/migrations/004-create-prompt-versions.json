@@ -1,7 +1,7 @@
 {
   "id": "004-create-prompt-versions",
   "version": 4,
-  "author": "heliox",
+  "author": "fluxor",
   "description": "Create prompt_versions table for tracking all prompt template versions in the database",
   "created": "2026-04-02",
   "up": [

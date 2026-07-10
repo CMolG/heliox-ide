@@ -22,7 +22,7 @@ export interface SandboxNetwork {
 
 const DEFAULT_NETWORK_MOCKS: SandboxNetworkMock[] = [{
   origin: 'https://api.javadaba.com',
-  path: '/v1/heliox/ticket',
+  path: '/v1/fluxor/ticket',
   method: 'POST',
   statusCode: 202,
   body: { ok: true, intercepted: true },

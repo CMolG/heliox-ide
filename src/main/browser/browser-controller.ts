@@ -600,7 +600,7 @@ class BrowserController {
     // Case 3 — create a new hidden window
     // sandbox: true — renderer process is fully sandboxed (CDP debugger operates
     //   on the main side and is unaffected by sandbox mode).
-    // partition: 'persist:heliox-agent' — isolated storage so agent browsing never
+    // partition: 'persist:fluxor-agent' — isolated storage so agent browsing never
     //   shares cookies/cache with the developer's own preview sessions.
     const win = new BrowserWindow({
       show: false,
@@ -608,7 +608,7 @@ class BrowserController {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        partition: 'persist:heliox-agent',
+        partition: 'persist:fluxor-agent',
       },
     });
     this.headlessWindow = win;

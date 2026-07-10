@@ -91,8 +91,8 @@ async function main(): Promise<void> {
   console.log('─'.repeat(60));
   console.log('');
 
-  // Write full JSON result to .heliox/performance-frontier/bench-<suite>.json
-  const outputDir = join(process.cwd(), '.heliox', 'performance-frontier');
+  // Write full JSON result to .fluxor/performance-frontier/bench-<suite>.json
+  const outputDir = join(process.cwd(), '.fluxor', 'performance-frontier');
   await mkdir(outputDir, { recursive: true });
   const outputPath = join(outputDir, `bench-${suite}.json`);
   await writeFile(outputPath, JSON.stringify(result, null, 2), 'utf-8');

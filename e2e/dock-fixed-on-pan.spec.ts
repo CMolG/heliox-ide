@@ -1,7 +1,7 @@
 /**
  * dock-fixed-on-pan.spec.ts — Regression guard for the "drifting docks" bug.
  *
- * The tool dock (`.heliox-dock`) is chrome: it lives OUTSIDE the pannable canvas
+ * The tool dock (`.fluxor-dock`) is chrome: it lives OUTSIDE the pannable canvas
  * layer and must stay visually pinned to the viewport while the seamless canvas
  * pans/zooms underneath it. Historically docks were reported to drift "off grid"
  * together with the canvas. These specs pan/zoom the canvas and assert the dock
@@ -29,7 +29,7 @@ test.beforeAll(async () => {
   await page.waitForURL(/^(?!about:blank)/, { timeout: 20_000 });
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
   await page.evaluate(() => {
@@ -51,14 +51,14 @@ async function setupDesktop() {
   const desktop = page.locator('[data-testid="seamless-desktop"]');
   if (!(await desktop.isVisible({ timeout: 2000 }).catch(() => false))) {
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().setProjectPath('/tmp/test-project');
     });
     await desktop.waitFor({ state: 'visible', timeout: 10_000 });
   }
   const windowCount = await page.evaluate(() => {
     const ds = (window as any).__DESKTOP_STORE__;
-    const hs = (window as any).__HELIOX_STORE__;
+    const hs = (window as any).__FLUXOR_STORE__;
     ds.getState().updateSettings({ tourCompleted: true });
     ds.getState().setActiveTutorial(null);
     // Hard reset of canvas content via setState so persisted web-preview
@@ -76,7 +76,7 @@ async function setupDesktop() {
 
 /** Bounding boxes for the tool dock + the probe window. */
 async function captureBoxes() {
-  const tool = await page.locator('.heliox-dock').boundingBox();
+  const tool = await page.locator('.fluxor-dock').boundingBox();
   const win = await page.locator('.desktop-window-shell').first().boundingBox();
   return { tool, win };
 }
@@ -85,7 +85,7 @@ test.describe('Docks stay pinned while the canvas moves', () => {
   test.beforeEach(async () => { await setupDesktop(); });
 
   test('store-driven pan: dock fixed, canvas content moves', async () => {
-    await expect(page.locator('.heliox-dock')).toBeVisible();
+    await expect(page.locator('.fluxor-dock')).toBeVisible();
 
     const before = await captureBoxes();
     const PAN = { x: 400, y: 260 };
@@ -126,7 +126,7 @@ test.describe('Docks stay pinned while the canvas moves', () => {
     const scroll = await page.evaluate(() => {
       const el = document.querySelector('[data-testid="seamless-desktop"]') as HTMLElement | null;
       const main = el?.closest('main') as HTMLElement | null;
-      const layout = document.querySelector('.heliox-layout') as HTMLElement | null;
+      const layout = document.querySelector('.fluxor-layout') as HTMLElement | null;
       return {
         deskTop: el?.scrollTop ?? -1, deskLeft: el?.scrollLeft ?? -1,
         mainTop: main?.scrollTop ?? -1, mainLeft: main?.scrollLeft ?? -1,

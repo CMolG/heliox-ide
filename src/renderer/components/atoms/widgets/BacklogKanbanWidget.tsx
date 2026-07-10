@@ -32,7 +32,7 @@ import {
 import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 import { useDesktopStore } from '../../../store/desktop-store';
-import { useHelioxStore } from '../../../store';
+import { useFluxorStore } from '../../../store';
 import { LucideIcon } from '../../desktop/LucideIcon';
 import { KanbanColumn } from './KanbanColumn';
 import type { BacklogCard, BacklogStatus, BacklogPriority } from '@/types/market';
@@ -74,7 +74,7 @@ interface BacklogKanbanProps {
 // ─── Main Widget ──────────────────────────────────────────────────
 
 export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const projectPath = useFluxorStore(s => s.projectPath);
   const backlogCards = useDesktopStore(s => s.backlogCards);
   const setBacklogCards = useDesktopStore(s => s.setBacklogCards);
   const marketInventory = useDesktopStore(s => s.marketInventory);
@@ -108,8 +108,8 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
     setError(null);
     try {
       const [found, missing] = await Promise.all([
-        window.helioxAPI?.scanBacklogs(projectPath),
-        window.helioxAPI?.listProjectsWithoutBacklog(projectPath),
+        window.fluxorAPI?.scanBacklogs(projectPath),
+        window.fluxorAPI?.listProjectsWithoutBacklog(projectPath),
       ]);
       const foundList = (found ?? []) as BacklogProject[];
       setBacklogs(foundList);
@@ -137,7 +137,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
     setLoading(true);
     setError(null);
     try {
-      const cards = await window.helioxAPI?.readBacklogDir(selectedBacklog.backlogPath);
+      const cards = await window.fluxorAPI?.readBacklogDir(selectedBacklog.backlogPath);
       setBacklogCards((cards ?? []) as BacklogCard[]);
     } catch {
       setError('Failed to read backlog');
@@ -315,7 +315,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
           updates.push({ filename: o.filename, order: o.order });
         }
         if (updates.length > 0) {
-          await window.helioxAPI?.updateBacklogCards(selectedBacklog.backlogPath, updates);
+          await window.fluxorAPI?.updateBacklogCards(selectedBacklog.backlogPath, updates);
         }
       } catch {
         setBacklogCards(prevCards);
@@ -349,7 +349,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
     // Persist
     if (selectedBacklog) {
       try {
-        await window.helioxAPI?.updateBacklogCards(selectedBacklog.backlogPath, updates);
+        await window.fluxorAPI?.updateBacklogCards(selectedBacklog.backlogPath, updates);
       } catch {
         setBacklogCards(backlogCards);
         setError('Failed to reorder cards');
@@ -360,7 +360,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
   // Initialize backlog for a project
   const handleInitBacklog = useCallback(async (projPath: string) => {
     try {
-      const result = await window.helioxAPI?.initBacklog(projPath);
+      const result = await window.fluxorAPI?.initBacklog(projPath);
       if (result?.success) {
         await scanForBacklogs();
       } else {
@@ -384,7 +384,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
 
   // ─── Execute a backlog card via its assigned agent ────────────────
   const executeCard = useCallback(async (card: BacklogCard) => {
-    if (!window.helioxAPI || !projectPath) return;
+    if (!window.fluxorAPI || !projectPath) return;
 
     const flowMeta = marketInventory?.flows.find(f => f.name === card.targetAgent);
     if (!flowMeta) {
@@ -392,7 +392,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
       return;
     }
 
-    const flowPrompt = await window.helioxAPI.readMarketPrompt(projectPath, 'flows', card.targetAgent);
+    const flowPrompt = await window.fluxorAPI.readMarketPrompt(projectPath, 'flows', card.targetAgent);
     if (!flowPrompt) {
       setError(`Flow prompt for "${card.targetAgent}" not found`);
       return;
@@ -404,7 +404,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
       : `${projectPath}/.backlog/${card.filename}`;
     const flowAbsPath = `${projectPath}/market/flows/${card.targetAgent}.md`;
 
-    const taskContent = await window.helioxAPI.readFile(taskAbsPath);
+    const taskContent = await window.fluxorAPI.readFile(taskAbsPath);
     if (!taskContent) {
       setError(`Task file not found: ${taskAbsPath}`);
       return;
@@ -426,7 +426,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
       wrapperPrompt,
     ].join('\n');
 
-    const store = useHelioxStore.getState();
+    const store = useFluxorStore.getState();
     const dStore = useDesktopStore.getState();
     const effectiveCwd = selectedBacklog?.projectPath || projectPath;
 
@@ -442,9 +442,9 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
     const model = flowMeta.betterOn || 'opencode/claude-sonnet-4-6';
     store.setSessionModel(sessionId, model);
 
-    const createdSession = useHelioxStore.getState().sessions.find(s => s.id === sessionId);
-    if (window.helioxAPI && projectPath && createdSession) {
-      window.helioxAPI.contextMapUpsertSessionNode(projectPath, {
+    const createdSession = useFluxorStore.getState().sessions.find(s => s.id === sessionId);
+    if (window.fluxorAPI && projectPath && createdSession) {
+      window.fluxorAPI.contextMapUpsertSessionNode(projectPath, {
         sessionId,
         label: `Session #${createdSession.number}: ${card.title}`,
         status: 'running',
@@ -471,13 +471,13 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
     );
     setBacklogCards(updatedCards);
     if (selectedBacklog) {
-      await window.helioxAPI.updateBacklogCardStatus(
+      await window.fluxorAPI.updateBacklogCardStatus(
         selectedBacklog.backlogPath, card.filename, 'in_progress'
       );
     }
 
     try {
-      await window.helioxAPI.runAgent({
+      await window.fluxorAPI.runAgent({
         agentId: sessionId,
         instruction,
         flows: store.flows,
@@ -497,7 +497,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
 
   // ─── Launch the auto-architect to generate backlog cards ──────────
   const launchAutoArchitect = useCallback(async () => {
-    if (!window.helioxAPI || !projectPath) return;
+    if (!window.fluxorAPI || !projectPath) return;
 
     const architectFlow = marketInventory?.flows.find(f => f.name === 'auto-architect');
     if (!architectFlow) {
@@ -505,7 +505,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
       return;
     }
 
-    const flowPrompt = await window.helioxAPI.readMarketPrompt(projectPath, 'flows', 'auto-architect');
+    const flowPrompt = await window.fluxorAPI.readMarketPrompt(projectPath, 'flows', 'auto-architect');
     if (!flowPrompt) {
       setError('auto-architect flow prompt not found');
       return;
@@ -522,7 +522,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
       wrapperPrompt,
     ].join('\n');
 
-    const store = useHelioxStore.getState();
+    const store = useFluxorStore.getState();
     const dStore = useDesktopStore.getState();
     const effectiveCwd = selectedBacklog?.projectPath || projectPath;
     const projectName = selectedBacklog?.projectName || 'Project';
@@ -539,9 +539,9 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
     const model = architectFlow.betterOn || 'claude-opus-4.6';
     store.setSessionModel(sessionId, model);
 
-    const createdSession = useHelioxStore.getState().sessions.find(s => s.id === sessionId);
-    if (window.helioxAPI && projectPath && createdSession) {
-      window.helioxAPI.contextMapUpsertSessionNode(projectPath, {
+    const createdSession = useFluxorStore.getState().sessions.find(s => s.id === sessionId);
+    if (window.fluxorAPI && projectPath && createdSession) {
+      window.fluxorAPI.contextMapUpsertSessionNode(projectPath, {
         sessionId,
         label: `Session #${createdSession.number}: Auto-Architect ${projectName}`,
         status: 'running',
@@ -560,7 +560,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
     dStore.updateWindowTitle(windowId, `Auto-Architect: ${projectName}`);
 
     try {
-      await window.helioxAPI.runAgent({
+      await window.fluxorAPI.runAgent({
         agentId: sessionId,
         instruction,
         flows: store.flows,
@@ -684,7 +684,7 @@ export function BacklogKanbanWidget({ windowId }: BacklogKanbanProps) {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="fd-picker-name">{bl.projectName}</div>
                       <div className="fd-picker-meta">
-                        {bl.isExternal ? 'Stored in Heliox data' : 'In-project .backlog/'}
+                        {bl.isExternal ? 'Stored in Fluxor data' : 'In-project .backlog/'}
                       </div>
                     </div>
                     <span className="fd-count">{bl.cardCount}</span>

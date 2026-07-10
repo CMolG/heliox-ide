@@ -129,7 +129,7 @@ body {
    driven (`var(--panel-inspector-width, 300px)`) rather than a second
    hardcoded [data-sidebar="false"]-style override, so its collapsed state
    is a single variable flip — see [data-inspector="false"] below. */
-.heliox-layout {
+.fluxor-layout {
   --panel-explorer-width: 280px;
   display: grid;
   grid-template-columns: var(--panel-explorer-width) 1fr var(--panel-inspector-width, 300px);
@@ -142,16 +142,16 @@ body {
   overflow: hidden;
 }
 
-.heliox-layout[data-sidebar="false"] {
+.fluxor-layout[data-sidebar="false"] {
   grid-template-columns: 0 1fr var(--panel-inspector-width, 300px);
 }
 
-.heliox-layout[data-inspector="false"] {
+.fluxor-layout[data-inspector="false"] {
   --panel-inspector-width: 0px;
 }
 
 /* Collapsible panel wrapper — used by sidebar and chat panels */
-.heliox-panel-wrapper {
+.fluxor-panel-wrapper {
   overflow: hidden;
   transition: width 0.2s ease, opacity 0.2s ease;
   display: flex;
@@ -159,7 +159,7 @@ body {
   height: 100%;
 }
 
-.heliox-panel-wrapper[data-collapsed="true"] {
+.fluxor-panel-wrapper[data-collapsed="true"] {
   width: 0;
   min-width: 0;
   opacity: 0;
@@ -168,21 +168,21 @@ body {
 
 /* Top bar spans full width (all 3 columns — `-1` resolves to the last grid
    line regardless of column count, so this didn't need to change). */
-.heliox-topbar {
+.fluxor-topbar {
   grid-column: 1 / -1;
   grid-row: 1;
 }
 
 /* File explorer panel */
-.heliox-explorer {
+.fluxor-explorer {
   grid-column: 1;
   grid-row: 2;
 }
 
 /* Right-side inspector panel (Figma-like), bound to canvas selection —
    width/opacity collapse transition is applied inline in App.tsx (same
-   convention .heliox-explorer's sibling div above already uses). */
-.heliox-inspector {
+   convention .fluxor-explorer's sibling div above already uses). */
+.fluxor-inspector {
   grid-column: 3;
   grid-row: 2;
   overflow: hidden;
@@ -192,7 +192,7 @@ body {
    z-index: 0 creates a stacking context so maximized window z-indices
    stay contained and never render above the TopBar (z-index: 50).
    No explicit height — grid stretch alignment fills the track. */
-.heliox-layout > main {
+.fluxor-layout > main {
   grid-column: 2;
   grid-row: 2;
   position: relative;
@@ -203,7 +203,7 @@ body {
 
 /* Seamless desktop canvas — absolute positioning avoids percentage-height
    resolution quirks that can occur during CSS Grid column transitions. */
-.heliox-desktop {
+.fluxor-desktop {
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -1458,7 +1458,7 @@ body {
 
 /* ─── Dock ────────────────────────────────────────────────────── */
 /* Dock — fixed at bottom-center of viewport */
-.heliox-dock {
+.fluxor-dock {
   position: absolute;
   bottom: 16px;
   left: 50%;
@@ -2665,14 +2665,14 @@ body {
   }
 }
 
-/* Heliox spinner — the brand diamond rotating */
+/* Fluxor spinner — the brand diamond rotating */
 @keyframes hx-spin-linear {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .heliox-spinner { animation: none !important; }
+  .fluxor-spinner { animation: none !important; }
 }
 
 @keyframes step-node-running-pulse {
@@ -3014,7 +3014,7 @@ body {
 
 /* ─── Step Node: execution-status glyph (header cluster) ───────── */
 /* Non-color status cue shown before the inline Run button — "running" is
-   the branded HelioxSpinner (colored by its own gradient, not CSS `color`);
+   the branded FluxorSpinner (colored by its own gradient, not CSS `color`);
    idle renders nothing at all. Colors below echo each state's card-ring
    hue so the glyph reinforces, rather than contradicts, the border. */
 
@@ -4254,7 +4254,7 @@ body {
    `.py-3` 12px/12px padding + its tallest content row, the 22px logo next
    to `text-xl`/`leading-7` brand text = 28px line-height) — there's no
    explicit height rule to read it from directly (grepped "top-bar|topbar";
-   `.heliox-topbar` only sets grid placement), so this is computed from
+   `.fluxor-topbar` only sets grid placement), so this is computed from
    TopBar.tsx's Tailwind utility classes, not measured live. 53px + 12px
    margin = 65px. The button's footprint (right: 20px, 36×36 → x:[w-56,w-20],
    y:[65,101]) is fully contained by hud-grid.ts's SAFE_ZONE, which is sized

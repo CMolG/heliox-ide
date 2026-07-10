@@ -17,7 +17,7 @@
  *   1. A genuine `did-fail-load` shows the "Preview unreachable" overlay.
  *   2. errorCode -3 (ABORTED — cancelled/superseded navigation) is ignored.
  *   3. isMainFrame=false (a sub-frame failure) is ignored.
- *   4. The Heliox Serve hint appears only for :8080 preview URLs.
+ *   4. The Fluxor Serve hint appears only for :8080 preview URLs.
  *   5. Retry calls `loadURL` with the current address and clears the overlay.
  *   6. `did-finish-load` clears a previously-shown overlay.
  */
@@ -99,19 +99,19 @@ describe('WebPreviewApp — dead-URL guard', () => {
     expect(screen.queryByText('Preview unreachable')).not.toBeInTheDocument();
   });
 
-  it('adds the Heliox Serve hint only for :8080 preview URLs', () => {
+  it('adds the Fluxor Serve hint only for :8080 preview URLs', () => {
     const { container } = render(<WebPreviewApp windowId="win-1" url="http://localhost:8080/dashboard/" />);
     fireEvent(getWebview(container), failLoadEvent());
 
-    expect(screen.getByText(/Heliox Serve is not running/)).toBeInTheDocument();
-    expect(screen.getByText('npm run heliox:serve')).toBeInTheDocument();
+    expect(screen.getByText(/Fluxor Serve is not running/)).toBeInTheDocument();
+    expect(screen.getByText('npm run fluxor:serve')).toBeInTheDocument();
   });
 
-  it('omits the Heliox Serve hint for non-8080 URLs', () => {
+  it('omits the Fluxor Serve hint for non-8080 URLs', () => {
     const { container } = render(<WebPreviewApp windowId="win-1" url="http://localhost:3000/" />);
     fireEvent(getWebview(container), failLoadEvent());
 
-    expect(screen.queryByText(/Heliox Serve is not running/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Fluxor Serve is not running/)).not.toBeInTheDocument();
   });
 
   it('Retry calls loadURL with the current address and clears the overlay', () => {

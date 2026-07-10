@@ -85,8 +85,8 @@ describe('runInSandbox', () => {
     const result = await runInSandbox({
       vfsSnapshot: {},
       command: 'node',
-      args: ['-e', 'process.stdout.write(process.env.HELIOX_TEST_VAR ?? "missing")'],
-      env: { HELIOX_TEST_VAR: 'injected-42' },
+      args: ['-e', 'process.stdout.write(process.env.FLUXOR_TEST_VAR ?? "missing")'],
+      env: { FLUXOR_TEST_VAR: 'injected-42' },
     });
 
     expect(result.exitCode).toBe(0);

@@ -14,11 +14,11 @@
  */
 // src/renderer/components/LogsPanel.tsx — Bottom panel log viewer
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { useHelioxStore } from '../store';
+import { useFluxorStore } from '../store';
 import type { LogEntry } from '@/types';
 import { formatTimestamp } from '@/types';
 import { theme } from '../logic/theme';
-import { HelioxDropdown } from './ui/HelioxDropdown';
+import { FluxorDropdown } from './ui/FluxorDropdown';
 
 type LogLevel = LogEntry['level'];
 type FilterLevel = LogLevel | 'all';
@@ -31,8 +31,8 @@ const LEVEL_STYLES: Record<LogLevel, string> = {
 };
 
 export function LogsPanel() {
-  const logEntries = useHelioxStore((s) => s.logEntries);
-  const clearLogs = useHelioxStore((s) => s.clearLogs);
+  const logEntries = useFluxorStore((s) => s.logEntries);
+  const clearLogs = useFluxorStore((s) => s.clearLogs);
   const [filter, setFilter] = useState<FilterLevel>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -78,7 +78,7 @@ export function LogsPanel() {
           >
             Logs
           </span>
-          <HelioxDropdown
+          <FluxorDropdown
             value={filter}
             options={[
               { value: 'all', label: 'All' },

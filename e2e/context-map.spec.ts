@@ -8,8 +8,8 @@
  * - Confirms IPC bridge works for context map operations.
  *
  * Architecture note:
- * Uses the IPC bridge (window.helioxAPI) for context map operations.
- * Store mutations use `window.__DESKTOP_STORE__` and `window.__HELIOX_STORE__`.
+ * Uses the IPC bridge (window.fluxorAPI) for context map operations.
+ * Store mutations use `window.__DESKTOP_STORE__` and `window.__FLUXOR_STORE__`.
  */
 import { test, expect, type Page, type ElectronApplication } from '@playwright/test';
 import { _electron as electron } from 'playwright';
@@ -36,13 +36,13 @@ test.beforeAll(async () => {
   await page.waitForLoadState('domcontentloaded');
 
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 
   // Set project path so context map has a valid project
   await page.evaluate(() => {
-    const store = (window as any).__HELIOX_STORE__;
+    const store = (window as any).__FLUXOR_STORE__;
     if (store) store.getState().setProjectPath('/tmp/test-project');
   });
   await page.waitForTimeout(500);
@@ -63,7 +63,7 @@ test.afterAll(async () => {
 test.describe('Context Map IPC Bridge', () => {
   test('contextMapGetAll returns a valid context map structure', async () => {
     const result = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api) return null;
       try {
         const map = await api.contextMapGetAll('/tmp/test-project');
@@ -89,7 +89,7 @@ test.describe('Context Map IPC Bridge', () => {
 
   test('contextMapUpsertNode creates a new node', async () => {
     const nodeId = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api) return null;
       try {
         const node = await api.contextMapUpsertNode('/tmp/test-project', {
@@ -113,7 +113,7 @@ test.describe('Context Map IPC Bridge', () => {
 
   test('contextMapSearch finds the created node', async () => {
     const results = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api) return [];
       try {
         return await api.contextMapSearch('/tmp/test-project', 'E2E Test');
@@ -129,7 +129,7 @@ test.describe('Context Map IPC Bridge', () => {
 
   test('contextMapExportText generates a digest', async () => {
     const digest = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api) return null;
       try {
         return await api.contextMapExportText('/tmp/test-project');
@@ -144,7 +144,7 @@ test.describe('Context Map IPC Bridge', () => {
 
   test('contextMapDeleteNode removes the test node', async () => {
     await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api) return;
       try {
         await api.contextMapDeleteNode('/tmp/test-project', 'e2e-test-node-1');
@@ -152,7 +152,7 @@ test.describe('Context Map IPC Bridge', () => {
     });
 
     const results = await page.evaluate(async () => {
-      const api = (window as any).helioxAPI;
+      const api = (window as any).fluxorAPI;
       if (!api) return [];
       try {
         const map = await api.contextMapGetAll('/tmp/test-project');

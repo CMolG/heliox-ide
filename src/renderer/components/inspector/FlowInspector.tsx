@@ -37,7 +37,7 @@ import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { stepTypeMeta } from '@/renderer/components/desktop/mental/step-type-meta';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
-import { useHelioxStore } from '@/renderer/store';
+import { useFluxorStore } from '@/renderer/store';
 import { exportActiveFlow, exportActiveFlowMarkdown } from '@/renderer/logic/flow-actions';
 import { theme } from '@/renderer/logic/theme';
 import type { FrameNodeData, StepGraphNode } from '@/types/desktop';
@@ -75,7 +75,7 @@ export function FlowInspector({ frameId, frameData }: FlowInspectorProps) {
   const compileCurrentCanvas = useHarnessStore((s) => s.compileCurrentCanvas);
   const startExecution = useHarnessStore((s) => s.startExecution);
   const executionStatus = useHarnessStore((s) => s.executionStatus);
-  const addToast = useHelioxStore((s) => s.addToast);
+  const addToast = useFluxorStore((s) => s.addToast);
 
   const [titleDraft, setTitleDraft] = useState(frameData.title);
   const [descriptionDraft, setDescriptionDraft] = useState(frameData.description ?? '');

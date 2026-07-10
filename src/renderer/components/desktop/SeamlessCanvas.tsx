@@ -509,7 +509,7 @@ export function SeamlessCanvas() {
     <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div
         ref={containerRef}
-        className="heliox-desktop desktop-canvas"
+        className="fluxor-desktop desktop-canvas"
         role="application"
         aria-label="Desktop canvas"
         data-testid="seamless-desktop"

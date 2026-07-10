@@ -14,13 +14,13 @@
  */
 // src/renderer/components/ProjectExplorer.tsx — Shown when no project is open
 import React, { useState, useCallback, useEffect } from 'react';
-import { useHelioxStore } from '../store';
+import { useFluxorStore } from '../store';
 import { errMsg } from '@/types';
 import { theme } from '../logic/theme';
-import { HelioxLogo } from './brand/HelioxLogo';
+import { FluxorLogo } from './brand/FluxorLogo';
 
 export function ProjectExplorer() {
-  const { recentProjects, setProjectPath, addRecentProject } = useHelioxStore();
+  const { recentProjects, setProjectPath, addRecentProject } = useFluxorStore();
   const [isDragOver, setIsDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
@@ -31,11 +31,11 @@ export function ProjectExplorer() {
     setIsOpening(true);
 
     try {
-      if (!window.helioxAPI) {
+      if (!window.fluxorAPI) {
         setError('IPC bridge not available — restart the app');
         return;
       }
-      const path = await window.helioxAPI.openFolderDialog();
+      const path = await window.fluxorAPI.openFolderDialog();
       if (path) {
         setProjectPath(path);
         addRecentProject(path);
@@ -54,8 +54,8 @@ export function ProjectExplorer() {
 
   useEffect(() => {
     const handler = () => handleOpenFolder();
-    window.addEventListener('heliox:open-project', handler);
-    return () => window.removeEventListener('heliox:open-project', handler);
+    window.addEventListener('fluxor:open-project', handler);
+    return () => window.removeEventListener('fluxor:open-project', handler);
   }, [handleOpenFolder]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -100,9 +100,9 @@ export function ProjectExplorer() {
       onDrop={handleDrop}
     >
       <div className="flex flex-col items-center gap-12 max-w-md w-full px-8">
-        {/* Heliox brand mark */}
+        {/* Fluxor brand mark */}
         <div className="flex flex-col items-center gap-4">
-          <HelioxLogo size={76} />
+          <FluxorLogo size={76} />
           <div className="text-center">
             <h1
               className="text-2xl font-bold leading-8"
@@ -114,7 +114,7 @@ export function ProjectExplorer() {
               className="text-sm font-normal mt-2 leading-5"
               style={{ fontFamily: theme.fontManrope, color: theme.textFaint }}
             >
-              Select a folder to start working with the Heliox agent
+              Select a folder to start working with the Fluxor agent
             </p>
           </div>
         </div>

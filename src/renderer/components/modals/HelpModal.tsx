@@ -14,7 +14,7 @@
  */
 // src/renderer/components/HelpModal.tsx — IDE documentation with sidebar navigation
 import React, { useState, useCallback, useEffect } from 'react';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { useDesktopStore } from '../../store/desktop-store';
 import { VscRocket, VscComment, VscRefresh, VscPerson, VscSettingsGear, VscGraph, VscPlay } from 'react-icons/vsc';
 import { FiCommand } from 'react-icons/fi';
@@ -33,7 +33,7 @@ const SECTIONS: { id: DocSection; label: string; icon: React.ReactNode }[] = [
 ];
 
 export function HelpModal() {
-  const { showHelp, setShowHelp } = useHelioxStore();
+  const { showHelp, setShowHelp } = useFluxorStore();
   const setActiveTutorial = useDesktopStore(s => s.setActiveTutorial);
   const updateDesktopSettings = useDesktopStore(s => s.updateSettings);
   const [activeSection, setActiveSection] = useState<DocSection>('overview');
@@ -85,7 +85,7 @@ export function HelpModal() {
               <circle cx="10" cy="10" r="8" stroke="#a3a3a3" strokeWidth="1" opacity="0.3" />
             </svg>
             <span id="help-modal-title" className="text-sm font-bold" style={{ fontFamily: theme.fontGrotesk, color: theme.textSecondary }}>
-              Heliox Docs
+              Fluxor Docs
             </span>
           </div>
           {SECTIONS.map((s) => (

@@ -4,7 +4,7 @@ const PROJECT_PREFIXES = ['aurora', 'vector', 'atlas', 'pulse', 'nimbus'] as con
 const PROJECT_SUFFIXES = ['api', 'gateway', 'core', 'edge', 'service'] as const;
 const USER_LOADER_NAMES = ['hydrateUser', 'resolveUser', 'loadUserProfile', 'attachUserProfile'] as const;
 const USER_BATCH_NAMES = ['loadUsers', 'fetchUsers', 'hydrateUsersBatch', 'resolveUsers'] as const;
-const TEAM_PRODUCT = 'Heliox IDE';
+const TEAM_PRODUCT = 'Fluxor IDE';
 const TEAM_AUDIENCE = 'AI Engineers, Arquitectos de Sistemas y Equipos de Plataforma';
 const TEAM_VISUAL_STYLES = [
   'Cyberpunk sobrio',

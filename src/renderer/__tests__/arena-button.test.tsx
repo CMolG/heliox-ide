@@ -8,7 +8,7 @@
  * - The leaderboard tab shows score, latency, and cost per model.
  * - Loading and error states render as expected.
  *
- * IPC is mocked at the window.helioxAPI boundary — no Electron context required.
+ * IPC is mocked at the window.fluxorAPI boundary — no Electron context required.
  * Strategy correctness is validated end-to-end through the store → component
  * rendering path, matching the same logic in model-selector.ts (ARCH-065).
  */
@@ -128,7 +128,7 @@ function injectResult(result: ArenaResult = MOCK_ARENA_RESULT) {
 
 beforeEach(() => {
   useHarnessStore.setState(useHarnessStore.getInitialState(), true);
-  delete (window as any).helioxAPI;
+  delete (window as any).fluxorAPI;
 });
 
 // ── Empty state ───────────────────────────────────────────────────────────────
@@ -237,10 +237,10 @@ describe('ArenaButton — Use for deploy', () => {
     const [deployBtn] = screen.getAllByRole('button', { name: /use.*model-a.*for deploy/i });
     fireEvent.click(deployBtn!);
     expect(screen.getByRole('status')).toBeInTheDocument();
-    expect(screen.getByText(/heliox serve/i)).toBeInTheDocument();
+    expect(screen.getByText(/fluxor serve/i)).toBeInTheDocument();
   });
 
-  it('the deploy notice states the model runs this flow under a Fixed policy and is picked up by heliox serve --select (not the old "will be used by" claim)', () => {
+  it('the deploy notice states the model runs this flow under a Fixed policy and is picked up by fluxor serve --select (not the old "will be used by" claim)', () => {
     render(<ArenaButton />);
     const [deployBtn] = screen.getAllByRole('button', { name: /use.*model-a.*for deploy/i });
     fireEvent.click(deployBtn!);
@@ -248,7 +248,7 @@ describe('ArenaButton — Use for deploy', () => {
     const notice = screen.getByRole('status');
     expect(notice.textContent).toMatch(/provider\/model-a/);
     expect(notice.textContent).toMatch(/will run this flow when its model policy is fixed/i);
-    expect(notice.textContent).toMatch(/heliox serve --select/i);
+    expect(notice.textContent).toMatch(/fluxor serve --select/i);
     expect(notice.textContent).not.toMatch(/will be used by/i);
   });
 });
@@ -401,7 +401,7 @@ describe('ArenaButton — error state', () => {
 
 describe('ArenaButton — runArena store action', () => {
   it('transitions to error when IPC bridge is unavailable', async () => {
-    // window.helioxAPI is already deleted in beforeEach
+    // window.fluxorAPI is already deleted in beforeEach
     render(<ArenaButton />);
     await useHarnessStore.getState().runArena({});
     expect(useHarnessStore.getState().arena.status).toBe('error');
@@ -413,7 +413,7 @@ describe('ArenaButton — runArena store action', () => {
       success: true,
       data: MOCK_ARENA_RESULT,
     });
-    (window as any).helioxAPI = { runArena: runArenaIpc };
+    (window as any).fluxorAPI = { runArena: runArenaIpc };
 
     render(<ArenaButton />);
     await useHarnessStore.getState().runArena({});
@@ -428,7 +428,7 @@ describe('ArenaButton — runArena store action', () => {
       success: true,
       data: MOCK_ARENA_RESULT,
     });
-    (window as any).helioxAPI = { runArena: runArenaIpc };
+    (window as any).fluxorAPI = { runArena: runArenaIpc };
 
     render(<ArenaButton />);
     // In idle state both the toolbar and the empty-state CTA share the same

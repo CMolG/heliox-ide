@@ -8,10 +8,11 @@
  * check is a pure string/path assertion: the verdict is identical for any model.
  */
 import type { StepContract } from '../../types/harness';
+import { readBrandEnv } from '../lib/env-compat';
 
-/** Default verify-and-retry attempts; override via HELIOX_GUARDRAIL_MAX_ATTEMPTS. */
+/** Default verify-and-retry attempts; override via FLUXOR_GUARDRAIL_MAX_ATTEMPTS. */
 export const DEFAULT_GUARDRAIL_MAX_ATTEMPTS = (() => {
-  const raw = Number(process.env.HELIOX_GUARDRAIL_MAX_ATTEMPTS);
+  const raw = Number(readBrandEnv('FLUXOR_GUARDRAIL_MAX_ATTEMPTS'));
   return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 3;
 })();
 

@@ -16,7 +16,7 @@
 import type { ChatMessage, AppSettings, LogEntry } from '../../../types';
 
 export const SLASH_COMMANDS: { cmd: string; desc: string; local?: boolean }[] = [
-  // Heliox local commands
+  // Fluxor local commands
   { cmd: '/model', desc: 'Switch or view models', local: true },
   { cmd: '/effort', desc: 'Set reasoning effort (L/M/H/X)', local: true },
   { cmd: '/clear', desc: 'Clear chat messages', local: true },
@@ -156,7 +156,7 @@ export function handleSlashCommand(
       actions.addSessionMessage(sessionId, {
         id: `sys-cmd-${Date.now()}`,
         role: 'system',
-        content: `Heliox commands:\n• /model [name] — Switch or view models\n• /effort [level] — Set reasoning effort (L/M/H/X)\n• /clear — Clear chat messages\n• /usage — Show session usage stats\n• /role [name] — Switch or view roles\n• /help — Show this help\n\nAll other commands (/compact, /context, /diff, etc.) are passed directly to OpenCode.`,
+        content: `Fluxor commands:\n• /model [name] — Switch or view models\n• /effort [level] — Set reasoning effort (L/M/H/X)\n• /clear — Clear chat messages\n• /usage — Show session usage stats\n• /role [name] — Switch or view roles\n• /help — Show this help\n\nAll other commands (/compact, /context, /diff, etc.) are passed directly to OpenCode.`,
         timestamp: Date.now(),
       });
       return true;

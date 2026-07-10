@@ -1,7 +1,7 @@
 /**
  * ipc-events.ts — Shared IPC event contracts
  *
- * Main emits these payloads over heliox:harness-event. Renderer state should
+ * Main emits these payloads over fluxor:harness-event. Renderer state should
  * treat them as a stream, not as the result of a long-running invoke call.
  */
 
@@ -404,7 +404,7 @@ export interface ResolvedProviderConnection {
  * Synchronous lookup a harness run injects into `resolveHarnessModel` so it
  * can resolve `conn:` model ids without importing the provider-connections
  * store directly (keeps llm-runner.ts unit-testable in isolation). The
- * ipc/executor boundary (`heliox:start-harness`) is responsible for
+ * ipc/executor boundary (`fluxor:start-harness`) is responsible for
  * pre-fetching every saved connection's decrypted token ONCE per run and
  * closing over a plain map, so this callback itself never touches disk.
  */

@@ -81,7 +81,7 @@ jobs:
 
       - name: Install pytest
         # sdk/python's own dev extra (pyproject.toml: [project.optional-dependencies].dev)
-        # pins the same constraint; heliox_sdk itself declares zero runtime deps and the
+        # pins the same constraint; fluxor_sdk itself declares zero runtime deps and the
         # test suite makes itself importable via a sys.path shim (see
         # tests/test_cross_runtime_conformance.py), so no package install is needed —
         # only the test runner.

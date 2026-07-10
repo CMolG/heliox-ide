@@ -47,12 +47,12 @@ test.beforeAll(async () => {
   await page.waitForLoadState('domcontentloaded');
 
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 
   await page.evaluate(() => {
-    const store = (window as any).__HELIOX_STORE__;
+    const store = (window as any).__FLUXOR_STORE__;
     if (store) store.getState().setProjectPath('/tmp/test-project');
   });
   await page.waitForTimeout(500);
@@ -390,16 +390,16 @@ test.describe('Keyboard Sensor', () => {
 // ─── Batch Update IPC ────────────────────────────────────────────
 
 test.describe('Batch Update IPC', () => {
-  test('updateBacklogCards API exists on helioxAPI', async () => {
+  test('updateBacklogCards API exists on fluxorAPI', async () => {
     const hasApi = await page.evaluate(() => {
-      return typeof (window as any).helioxAPI?.updateBacklogCards === 'function';
+      return typeof (window as any).fluxorAPI?.updateBacklogCards === 'function';
     });
     expect(hasApi).toBe(true);
   });
 
   test('updateBacklogCardStatus API still exists for backward compat', async () => {
     const hasApi = await page.evaluate(() => {
-      return typeof (window as any).helioxAPI?.updateBacklogCardStatus === 'function';
+      return typeof (window as any).fluxorAPI?.updateBacklogCardStatus === 'function';
     });
     expect(hasApi).toBe(true);
   });

@@ -14,11 +14,11 @@
  */
 // src/renderer/components/ToastContainer.tsx — Lightweight toast notification system
 import React, { useCallback } from 'react';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { ToastItem } from './ToastItem';
 
 export function ToastContainer() {
-  const { toasts, removeToast } = useHelioxStore();
+  const { toasts, removeToast } = useFluxorStore();
 
   const handleDismiss = useCallback((id: string) => {
     removeToast(id);

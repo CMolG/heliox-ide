@@ -1,0 +1,16 @@
+{
+  "version": "1",
+  "id": "conformance-legacy-format",
+  "name": "Conformance Legacy Format",
+  "format": "heliox-flow",
+  "rootStepId": "step-a",
+  "steps": [
+    {
+      "id": "step-a",
+      "type": "llm_call",
+      "prompt": "Step A: a flow exported under the pre-rebrand format marker must still import cleanly.",
+      "dependsOn": [],
+      "tools": []
+    }
+  ]
+}

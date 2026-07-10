@@ -505,7 +505,7 @@ describe('TriggerRegistry — cron wiring', () => {
   let flowPath: string;
 
   beforeEach(() => {
-    tmpDir = join(tmpdir(), `heliox-sched-test-${randomUUID()}`);
+    tmpDir = join(tmpdir(), `fluxor-sched-test-${randomUUID()}`);
     mkdirSync(tmpDir, { recursive: true });
     flowPath = makeFlowFixture(tmpDir);
   });

@@ -32,7 +32,7 @@ test.beforeAll(async () => {
 
   // Wait for the stores to be ready (app fully loaded)
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 
@@ -42,7 +42,7 @@ test.beforeAll(async () => {
   await page.waitForLoadState('domcontentloaded');
 
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 });
@@ -57,7 +57,7 @@ async function ensureDesktop() {
   const desktop = page.locator('[data-testid="seamless-desktop"]');
   if (!(await desktop.isVisible({ timeout: 2_000 }).catch(() => false))) {
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().setProjectPath('/tmp/test-project');
     });
     await desktop.waitFor({ state: 'visible', timeout: 10_000 });

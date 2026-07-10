@@ -446,7 +446,7 @@ export async function createRemoteMcpToolSet(
       transport = new StreamableHTTPClientTransport(new URL(config.url));
     }
 
-    const client = new Client({ name: 'heliox-harness', version: '1.0.0' });
+    const client = new Client({ name: 'fluxor-harness', version: '1.0.0' });
     await client.connect(transport);
 
     const { tools: mcpTools } = await client.listTools();

@@ -5,7 +5,7 @@
  * This file follows the explanatory style used across the codebase:
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
-// src/renderer/utils/theme.ts — Single source of truth for Heliox IDE theme tokens
+// src/renderer/utils/theme.ts — Single source of truth for Fluxor IDE theme tokens
 // All color values used in inline styles should reference these constants.
 
 import { CliProvider, getCliTheme } from '../../types/desktop';

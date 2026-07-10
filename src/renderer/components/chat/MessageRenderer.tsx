@@ -111,7 +111,7 @@ const AgentMessage = React.memo(function AgentMessage({ msg }: { msg: ChatMessag
           className="text-neutral-500 text-[10px] font-bold uppercase leading-4 tracking-wide"
           style={{ fontFamily: theme.fontInter }}
         >
-          Heliox
+          Fluxor
         </span>
       </div>
       <div

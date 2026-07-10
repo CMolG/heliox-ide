@@ -18,10 +18,11 @@ import { join } from 'path';
 import type { AgenticMod, AgenticRole } from '../../types/harness';
 import type { MarketMod, MarketRole } from '../../types/market';
 import { verifyMarket, TRUSTED_MARKET_KEYS } from './market-trust';
+import { readBrandEnv } from '../lib/env-compat';
 
-/** Market root. Defaults to `<cwd>/market`; override with HELIOX_MARKET_DIR. */
+/** Market root. Defaults to `<cwd>/market`; override with FLUXOR_MARKET_DIR. */
 export function getMarketDir(): string {
-  return process.env.HELIOX_MARKET_DIR ?? join(process.cwd(), 'market');
+  return readBrandEnv('FLUXOR_MARKET_DIR') ?? join(process.cwd(), 'market');
 }
 
 // ─── Signature verification policy (audit 1.5) ─────────────────────────────

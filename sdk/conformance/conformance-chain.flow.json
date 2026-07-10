@@ -1,5 +1,6 @@
 {
   "version": "1",
+  "format": "fluxor-flow",
   "id": "conformance-chain",
   "name": "Conformance Chain",
   "rootStepId": "step-a",

@@ -199,7 +199,7 @@ let activeStore: CheckpointStore = new InMemoryCheckpointStore();
  * @example
  *   import Database from 'better-sqlite3';
  *   import { SqliteCheckpointStore, setCheckpointStore } from './checkpoints';
- *   setCheckpointStore(new SqliteCheckpointStore(new Database('heliox.db')));
+ *   setCheckpointStore(new SqliteCheckpointStore(new Database('fluxor.db')));
  */
 export function setCheckpointStore(store: CheckpointStore): void {
   activeStore = store;

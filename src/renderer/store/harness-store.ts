@@ -185,7 +185,7 @@ interface HarnessStore {
   runArena: (opts?: ArenaRunOptions) => Promise<void>;
   /** Reset arena state back to idle. */
   resetArena: () => void;
-  /** Record the model chosen by the user for deploy (consumed by `heliox serve --select`). */
+  /** Record the model chosen by the user for deploy (consumed by `fluxor serve --select`). */
   setArenaDeployModel: (modelId: string) => void;
 }
 
@@ -234,7 +234,7 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
    * identical no matter how the dispatched flow was scoped.
    */
   const executeFlow = async (flow: AgenticFlow): Promise<void> => {
-    const api = window.helioxAPI;
+    const api = window.fluxorAPI;
     if (!api?.startHarness) {
       set((state) => ({
         executionStatus: 'error',
@@ -541,7 +541,7 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
   subscribeToHarnessEvents: () => {
     if (get().harnessEventUnsubscribe) return;
 
-    const api = window.helioxAPI;
+    const api = window.fluxorAPI;
     if (!api?.onHarnessEvent) {
       set((state) => ({
         executionLogs: appendLog(state.executionLogs, 'Harness event stream is unavailable.'),
@@ -572,7 +572,7 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
       executionLogs: appendLog(state.executionLogs, `Loading checkpoints for run "${runId}".`),
     }));
 
-    const api = window.helioxAPI as typeof window.helioxAPI & {
+    const api = window.fluxorAPI as typeof window.fluxorAPI & {
       listCheckpoints?: (runId: string) => Promise<ListCheckpointsResponse>;
     };
 
@@ -633,7 +633,7 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
   },
 
   forkFrom: async (flow, checkpointId, editedOutput) => {
-    const api = window.helioxAPI as typeof window.helioxAPI & {
+    const api = window.fluxorAPI as typeof window.fluxorAPI & {
       replayFrom?: (req: ReplayFromResponse) => Promise<ReplayFromResponse>;
       harnessReplayFrom?: (flow: AgenticFlow, checkpointId: string, editedOutput?: string) => Promise<ReplayFromResponse>;
     };
@@ -702,13 +702,13 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
   // ── Scorecard ──────────────────────────────────────────────────────────────
 
   runScorecard: async (opts = {}) => {
-    const api = window.helioxAPI;
+    const api = window.fluxorAPI;
     if (!api) {
       set((state) => ({
         scorecard: {
           ...state.scorecard,
           status: 'error',
-          error: 'Heliox IPC bridge is unavailable.',
+          error: 'Fluxor IPC bridge is unavailable.',
         },
       }));
       return;
@@ -793,13 +793,13 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
   // ── Arena ─────────────────────────────────────────────────────────────────
 
   runArena: async (opts = {}) => {
-    const api = window.helioxAPI;
+    const api = window.fluxorAPI;
     if (!api) {
       set((state) => ({
         arena: {
           ...state.arena,
           status: 'error',
-          error: 'Heliox IPC bridge is unavailable.',
+          error: 'Fluxor IPC bridge is unavailable.',
         },
       }));
       return;

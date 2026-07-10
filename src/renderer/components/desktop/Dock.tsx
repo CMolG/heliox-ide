@@ -14,7 +14,7 @@
  */
 import React, { useCallback, useRef, useState, useMemo } from 'react';
 import { useDesktopStore, CLI_ICON_NAMES } from '../../store/desktop-store';
-import { useHelioxStore } from '../../store';
+import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
 import { ProjectPickerModal } from './ProjectPickerModal';
 import { DockPopover } from './DockPopover';
@@ -37,8 +37,8 @@ export function Dock() {
   const windows = useDesktopStore(s => s.windows);
   const focusWindow = useDesktopStore(s => s.focusWindow);
   const cliProvider = useDesktopStore(s => s.cliProvider);
-  const addSession = useHelioxStore(s => s.addSession);
-  const projectPath = useHelioxStore(s => s.projectPath);
+  const addSession = useFluxorStore(s => s.addSession);
+  const projectPath = useFluxorStore(s => s.projectPath);
   const availablePlugins = useDesktopStore(s => s.availablePlugins);
   const deployPlugin = useDesktopStore(s => s.deployPlugin);
   const spawnAttachable = useDesktopStore(s => s.spawnAttachable);
@@ -116,9 +116,9 @@ export function Dock() {
       ...(position ? { position } : {}),
     });
 
-    const session = useHelioxStore.getState().sessions.find(s => s.id === sessionId);
-    if (window.helioxAPI && session) {
-      window.helioxAPI.contextMapUpsertSessionNode(childProjectPath, {
+    const session = useFluxorStore.getState().sessions.find(s => s.id === sessionId);
+    if (window.fluxorAPI && session) {
+      window.fluxorAPI.contextMapUpsertSessionNode(childProjectPath, {
         sessionId,
         label: session.description?.trim().length
           ? `Session #${session.number}: ${session.description}`
@@ -389,7 +389,7 @@ export function Dock() {
         </div>
       )}
 
-      <div ref={dockRef} className="heliox-dock" data-testid="dock" role="toolbar" aria-label="Application dock">
+      <div ref={dockRef} className="fluxor-dock" data-testid="dock" role="toolbar" aria-label="Application dock">
         {/* Action items + tool plugins */}
         {dockItems.map(item => {
           const isDragging = dragItem === item.id;
@@ -548,7 +548,7 @@ export function Dock() {
           className="dock-item"
           aria-label="Settings"
           data-testid="dock-settings"
-          onClick={() => useHelioxStore.getState().setShowSettings(true)}
+          onClick={() => useFluxorStore.getState().setShowSettings(true)}
           onMouseEnter={() => setHoveredItem('settings')}
           onMouseLeave={() => setHoveredItem(null)}
         >

@@ -8,7 +8,7 @@
  *   there's nothing to fake. Reset via `useDesktopStore.setState(getInitialState(), true)`,
  *   the same pattern desktop-store.test.ts / StepInfoModal.test.tsx use.
  * - Mock harness-store (hoisted spy object) for `stepStatuses` only — the real
- *   store's execution actions dispatch through IPC/`window.helioxAPI`, which
+ *   store's execution actions dispatch through IPC/`window.fluxorAPI`, which
  *   isn't available here and isn't what this file exercises.
  *
  * Fixture: 1 FrameGraphNode ("My Flow", 2 childIds) + 2 StepGraphNodes

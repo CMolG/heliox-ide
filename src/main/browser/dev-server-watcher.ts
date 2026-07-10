@@ -3,7 +3,7 @@
  *
  * Responsibility:
  * - Polls a fixed set of candidate ports on 127.0.0.1 to detect local dev servers.
- * - Emits 'heliox:dev-server-detected' once per newly-up port, and re-emits
+ * - Emits 'fluxor:dev-server-detected' once per newly-up port, and re-emits
  *   after a port that went down comes back up.
  * - Reads vite.config.* / package.json best-effort to prioritise the project's
  *   configured port without failing if those files are absent.
@@ -18,7 +18,7 @@
  *   'devserver:stop-watch'   → stopDevServerWatch(projectPath?)
  *
  * Push event emitted to renderer:
- *   'heliox:dev-server-detected'  payload: { url: string; port: number }
+ *   'fluxor:dev-server-detected'  payload: { url: string; port: number }
  */
 // src/main/browser/dev-server-watcher.ts — Dev server auto-detection for M1 preview windows
 
@@ -29,7 +29,7 @@ import path from 'path';
 
 // Vite injects the IDE's own renderer dev-server URL in development (it is
 // undefined in packaged production builds). We must exclude its port from
-// probing so the watcher never auto-opens a preview of Heliox *itself* while
+// probing so the watcher never auto-opens a preview of Fluxor *itself* while
 // dogfooding via `npm start` (Vite's default 5173 collides with our candidates).
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 
@@ -134,7 +134,7 @@ async function inferProjectPort(projectPath: string): Promise<number | null> {
 
 /**
  * The IDE's own renderer dev-server port (dev only), or null in production.
- * Excluded from probing so we never self-detect Heliox as a previewable app.
+ * Excluded from probing so we never self-detect Fluxor as a previewable app.
  */
 function getSelfDevServerPort(): number | null {
   try {
@@ -213,7 +213,7 @@ export async function startDevServerWatch(
       if (up && !livePorts.has(port)) {
         // Newly up — mark live and emit
         livePorts.add(port);
-        mainWindow.webContents.send('heliox:dev-server-detected', {
+        mainWindow.webContents.send('fluxor:dev-server-detected', {
           url: `http://localhost:${port}`,
           port,
         });

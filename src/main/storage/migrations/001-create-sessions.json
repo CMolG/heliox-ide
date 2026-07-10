@@ -1,7 +1,7 @@
 {
   "id": "001-create-sessions",
   "version": 1,
-  "author": "heliox",
+  "author": "fluxor",
   "description": "Create sessions table for persistent session history",
   "created": "2026-04-02",
   "up": [

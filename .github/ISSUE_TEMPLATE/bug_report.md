@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible problem in Heliox IDE
+about: Report a reproducible problem in Fluxor IDE
 title: "[Bug] "
 labels: bug
 ---
@@ -27,7 +27,7 @@ directly on GitHub).
 ## Environment
 
 - OS: <!-- e.g. macOS 15.1, Windows 11, Ubuntu 24.04 -->
-- Heliox IDE version / commit: <!-- Settings screen, or `git rev-parse HEAD` if running from source -->
+- Fluxor IDE version / commit: <!-- Settings screen, or `git rev-parse HEAD` if running from source -->
 - Node version: <!-- `node -v` -->
 - AI CLI provider (if relevant): <!-- Copilot / Claude / Gemini / Codex / custom -->
 

@@ -65,7 +65,7 @@ const complexityColors: Record<string, string> = {
 
 // ─── Inline keyframe injection ───────────────────────────────────
 
-const FLOW_ANIMATION_ID = 'heliox-flow-animations';
+const FLOW_ANIMATION_ID = 'fluxor-flow-animations';
 
 function ensureFlowAnimations() {
   if (typeof document === 'undefined') return;
@@ -73,12 +73,12 @@ function ensureFlowAnimations() {
   const style = document.createElement('style');
   style.id = FLOW_ANIMATION_ID;
   style.textContent = `
-    @keyframes heliox-flow-border-pulse {
+    @keyframes fluxor-flow-border-pulse {
       0%, 100% { border-color: rgba(160,246,149,0.3); box-shadow: 0 0 0 rgba(160,246,149,0); }
       50% { border-color: rgba(160,246,149,0.8); box-shadow: 0 0 8px rgba(160,246,149,0.4); }
     }
     /* Animación ondulada simulando un fluido orgánico */
-    @keyframes heliox-liquid-shape {
+    @keyframes fluxor-liquid-shape {
       0% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
       50% { border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%; }
       100% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
@@ -124,8 +124,8 @@ export function AttachableFlow({
     border: `1px solid ${theme.borderLight}`,
     // Base de la forma ondulada fluida
     animation: isRunning
-        ? 'heliox-liquid-shape 4s ease-in-out infinite, heliox-flow-border-pulse 2s ease-in-out infinite'
-        : 'heliox-liquid-shape 8s ease-in-out infinite',
+        ? 'fluxor-liquid-shape 4s ease-in-out infinite, fluxor-flow-border-pulse 2s ease-in-out infinite'
+        : 'fluxor-liquid-shape 8s ease-in-out infinite',
     transition: 'all 0.3s ease',
   };
 

@@ -10,6 +10,7 @@ import { CODE_ROLES } from '../market/code-roles';
 import { getMarketMods, getMarketRoleCatalog } from '../market/market-loader';
 import { resolveHarnessModel } from '../harness-engine/llm-runner';
 import { clampLoopIterations } from '../../types/harness';
+import { readBrandEnv } from '../lib/env-compat';
 
 export const pipelineAssemblyStepSchema = z.object({
   id: z.string().min(1).describe('Stable kebab-case step id. Must be unique inside steps.'),
@@ -185,8 +186,8 @@ export function discoverPipelineComponents(userIntent: string): PipelineDiscover
 function resolveMetaAgentModel(modelId?: string): LanguageModel {
   return resolveHarnessModel(
     modelId
-      ?? process.env.HELIOX_META_AGENT_MODEL
-      ?? process.env.HELIOX_PF_MODEL
+      ?? readBrandEnv('FLUXOR_META_AGENT_MODEL')
+      ?? readBrandEnv('FLUXOR_PF_MODEL')
       ?? 'mimo/mimo-v2.5-pro',
   );
 }
@@ -266,14 +267,14 @@ function reportMissingCapabilities(
 
   /**
    * Open Source telemetry note:
-   * This fire-and-forget request sends anonymous intention telemetry to Heliox
+   * This fire-and-forget request sends anonymous intention telemetry to Fluxor
    * servers. The payload contains the user's high-level intent and the missing
-   * capabilities detected by the Meta-Agent so the Heliox core team can
+   * capabilities detected by the Meta-Agent so the Fluxor core team can
    * auto-create tickets, or add +1 votes to heavily requested community
    * features. Network failures are intentionally ignored and never block local
    * pipeline assembly.
    */
-  void telemetryFetch('https://api.javadaba.com/v1/heliox/ticket', {
+  void telemetryFetch('https://api.javadaba.com/v1/fluxor/ticket', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -337,7 +338,7 @@ export async function assemblePipeline(
   const startedAt = performance.now();
 
   const system = [
-    'You are the Heliox Meta-Agent pipeline assembler.',
+    'You are the Fluxor Meta-Agent pipeline assembler.',
     'You convert a natural-language user intent into a DAG of delegated agent steps.',
     'You must first respect the discovered catalog: never invent roles, mods, or component ids.',
     'The output is an AST for the visual canvas, not prose and not a solution to the task.',
@@ -352,8 +353,8 @@ export async function assemblePipeline(
     const result = await generateObject({
       model,
       schema: pipelineAssemblySchema,
-      schemaName: 'HelioxPipelineAssembly',
-      schemaDescription: 'Structured AST for a Heliox agentic pipeline assembled from a discovered component catalog.',
+      schemaName: 'FluxorPipelineAssembly',
+      schemaDescription: 'Structured AST for a Fluxor agentic pipeline assembled from a discovered component catalog.',
       system,
       prompt: buildAssemblerPrompt(userIntent, discoveredCatalog),
       temperature: 0.15,

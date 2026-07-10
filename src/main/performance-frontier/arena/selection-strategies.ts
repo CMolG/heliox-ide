@@ -2,7 +2,7 @@
  * selection-strategies.ts — Arena model-selection strategy logic
  *
  * Pure (no I/O) strategy reducers for the four Arena selection lenses, shared
- * verbatim by `heliox serve`'s model-selector (src/main/serve/model-selector.ts)
+ * verbatim by `fluxor serve`'s model-selector (src/main/serve/model-selector.ts)
  * and the Performance Frontier Arena IPC handler (../ipc.ts), so the strategy
  * math is defined exactly once and the CLI's `--select` output can never drift
  * from the renderer's recommendation panel.

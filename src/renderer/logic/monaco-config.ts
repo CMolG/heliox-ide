@@ -5,7 +5,7 @@
  * This file follows the explanatory style used across the codebase:
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
-// src/renderer/logic/monaco-config.ts — Monaco Editor language mapping & theme for Heliox IDE
+// src/renderer/logic/monaco-config.ts — Monaco Editor language mapping & theme for Fluxor IDE
 import { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 
@@ -278,9 +278,9 @@ export function getExtensionColor(filenameOrPath: string): string {
   return EXT_COLORS[ext] ?? '#525252';
 }
 
-// ─── Heliox Dark Theme for Monaco ────────────────────────────────
+// ─── Fluxor Dark Theme for Monaco ────────────────────────────────
 
-export const HELIOX_MONACO_THEME = {
+export const FLUXOR_MONACO_THEME = {
   base: 'vs-dark' as const,
   inherit: true,
   rules: [

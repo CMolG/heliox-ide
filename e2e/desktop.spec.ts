@@ -6,7 +6,7 @@
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
 /**
- * e2e/desktop.spec.ts — Playwright E2E tests for the Heliox IDE seamless desktop.
+ * e2e/desktop.spec.ts — Playwright E2E tests for the Fluxor IDE seamless desktop.
  *
  * These tests launch the Electron app via electron-forge's vite dev server
  * and exercise the desktop UI: window spawning, drag/resize, dock, marketplace,
@@ -37,10 +37,10 @@ const TOTAL_ITEMS = TOTAL_FLOWS + TOTAL_ROLES + TOTAL_MODS + BUILTIN_PLUGIN_COUN
 let app: ElectronApplication;
 let page: Page;
 
-// Models available during E2E tests — override with HELIOX_E2E_MODELS env var.
+// Models available during E2E tests — override with FLUXOR_E2E_MODELS env var.
 // Defaults to 'copilot' only to avoid any CLI token usage.
-// Example: HELIOX_E2E_MODELS=copilot,claude-sonnet-4.6 npx playwright test
-const E2E_MODELS = process.env.HELIOX_E2E_MODELS ?? 'copilot';
+// Example: FLUXOR_E2E_MODELS=copilot,claude-sonnet-4.6 npx playwright test
+const E2E_MODELS = process.env.FLUXOR_E2E_MODELS ?? 'copilot';
 
 test.beforeAll(async () => {
   app = await electron.launch({
@@ -57,7 +57,7 @@ test.beforeAll(async () => {
 
   // Wait for React to mount and expose stores on window
   await page.waitForFunction(
-    () => !!(window as any).__HELIOX_STORE__ && !!(window as any).__DESKTOP_STORE__,
+    () => !!(window as any).__FLUXOR_STORE__ && !!(window as any).__DESKTOP_STORE__,
     { timeout: 15_000 },
   );
 
@@ -84,7 +84,7 @@ async function spawnChatWindow() {
     const store = (window as any).__DESKTOP_STORE__;
     if (store) {
       const s = store.getState();
-      const sessionId = (window as any).__HELIOX_STORE__?.getState()?.addSession?.() ?? 'test-' + Date.now();
+      const sessionId = (window as any).__FLUXOR_STORE__?.getState()?.addSession?.() ?? 'test-' + Date.now();
       s.addWindow('chat', { title: 'Test Chat', iconName: 'MessageSquare', sessionId });
     }
   });
@@ -140,7 +140,7 @@ async function ensureProjectOpen() {
   const desktop = page.locator('[data-testid="seamless-desktop"]');
   if (!(await desktop.isVisible({ timeout: 2000 }).catch(() => false))) {
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().setProjectPath('/tmp/test-project');
     });
     await desktop.waitFor({ state: 'visible', timeout: 10_000 });
@@ -165,7 +165,7 @@ test.describe('Seamless Desktop', () => {
   });
 
   test('dock is visible at the bottom', async () => {
-    await expect(page.locator('.heliox-dock')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.fluxor-dock')).toBeVisible({ timeout: 5000 });
   });
 
   test('middle-click sets panning cursor', async () => {
@@ -315,7 +315,7 @@ test.describe('Dock', () => {
   test.beforeEach(async () => { await ensureProjectOpen(); });
 
   test('dock has items with icons', async () => {
-    const dock = page.locator('.heliox-dock');
+    const dock = page.locator('.fluxor-dock');
     await expect(dock).toBeVisible();
 
     const items = dock.locator('.dock-item');
@@ -328,7 +328,7 @@ test.describe('Dock', () => {
   });
 
   test('dock items use SVG icons, not emoji', async () => {
-    const dock = page.locator('.heliox-dock');
+    const dock = page.locator('.fluxor-dock');
     const firstItem = dock.locator('.dock-item').first();
     const hasSvg = await firstItem.locator('svg').count();
     expect(hasSvg).toBeGreaterThan(0);
@@ -2090,7 +2090,7 @@ test.describe('Agent Session Lifecycle', () => {
   test.beforeEach(async () => {
     // Clean slate: remove all sessions and windows
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       const ds = (window as any).__DESKTOP_STORE__;
       if (!hs || !ds) return;
       const hState = hs.getState();
@@ -2105,13 +2105,13 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('can create a new session via store', async () => {
     const sessionId = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       return store.getState().addSession();
     });
     expect(sessionId).toBeTruthy();
     const session = await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       const s = store.getState().sessions.find((ses: any) => ses.id === id);
       return s ? { id: s.id, status: s.status, messages: s.messages.length } : null;
@@ -2123,7 +2123,7 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('can add messages to a session', async () => {
     const sessionId = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       const id = store.getState().addSession();
       store.getState().addSessionMessage(id, {
@@ -2135,7 +2135,7 @@ test.describe('Agent Session Lifecycle', () => {
       return id;
     });
     const msgCount = await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return 0;
       const s = store.getState().sessions.find((ses: any) => ses.id === id);
       return s?.messages.length ?? 0;
@@ -2145,27 +2145,27 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('session status transitions work correctly', async () => {
     const sessionId = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       return store.getState().addSession();
     });
     // Transition: waiting → running
     await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().updateSessionStatus(id, 'running');
     }, sessionId as string);
     let status = await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       return store?.getState().sessions.find((s: any) => s.id === id)?.status;
     }, sessionId as string);
     expect(status).toBe('running');
     // Transition: running → completed
     await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().updateSessionStatus(id, 'completed', Date.now());
     }, sessionId as string);
     status = await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       return store?.getState().sessions.find((s: any) => s.id === id)?.status;
     }, sessionId as string);
     expect(status).toBe('completed');
@@ -2173,7 +2173,7 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('session can be stopped (cancelled)', async () => {
     const sessionId = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       const id = store.getState().addSession();
       store.getState().updateSessionStatus(id, 'running');
@@ -2181,11 +2181,11 @@ test.describe('Agent Session Lifecycle', () => {
     });
     // Stop the session
     await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().updateSessionStatus(id, 'stopped', Date.now());
     }, sessionId as string);
     const result = await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       const s = store.getState().sessions.find((ses: any) => ses.id === id);
       return { status: s?.status, hasEndedAt: !!s?.endedAt };
@@ -2196,7 +2196,7 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('session error status is recorded', async () => {
     const sessionId = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       const id = store.getState().addSession();
       store.getState().updateSessionStatus(id, 'running');
@@ -2204,7 +2204,7 @@ test.describe('Agent Session Lifecycle', () => {
       return id;
     });
     const status = await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       return store?.getState().sessions.find((s: any) => s.id === id)?.status;
     }, sessionId as string);
     expect(status).toBe('error');
@@ -2212,16 +2212,16 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('session can be removed', async () => {
     const sessionId = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       return store.getState().addSession();
     });
     await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (store) store.getState().removeSession(id);
     }, sessionId as string);
     const exists = await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       return !!store?.getState().sessions.find((s: any) => s.id === id);
     }, sessionId as string);
     expect(exists).toBe(false);
@@ -2231,7 +2231,7 @@ test.describe('Agent Session Lifecycle', () => {
     await spawnChatWindow();
     const result = await page.evaluate(() => {
       const ds = (window as any).__DESKTOP_STORE__;
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (!ds || !hs) return null;
       const win = ds.getState().windows.find((w: any) => w.type === 'chat');
       const session = hs.getState().sessions.find((s: any) => s.id === win?.sessionId);
@@ -2248,7 +2248,7 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('multiple sessions can coexist with different statuses', async () => {
     await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return;
       const s = store.getState();
       const id1 = s.addSession();
@@ -2259,7 +2259,7 @@ test.describe('Agent Session Lifecycle', () => {
       // id3 remains 'waiting'
     });
     const statuses = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return [];
       return store.getState().sessions.map((s: any) => s.status);
     });
@@ -2270,7 +2270,7 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('session messages are persisted and retrievable', async () => {
     const sessionId = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       const id = store.getState().addSession();
       const s = store.getState();
@@ -2280,7 +2280,7 @@ test.describe('Agent Session Lifecycle', () => {
       return id;
     });
     const messages = await page.evaluate((id: string) => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return [];
       const session = store.getState().sessions.find((s: any) => s.id === id);
       return session?.messages.map((m: any) => ({ role: m.role, content: m.content })) ?? [];
@@ -2295,14 +2295,14 @@ test.describe('Agent Session Lifecycle', () => {
     // This test validates the IPC bridge works end-to-end.
     // Without a real CLI provider installed, we expect a graceful error (not a crash).
     const sessionId = await page.evaluate(() => {
-      const store = (window as any).__HELIOX_STORE__;
+      const store = (window as any).__FLUXOR_STORE__;
       if (!store) return null;
       return store.getState().addSession();
     });
     const result = await page.evaluate(async (id: string) => {
-      if (!window.helioxAPI) return { success: false, error: 'No helioxAPI' };
+      if (!window.fluxorAPI) return { success: false, error: 'No fluxorAPI' };
       try {
-        return await window.helioxAPI.runAgent({
+        return await window.fluxorAPI.runAgent({
           agentId: id,
           instruction: 'echo hello',
           flows: [],
@@ -2320,9 +2320,9 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('stopAgent via IPC does not crash even if no agent is running', async () => {
     const result = await page.evaluate(async () => {
-      if (!window.helioxAPI) return false;
+      if (!window.fluxorAPI) return false;
       try {
-        return await window.helioxAPI.stopAgent('nonexistent-session-id');
+        return await window.fluxorAPI.stopAgent('nonexistent-session-id');
       } catch {
         return false;
       }
@@ -2333,7 +2333,7 @@ test.describe('Agent Session Lifecycle', () => {
 
   test('session with role assignment inherits role metadata', async () => {
     const result = await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       const ds = (window as any).__DESKTOP_STORE__;
       if (!hs || !ds) return null;
       const sessionId = hs.getState().addSession();
@@ -2362,7 +2362,7 @@ test.describe('Clear Conversation', () => {
   test('clear button appears in agentic window when messages exist', async () => {
     // Spawn a chat window with a session that has messages
     const ids = await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       const ds = (window as any).__DESKTOP_STORE__;
       if (!hs || !ds) return null;
       const sessionId = hs.getState().addSession();
@@ -2381,7 +2381,7 @@ test.describe('Clear Conversation', () => {
 
   test('clear button resets messages but preserves model', async () => {
     const ids = await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       const ds = (window as any).__DESKTOP_STORE__;
       if (!hs || !ds) return null;
       const sessionId = hs.getState().addSession();
@@ -2402,7 +2402,7 @@ test.describe('Clear Conversation', () => {
 
     // Verify: messages cleared, model preserved
     const result = await page.evaluate((sessionId: string) => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (!hs) return null;
       const s = hs.getState().sessions.find((ses: any) => ses.id === sessionId);
       return s ? { messages: s.messages.length, model: s.model, status: s.status } : null;
@@ -2414,7 +2414,7 @@ test.describe('Clear Conversation', () => {
 
   test('clear button preserves role when attached', async () => {
     const ids = await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       const ds = (window as any).__DESKTOP_STORE__;
       if (!hs || !ds) return null;
       const sessionId = hs.getState().addSession();
@@ -2435,7 +2435,7 @@ test.describe('Clear Conversation', () => {
 
     // Verify: messages cleared, role still attached
     const result = await page.evaluate((args: { sessionId: string; windowId: string }) => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       const ds = (window as any).__DESKTOP_STORE__;
       if (!hs || !ds) return null;
       const session = hs.getState().sessions.find((s: any) => s.id === args.sessionId);
@@ -2448,7 +2448,7 @@ test.describe('Clear Conversation', () => {
 
   test('clear button uses role accent color when role is attached', async () => {
     const ids = await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       const ds = (window as any).__DESKTOP_STORE__;
       if (!hs || !ds) return null;
       const sessionId = hs.getState().addSession();
@@ -2486,7 +2486,7 @@ test.describe('Clear Conversation', () => {
 
   test('clear button is hidden when no messages', async () => {
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       const ds = (window as any).__DESKTOP_STORE__;
       if (!hs || !ds) return;
       const sessionId = hs.getState().addSession();
@@ -2586,7 +2586,7 @@ test.describe('Attachment Info Modals', () => {
       if (win) s.connectFlow(win.id, 'auto-optimizer');
     });
     await page.waitForTimeout(400);
-    const flowRibbon = page.locator('[data-testid="right-flow-auto-optimizer"] .heliox-flow-ribbon');
+    const flowRibbon = page.locator('[data-testid="right-flow-auto-optimizer"] .fluxor-flow-ribbon');
     await expect(flowRibbon).toBeVisible({ timeout: 3000 });
     await flowRibbon.click();
     await page.waitForTimeout(300);
@@ -2999,7 +2999,7 @@ test.describe('Backlog Widget', () => {
 test.describe('Project Files Window', () => {
 
   // Create a real temp directory structure for the file explorer to read
-  const TEST_FILES_DIR = '/tmp/heliox-test-files';
+  const TEST_FILES_DIR = '/tmp/fluxor-test-files';
 
   test.beforeAll(async () => {
     // Build a realistic project structure on disk
@@ -3020,7 +3020,7 @@ test.describe('Project Files Window', () => {
     fs.rmSync(TEST_FILES_DIR, { recursive: true, force: true });
     // Restore original project path
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (hs) hs.getState().setProjectPath('/tmp/test-project');
     });
   });
@@ -3028,7 +3028,7 @@ test.describe('Project Files Window', () => {
   test.beforeEach(async () => {
     // Point project path at our real temp directory
     await page.evaluate((dir) => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (hs) hs.getState().setProjectPath(dir);
     }, TEST_FILES_DIR);
     await page.evaluate(() => {
@@ -3184,7 +3184,7 @@ test.describe('Project Files Window', () => {
   test('file explorer shows empty state for non-existent directory', async () => {
     // Point project at a directory that does not exist on disk
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (hs) hs.getState().setProjectPath('/tmp/nonexistent-dir-xyz-99999');
     });
     await openFileExplorer();
@@ -3369,7 +3369,7 @@ test.describe('Settings', () => {
 
   test('settings modal shows CLI adapter options', async () => {
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (hs) hs.getState().setShowSettings(true);
     });
     await page.waitForTimeout(400);
@@ -3382,7 +3382,7 @@ test.describe('Settings', () => {
 
   test('settings modal shows canvas click animation toggle', async () => {
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (hs) hs.getState().setShowSettings(true);
     });
     await page.waitForTimeout(400);
@@ -3392,7 +3392,7 @@ test.describe('Settings', () => {
 
   test('settings modal has repeat tour button', async () => {
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (hs) hs.getState().setShowSettings(true);
     });
     await page.waitForTimeout(400);
@@ -3426,7 +3426,7 @@ test.describe('Settings', () => {
 
   test('settings modal closes on Done button', async () => {
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (hs) hs.getState().setShowSettings(true);
     });
     await page.waitForTimeout(400);
@@ -3440,7 +3440,7 @@ test.describe('Settings', () => {
   test.afterEach(async () => {
     // Close settings if open
     await page.evaluate(() => {
-      const hs = (window as any).__HELIOX_STORE__;
+      const hs = (window as any).__FLUXOR_STORE__;
       if (hs) hs.getState().setShowSettings(false);
     });
   });
@@ -4008,10 +4008,10 @@ test.describe('Canvas wave behavior', () => {
   });
 
   test('wave does NOT trigger on canvas click (empty area)', async () => {
-    // Listen for heliox:canvas-wave events
+    // Listen for fluxor:canvas-wave events
     const waveCount = await page.evaluate(() => {
       (window as any).__waveCount = 0;
-      window.addEventListener('heliox:canvas-wave', () => { (window as any).__waveCount++; });
+      window.addEventListener('fluxor:canvas-wave', () => { (window as any).__waveCount++; });
       return (window as any).__waveCount;
     });
     expect(waveCount).toBe(0);
@@ -4035,7 +4035,7 @@ test.describe('Canvas wave behavior', () => {
     // Reset wave counter
     await page.evaluate(() => {
       (window as any).__waveCount2 = 0;
-      window.addEventListener('heliox:canvas-wave', () => { (window as any).__waveCount2++; });
+      window.addEventListener('fluxor:canvas-wave', () => { (window as any).__waveCount2++; });
     });
 
     // Click inside the window body (not canvas)
@@ -4062,7 +4062,7 @@ test.describe('Canvas wave behavior', () => {
         s.resizeWindow(win.id, { width: 400, height: 300 });
       }
       (window as any).__dropWaveCount = 0;
-      window.addEventListener('heliox:canvas-wave', () => { (window as any).__dropWaveCount++; });
+      window.addEventListener('fluxor:canvas-wave', () => { (window as any).__dropWaveCount++; });
     });
     await page.waitForTimeout(300);
 
@@ -4096,7 +4096,7 @@ test.describe('Canvas wave behavior', () => {
         s.resizeWindow(win.id, { width: 400, height: 300 });
       }
       (window as any).__resizeWaveCount = 0;
-      window.addEventListener('heliox:canvas-wave', () => { (window as any).__resizeWaveCount++; });
+      window.addEventListener('fluxor:canvas-wave', () => { (window as any).__resizeWaveCount++; });
     });
     await page.waitForTimeout(300);
 
@@ -4198,11 +4198,11 @@ test.describe('TopBar shows only IDE name', () => {
     await ensureProjectOpen();
   });
 
-  test('topbar displays Heliox brand', async () => {
+  test('topbar displays Fluxor brand', async () => {
     const brand = page.locator('[data-testid="topbar-brand"]');
     await expect(brand).toBeVisible({ timeout: 5000 });
     const text = await brand.textContent();
-    expect(text).toContain('Heliox');
+    expect(text).toContain('Fluxor');
   });
 
   test('topbar area has widget launcher (notifications affordance)', async () => {
@@ -4212,12 +4212,12 @@ test.describe('TopBar shows only IDE name', () => {
   });
 
   test('topbar does NOT have settings button', async () => {
-    const settings = page.locator('header[aria-label="Heliox IDE header"] [aria-label="Settings"]');
+    const settings = page.locator('header[aria-label="Fluxor IDE header"] [aria-label="Settings"]');
     await expect(settings).not.toBeVisible({ timeout: 2000 });
   });
 
   test('topbar does NOT have project tabs', async () => {
-    const tabs = page.locator('header[aria-label="Heliox IDE header"] [role="tablist"]');
+    const tabs = page.locator('header[aria-label="Fluxor IDE header"] [role="tablist"]');
     await expect(tabs).not.toBeVisible({ timeout: 2000 });
   });
 });

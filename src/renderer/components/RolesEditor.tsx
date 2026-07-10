@@ -14,11 +14,11 @@
  */
 // src/renderer/components/RolesEditor.tsx — Agent Role management panel
 import React, { useState, useCallback, useRef } from 'react';
-import { useHelioxStore } from '../store';
+import { useFluxorStore } from '../store';
 import type { Role } from '@/types';
 import { RoleIcon, ROLE_ICON_NAMES } from './ui/RoleIcon';
 import { theme } from '../logic/theme';
-import { HelioxDropdown } from './ui/HelioxDropdown';
+import { FluxorDropdown } from './ui/FluxorDropdown';
 import { useAutoSave } from '@/renderer/logic/hooks/useAutoSave';
 const FALLBACK_MODELS = ['opencode/claude-sonnet-4-6'];
 
@@ -50,7 +50,7 @@ const PRESET_ROLES: { name: string; icon: string; description: string; systemPro
 ];
 
 export function RolesEditor() {
-  const { roles, addRole, updateRole, removeRole, sessions, saveRolesToProject, availableModels, addSession, updateSessionRole, setSelectedSessionId, setActiveTab, addToast } = useHelioxStore();
+  const { roles, addRole, updateRole, removeRole, sessions, saveRolesToProject, availableModels, addSession, updateSessionRole, setSelectedSessionId, setActiveTab, addToast } = useFluxorStore();
   const models = availableModels.length > 0 ? availableModels : FALLBACK_MODELS;
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -169,7 +169,7 @@ export function RolesEditor() {
     updateSessionRole(sessionId, roleId);
     setSelectedSessionId(sessionId);
     setActiveTab('sessions');
-    window.dispatchEvent(new CustomEvent('heliox:focus-chat'));
+    window.dispatchEvent(new CustomEvent('fluxor:focus-chat'));
     addToast('New session created with role — start chatting!', 'info');
   }, [addSession, updateSessionRole, setSelectedSessionId, setActiveTab, addToast]);
 
@@ -385,7 +385,7 @@ export function RolesEditor() {
                 <span className="text-[10px] font-normal uppercase tracking-wide" style={{ fontFamily: theme.fontInter, color: theme.textFaint }}>
                   Model
                 </span>
-                <HelioxDropdown
+                <FluxorDropdown
                   value={formModel}
                   options={models.map(m => ({ value: m, label: m.toUpperCase() }))}
                   onChange={(v) => setFormModel(v)}
