@@ -19,6 +19,12 @@ import java.util.Map;
  *                       {@code src/types/harness.ts}); {@code null} when the step declares none
  * @param model          optional per-step model override ("provider/model"), carried opaquely;
  *                       {@code null} when the step declares none
+ * @param mods           optional declarative mods, carried opaquely — this SDK never interprets
+ *                       it (mirrors {@code AgenticStep.mods} in {@code src/types/harness.ts});
+ *                       {@code null} when the step declares none. The runtime mod mechanism
+ *                       ({@link io.fluxor.sdk.mod.ModOverlay}, attached via
+ *                       {@code FlowExecution#withMods}) is the primary, on-demand path — this
+ *                       field exists purely for shape parity with the TS declarative case
  */
 public record StepConfig(
     String id,
@@ -27,7 +33,8 @@ public record StepConfig(
     Map<String, Object> context,
     List<String> dependencies,
     JsonNode contract,
-    String model
+    String model,
+    JsonNode mods
 ) {
     public StepConfig {
         context = context == null ? Map.of() : Map.copyOf(context);
@@ -35,9 +42,26 @@ public record StepConfig(
     }
 
     /**
+     * Compatibility constructor for callers built against the pre-mods 7-arg shape — defaults
+     * {@code mods} to {@code null} (carry-opaque field; absent means the step declares none) so
+     * existing call sites compile unchanged.
+     */
+    public StepConfig(
+        String id,
+        String systemPrompt,
+        String promptTemplate,
+        Map<String, Object> context,
+        List<String> dependencies,
+        JsonNode contract,
+        String model
+    ) {
+        this(id, systemPrompt, promptTemplate, context, dependencies, contract, model, null);
+    }
+
+    /**
      * Compatibility constructor for callers built against the pre-contract/model 5-arg shape —
-     * defaults {@code contract} and {@code model} to {@code null} (carry-opaque fields; absent
-     * means the step declares neither) so existing call sites compile unchanged.
+     * defaults {@code contract}, {@code model} and {@code mods} to {@code null} (carry-opaque
+     * fields; absent means the step declares none) so existing call sites compile unchanged.
      */
     public StepConfig(
         String id,
@@ -46,7 +70,7 @@ public record StepConfig(
         Map<String, Object> context,
         List<String> dependencies
     ) {
-        this(id, systemPrompt, promptTemplate, context, dependencies, null, null);
+        this(id, systemPrompt, promptTemplate, context, dependencies, null, null, null);
     }
 
     public static StepConfig of(String id, String promptTemplate) {

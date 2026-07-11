@@ -2,6 +2,7 @@ package io.fluxor.sdk.flow;
 
 import io.fluxor.sdk.engine.DagTelemetry;
 import io.fluxor.sdk.engine.FlowExecutor;
+import io.fluxor.sdk.mod.ModOverlay;
 
 import java.util.List;
 import java.util.LinkedHashMap;
@@ -35,6 +36,14 @@ import java.util.concurrent.CompletableFuture;
  *     .withTelemetry(telemetry)
  *     .executeAsync()
  *     .thenAccept(result -> System.out.println(telemetry.toJson()));
+ *
+ * // On-demand mods — per-prospect micro-adjustments, attached only for this execution:
+ * ModOverlay mods = new ModOverlay().forAll(new AppendGuidelineMod("SOLO mobile-first"));
+ * runtime.flow("landing-copy")
+ *     .withContext("sector", "legal")
+ *     .withExpectedOutput(CopyResult.class)
+ *     .withMods(mods)
+ *     .executeAsync();
  * }</pre>
  *
  * Resolves to a registered {@link FlowDefinition} when one matches the name, otherwise builds
@@ -54,6 +63,7 @@ public final class FlowExecution {
     private String systemPromptOverride;
     private String promptOverride;
     private DagTelemetry telemetry = DagTelemetry.NOOP;
+    private ModOverlay mods = ModOverlay.EMPTY;
 
     public FlowExecution(FlowExecutor flowExecutor, String flowId, FlowDefinition definition, int defaultRetries) {
         this.flowExecutor = flowExecutor;
@@ -112,13 +122,28 @@ public final class FlowExecution {
         return this;
     }
 
+    /**
+     * Attaches an on-demand {@link ModOverlay} to this execution — the "attach mods to a step
+     * at runtime" surface (see {@code io.fluxor.sdk.mod} package). The overlay is resolved per
+     * step (by id) and applies ONLY to this one execution; it is never persisted into a
+     * {@link FlowDefinition}. Not calling this method (or passing {@code null}) is equivalent to
+     * {@link ModOverlay#EMPTY} — the exact same request/response pipeline as before mods existed.
+     *
+     * @param mods the overlay to apply; {@code null} is treated as {@link ModOverlay#EMPTY}
+     * @return {@code this} for chaining
+     */
+    public FlowExecution withMods(ModOverlay mods) {
+        this.mods = mods != null ? mods : ModOverlay.EMPTY;
+        return this;
+    }
+
     @SuppressWarnings("unchecked")
     public <T> CompletableFuture<T> executeAsync() {
         if (expectedType == null) {
             return CompletableFuture.failedFuture(
                 new IllegalStateException("withExpectedOutput(Class) is required before executeAsync()."));
         }
-        return flowExecutor.execute(resolveDefinition(), (Class<T>) expectedType, retries, context, telemetry);
+        return flowExecutor.execute(resolveDefinition(), (Class<T>) expectedType, retries, context, telemetry, mods);
     }
 
     /**
@@ -146,7 +171,7 @@ public final class FlowExecution {
                 new IllegalStateException(
                     "withSinkOutputs(Map) is required before executeMultiSinkAsync()."));
         }
-        return flowExecutor.executeMultiSink(resolveDefinition(), sinkOutputTypes, retries, context, telemetry);
+        return flowExecutor.executeMultiSink(resolveDefinition(), sinkOutputTypes, retries, context, telemetry, mods);
     }
 
     private FlowDefinition resolveDefinition() {
