@@ -147,6 +147,42 @@ context accumulates its parents' outputs. The scheduler is lock-free: the future
 single-threaded in topological order, and node results land in a `ConcurrentHashMap` under
 disjoint keys with happens-before guaranteed by the future graph.
 
+## Mods (on-demand overlay)
+
+Attach behavior to a step **at execution time**, without editing its `FlowDefinition` — the
+Java port of the IDE's `AgenticMod` (`src/types/harness.ts`). Built for per-caller
+micro-adjustments (a stricter tone, a mobile-first constraint, a sector-specific disclosure)
+that shouldn't fork the flow definition itself:
+
+```java
+ModOverlay mods = new ModOverlay()
+    .forAll(new AppendGuidelineMod("SOLO mobile-first"))        // every step in the flow
+    .forStep("draft", new ForbidToolsMod("publish_now"));       // this step only
+
+CompletableFuture<CopyResult> result = runtime.flow("landing-copy")
+    .withContext("sector", "legal")
+    .withExpectedOutput(CopyResult.class)
+    .withMods(mods)
+    .executeAsync();
+```
+
+A `StepMod` is `{ id(), onRequest(LlmRequest, ModContext), onResponseText(String, ModContext) }`.
+`onRequest` runs immediately before every provider call for the step — every turn of the tool
+loop and every schema-validation retry — covering system-prompt injection and tool
+addition/removal; `onResponseText` runs on the model's raw text before it is parsed/validated
+(or, for a text step, before it becomes the result). Five builtins live in `mod/builtin/`:
+`SystemPromptMod` (prepend/append to the system framing), `AppendGuidelineMod` (append
+convenience), `ForbidToolsMod`, `ProvideToolsMod` (tools scoped to one step — advertised *and*
+dispatchable, never registered on the shared `ToolRegistry`) and `RegexPostProcessMod`.
+`ModOverlay.resolve(stepId)` applies flow-wide mods (`forAll`) first, then that step's specific
+mods (`forStep`), in insertion order.
+
+An overlay is **ephemeral**: it is passed to `executeAsync()`/`executeMultiSinkAsync()`, never
+serialized into a `FlowDefinition` or a `StepConfig` (which only carries an opaque `mods`
+`JsonNode` for shape parity with the TS declarative case — this SDK never interprets it, exactly
+like `contract`/`model`). Not calling `withMods` leaves the request/response pipeline
+byte-identical to before mods existed.
+
 ## How it works
 
 ```
