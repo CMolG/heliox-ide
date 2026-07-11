@@ -68,6 +68,66 @@ FluxorRuntime runtime = FluxorRuntime.builder()
 with `-parameters`). While the model emits `tool_calls`, `StepExecutor` pauses final-schema
 validation, invokes the tools, appends `tool` messages, and replays the conversation — all async.
 
+## Sandbox (isolated execution)
+
+`sandbox/` gives a step a Docker-isolated environment for system-level work — shell commands,
+dependency installs, file I/O — so a step never touches the host running the flow directly. This
+exists for **supply-chain safety**: a corrupted or malicious dependency (or LLM-generated build
+script) pulled in mid-flow runs inside a throwaway container with no network access by default,
+capped CPU/memory, a read-only root filesystem and a non-root user — not on your machine.
+
+```java
+Path workDir = Files.createTempDirectory("build-");
+
+try (Sandbox sandbox = DockerSandbox.start(SandboxSpec.forWorkspace(workDir))) {
+    FluxorRuntime runtime = FluxorRuntime.builder()
+        .llmProvider(new MimoProvider("API_KEY"))
+        .registerTool(new SandboxToolset(sandbox))   // run_command, write_file, read_file, list_files, install_deps
+        .build();
+
+    runtime.flow("build-site")
+        .withPrompt("Instala las dependencias del proyecto en /work y compílalo.")
+        .executeAsync()
+        .join();
+} // container destroyed here, even on failure
+```
+
+### Security defaults
+
+Every `DockerSandbox` is born:
+
+- **Without network** — `exec` (and every `SandboxToolset` tool except `install_deps`) never has
+  network access. `execWithNetwork` is the *only* path with network: it attaches Docker's bridge
+  network right before the command and detaches it right after, in a `finally`, so a step never
+  keeps network access longer than the one command that asked for it. A domain allowlist is
+  deliberately not implemented (it would need an egress proxy sidecar) — the on/off switch is
+  what v1 needs.
+- **Resource-capped** — `--memory`, `--cpus`, `--pids-limit` (fork-bomb guard).
+- **Root-locked but usable** — `--read-only` root filesystem plus a `--tmpfs /tmp` and a `$HOME`
+  that lives *inside* the writable workspace mount, because package managers (`pnpm`, `npm`)
+  write caches to `/tmp` and `~/.cache` — without this a build against a read-only root fails.
+- **Non-root, auto-removed** — a numeric `--user` (no passwd entry required in the image) and
+  `--rm`; a command that runs past its timeout kills the *entire* container, not just the
+  process (defense in depth against a hung or compromised command).
+
+`SandboxToolset` exposes exactly one tool wired to `execWithNetwork` — `install_deps` — so
+dependency installation is the one, narrow, audited moment a build can reach the network;
+`run_command`, `write_file`, `read_file` and `list_files` are always offline. A failing command
+is ordinary data (`exitCode`/`stdout`/`stderr` in the JSON result), never a thrown exception, so
+the model can read what went wrong and correct itself.
+
+> **Supply-chain warning:** the sandbox isolates *execution*, not the artifacts that come out of
+> it. A build's output (`dist/`, `node_modules/`, generated code) still deserves the same
+> scrutiny you'd give any third-party output before it's deployed or trusted — the sandbox stops
+> a corrupted dependency from reaching your host or the network mid-build; it does not vet the
+> dependency itself.
+
+See the `Sandbox`, `SandboxSpec` and `DockerSandbox` class Javadoc for the exact `docker` CLI
+invocations — including why the container isn't started with `--network none` directly (Docker
+refuses to reconnect a network to a container born in that mode; `DockerSandbox` starts on the
+bridge network and disconnects immediately instead, which is reconnectable and verified
+behaviorally identical).
+
 ## DAG flows
 
 A `FlowDefinition` is a graph of `StepConfig` nodes wired by `dependencies`:
