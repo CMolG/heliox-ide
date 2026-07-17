@@ -13,7 +13,7 @@
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
 // src/renderer/components/desktop/SeamlessCanvas.tsx — Main canvas with pan, zoom, multi-select, and drag-drop
-import React, { useCallback, useRef, useState, useEffect, createContext } from 'react';
+import React, { useCallback, useMemo, useRef, useState, useEffect, createContext } from 'react';
 import { DndContext, DragOverlay, PointerSensor, pointerWithin, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 import { useDesktopStore } from '../../store/desktop-store';
@@ -37,7 +37,12 @@ import { WidgetLauncher } from './hud/WidgetLauncher';
 import { HudWidgetLayer } from './hud/HudWidgetLayer';
 import { DesktopCanvasBg } from './DesktopCanvasBg';
 import { BacklogCardModal } from './BacklogCardModal';
-import { CanvasContextMenu } from './CanvasContextMenu';
+import { LucideIcon } from './LucideIcon';
+// Canvas context menu adopted onto @javadaba/daba-engine's unified ContextMenu
+// (adoption plan #20, javadaba-web Core, Task 10 — this used to be its own
+// CanvasContextMenu.tsx, deleted; the entries below are that file's
+// CANVAS_ACTIONS ported verbatim as a declarative provider).
+import { BACKGROUND_TARGET_KIND, ContextMenu, useContextMenuState, type ContextMenuEntry, type ContextMenuProviders } from '@javadaba/daba-engine';
 import type { MarketMod, MarketRole } from '@/types/market';
 
 /** Canvas container dimensions — consumed by DesktopWindow for maximized viewport calc */
@@ -160,8 +165,10 @@ export function SeamlessCanvas() {
   const [selectRect, setSelectRect] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
   const selectRafRef = useRef(0);
 
-  // Context menu state for right-click on empty canvas
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  // Context menu state for right-click on empty canvas — owned by the motor
+  // (@javadaba/daba-engine's useContextMenuState), a single provider keyed by
+  // BACKGROUND_TARGET_KIND replaces the old CanvasContextMenu.tsx component.
+  const { state: canvasContextMenuState, open: openCanvasContextMenu, close: closeCanvasContextMenu } = useContextMenuState();
 
   // Smooth zoom transition toggle
   const [isZooming, setIsZooming] = useState(false);
@@ -389,98 +396,126 @@ export function SeamlessCanvas() {
     if (e.button === 1) e.preventDefault();
   }, []);
 
-  // Right-click on empty canvas — show context menu
+  // Right-click on empty canvas — show context menu. worldPos is resolved
+  // once at open time (same "same feel" tradeoff the motor's contract makes
+  // for every context menu — see ContextMenuContext.worldPos) rather than
+  // re-derived from live pan/zoom when an entry is later selected; the two
+  // can only disagree if the canvas pans/zooms while the menu is open, which
+  // never happens in practice (any interaction that would do that closes it).
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
     if (target.classList.contains('desktop-canvas') || target.classList.contains('desktop-pan-layer')) {
       e.preventDefault();
-      setContextMenu({ x: e.clientX, y: e.clientY });
+      const store = useDesktopStore.getState();
+      const rect = containerRef.current?.getBoundingClientRect();
+      const worldPos = rect
+        ? {
+            x: (e.clientX - rect.left - store.canvasPan.x) / store.canvasZoom,
+            y: (e.clientY - rect.top - store.canvasPan.y) / store.canvasZoom,
+          }
+        : { x: 200, y: 200 };
+      openCanvasContextMenu({ targetKind: BACKGROUND_TARGET_KIND, targetId: null, worldPos }, { x: e.clientX, y: e.clientY });
     }
-  }, []);
+  }, [openCanvasContextMenu]);
 
-  // Dispatch context menu actions to the desktop store
-  const handleContextMenuAction = useCallback((action: string) => {
-    const store = useDesktopStore.getState();
-    const pan = store.canvasPan;
-    const zoom = store.canvasZoom;
-    const rect = containerRef.current?.getBoundingClientRect();
-    const cx = rect && contextMenu ? (contextMenu.x - rect.left - pan.x) / zoom : 200;
-    const cy = rect && contextMenu ? (contextMenu.y - rect.top - pan.y) / zoom : 200;
-
-    switch (action) {
-      case 'new-chat': {
-        // chats→steps re-architecture (F0 decision 2, 2026-07-10): "New
-        // Step" (label updated in CanvasContextMenu.tsx; the `action`
-        // literal stays 'new-chat' — see that file's comment) no longer
-        // opens a chat window — chat is not a window surface anymore, and
-        // the one surviving chat (Auto-Chat) is a position-independent
-        // fixed HUD panel, not something this *spatially*-anchored menu can
-        // meaningfully spawn at (cx, cy) the way its sibling actions here
-        // do. Replaced with the canonical mono-step gesture — the same
-        // primitive handleDoubleClick below uses for double-click-on-empty-
-        // canvas — anchored at the right-click point instead.
-        const stepId = store.addStepNode({ position: { x: cx - 150, y: cy - 95 } });
-        store.setSelectedMentalNodeIds([stepId]);
-        store.updateSettings({ showInspector: true });
-        store.setPendingStepFocusId(stepId);
-        break;
-      }
-      case 'file-explorer': {
-        store.addWindow('file-explorer', { title: 'Files', position: { x: cx, y: cy } });
-        break;
-      }
-      case 'backlog': {
-        store.addWindow('backlog', { title: 'Backlog', position: { x: cx, y: cy } });
-        break;
-      }
-      case 'mental-draw-toggle': {
-        const current = store.mentalMode;
-        store.setMentalMode(current === 'off' ? 'square' : 'off');
-        break;
-      }
-      case 'mental-select-tool': {
-        store.setMentalTool('select');
-        break;
-      }
-      case 'mental-ramification-tool': {
-        store.setMentalTool('ramification');
-        break;
-      }
-      case 'marketplace': {
-        store.setShowMarketplace(true);
-        break;
-      }
-      case 'prompt-dev-zone': {
-        if (import.meta.env.DEV) {
-          store.addWindow('prompt-dev-zone', { title: 'Prompt Dev Zone', position: { x: cx, y: cy }, size: { width: 720, height: 520 } });
+  // Canvas context menu entries — ported verbatim from the deleted
+  // CanvasContextMenu.tsx's CANVAS_ACTIONS + this file's own
+  // handleContextMenuAction switch (adoption plan #20, Task 10). `cx`/`cy`
+  // come from the ContextMenuContext.worldPos resolved at open time above.
+  // NOTE: the pre-adoption switch also had unreachable `mental-select-tool`/
+  // `mental-ramification-tool` cases with no menu entry ever dispatching them
+  // (dead code even before this adoption) — intentionally not carried over.
+  const canvasContextMenuProviders: ContextMenuProviders = useMemo(() => {
+    const runAction = (action: string, cx: number, cy: number) => {
+      const store = useDesktopStore.getState();
+      switch (action) {
+        case 'new-chat': {
+          // chats→steps re-architecture (F0 decision 2, 2026-07-10): "New
+          // Step" no longer opens a chat window — chat is not a window
+          // surface anymore, and the one surviving chat (Auto-Chat) is a
+          // position-independent fixed HUD panel, not something this
+          // *spatially*-anchored menu can meaningfully spawn at (cx, cy) the
+          // way its sibling actions here do. Replaced with the canonical
+          // mono-step gesture — the same primitive handleDoubleClick below
+          // uses for double-click-on-empty-canvas — anchored at the
+          // right-click point instead.
+          const stepId = store.addStepNode({ position: { x: cx - 150, y: cy - 95 } });
+          store.setSelectedMentalNodeIds([stepId]);
+          store.updateSettings({ showInspector: true });
+          store.setPendingStepFocusId(stepId);
+          break;
         }
-        break;
+        case 'file-explorer': {
+          store.addWindow('file-explorer', { title: 'Files', position: { x: cx, y: cy } });
+          break;
+        }
+        case 'backlog': {
+          store.addWindow('backlog', { title: 'Backlog', position: { x: cx, y: cy } });
+          break;
+        }
+        case 'mental-draw-toggle': {
+          const current = store.mentalMode;
+          store.setMentalMode(current === 'off' ? 'square' : 'off');
+          break;
+        }
+        case 'marketplace': {
+          store.setShowMarketplace(true);
+          break;
+        }
+        case 'prompt-dev-zone': {
+          if (import.meta.env.DEV) {
+            store.addWindow('prompt-dev-zone', { title: 'Prompt Dev Zone', position: { x: cx, y: cy }, size: { width: 720, height: 520 } });
+          }
+          break;
+        }
+        case 'arrange': {
+          const wins = store.windows.filter(w => w.state !== 'minimized');
+          const cols = Math.ceil(Math.sqrt(wins.length));
+          wins.forEach((w, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            store._updateWindow(w.id, { position: { x: col * 520, y: row * 540 } });
+          });
+          break;
+        }
+        case 'stack': {
+          const wins = store.windows.filter(w => w.state !== 'minimized');
+          wins.forEach((w, i) => {
+            store._updateWindow(w.id, { position: { x: 40 + i * 30, y: 40 + i * 30 } });
+          });
+          break;
+        }
+        case 'reset-view': {
+          store.setCanvasPan({ x: 0, y: 0 });
+          store.setCanvasZoom(1);
+          break;
+        }
       }
-      case 'arrange': {
-        const wins = store.windows.filter(w => w.state !== 'minimized');
-        const cols = Math.ceil(Math.sqrt(wins.length));
-        wins.forEach((w, i) => {
-          const col = i % cols;
-          const row = Math.floor(i / cols);
-          store._updateWindow(w.id, { position: { x: col * 520, y: row * 540 } });
-        });
-        break;
-      }
-      case 'stack': {
-        const wins = store.windows.filter(w => w.state !== 'minimized');
-        wins.forEach((w, i) => {
-          store._updateWindow(w.id, { position: { x: 40 + i * 30, y: 40 + i * 30 } });
-        });
-        break;
-      }
-      case 'reset-view': {
-        store.setCanvasPan({ x: 0, y: 0 });
-        store.setCanvasZoom(1);
-        break;
-      }
-    }
-    setContextMenu(null);
-  }, [contextMenu]);
+    };
+
+    const makeEntry = (id: string, label: string, icon: string, dividerAfter?: boolean): ContextMenuEntry => ({
+      id,
+      label,
+      testId: `canvas-ctx-${id}`,
+      icon: <LucideIcon name={icon} size={14} style={{ opacity: 0.6, flexShrink: 0 }} />,
+      dividerAfter,
+      onSelect: (ctx) => runAction(id, ctx.worldPos.x, ctx.worldPos.y),
+    });
+
+    return {
+      [BACKGROUND_TARGET_KIND]: () => [
+        makeEntry('new-chat', 'New Step', 'SquarePlus'),
+        makeEntry('file-explorer', 'New File Explorer', 'FileText'),
+        makeEntry('backlog', 'New Backlog Board', 'KanbanSquare'),
+        makeEntry('mental-draw-toggle', 'Enable Mental Authoring', 'PenTool', true),
+        makeEntry('marketplace', 'Open Marketplace', 'Store', true),
+        ...(import.meta.env.DEV ? [makeEntry('prompt-dev-zone', 'Prompt Dev Zone', 'FlaskConical', true)] : []),
+        makeEntry('arrange', 'Arrange Components', 'Grid2x2'),
+        makeEntry('stack', 'Stack Components', 'Layers'),
+        makeEntry('reset-view', 'Reset Canvas View', 'Maximize2'),
+      ],
+    };
+  }, []);
 
   // Ctrl+wheel zoom with smooth transition
   useEffect(() => {
@@ -660,13 +695,13 @@ export function SeamlessCanvas() {
         {/* Maximized windows handled via inverse-transform CSS in DesktopWindow (no portals) */}
 
         {/* Right-click context menu */}
-        {contextMenu && (
-          <CanvasContextMenu
-            position={contextMenu}
-            onAction={handleContextMenuAction}
-            onClose={() => setContextMenu(null)}
-          />
-        )}
+        <ContextMenu
+          state={canvasContextMenuState}
+          providers={canvasContextMenuProviders}
+          onClose={closeCanvasContextMenu}
+          backdropTestId="canvas-context-menu-backdrop"
+          menuTestId="canvas-context-menu"
+        />
 
         {/* Zoom indicator (top-right of canvas) */}
         {Math.abs(canvasZoom - 1) > 0.001 && (

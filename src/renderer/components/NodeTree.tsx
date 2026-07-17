@@ -12,11 +12,15 @@
  * Architectural role:
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
-import React, { useCallback, useState, useRef, useEffect } from 'react';
+import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
 import { LucideIcon } from './desktop/LucideIcon';
 import { theme } from '@/renderer/logic/theme';
+// NodeTree's inline right-click menu adopted onto @javadaba/daba-engine's
+// unified ContextMenu (adoption plan #20, javadaba-web Core, Task 10) — one
+// provider per CtxTarget.kind ('window' | 'mental' | 'grid').
+import { ContextMenu, useContextMenuState, type ContextMenuContext, type ContextMenuEntry, type ContextMenuProviders } from '@javadaba/daba-engine';
 import type { AttachableType, FrameGraphNode, MentalGraphNode, StepGraphNode } from '@/types/desktop';
 import type { AgenticExecutionStatus } from '@/types/harness';
 
@@ -209,7 +213,7 @@ export function NodeTree() {
     | { kind: 'mental'; id: string }
     | { kind: 'grid'; id: string };
 
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: CtxTarget } | null>(null);
+  const { state: contextMenuState, open: engineOpenContextMenu, close: closeContextMenu } = useContextMenuState();
   const [renamingItem, setRenamingItem] = useState<CtxTarget | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -247,55 +251,85 @@ export function NodeTree() {
     setCanvasPan(centerViewportOn(node.position, { width: node.width, height: node.height }, canvasZoom));
   }, [setSelectedMentalNodeIds, setCanvasPan, canvasZoom]);
 
+  // Thin wrapper over the motor's open() — keeps every row's onContextMenu
+  // call site (`openContextMenu(e, {kind, id})`) unchanged.
   const openContextMenu = useCallback((e: React.MouseEvent, target: CtxTarget) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, target });
+    engineOpenContextMenu({ targetKind: target.kind, targetId: target.id, worldPos: { x: 0, y: 0 } }, { x: e.clientX, y: e.clientY });
+  }, [engineOpenContextMenu]);
+
+  const startRename = useCallback((target: CtxTarget) => {
+    if (target.kind === 'window') {
+      const win = useDesktopStore.getState().windows.find(w => w.id === target.id);
+      if (win) setRenameValue(win.title);
+    } else if (target.kind === 'mental') {
+      const node = useDesktopStore.getState().mentalNodes.find(n => n.id === target.id);
+      if (node) setRenameValue(node.text);
+    } else if (target.kind === 'grid') {
+      const grid = useDesktopStore.getState().grids.find(g => g.id === target.id);
+      if (grid) setRenameValue(grid.title ?? `Grid ${grid.columns}×${grid.rows}`);
+    }
+    setRenamingItem(target);
   }, []);
 
-  const handleContextMenuAction = useCallback((action: string) => {
-    if (!contextMenu) return;
-    const { target } = contextMenu;
-    switch (action) {
-      case 'rename': {
-        if (target.kind === 'window') {
-          const win = useDesktopStore.getState().windows.find(w => w.id === target.id);
-          if (win) setRenameValue(win.title);
-        } else if (target.kind === 'mental') {
-          const node = useDesktopStore.getState().mentalNodes.find(n => n.id === target.id);
-          if (node) setRenameValue(node.text);
-        } else if (target.kind === 'grid') {
-          const grid = useDesktopStore.getState().grids.find(g => g.id === target.id);
-          if (grid) setRenameValue(grid.title ?? `Grid ${grid.columns}×${grid.rows}`);
-        }
-        setRenamingItem(target);
-        break;
+  // One provider per CtxTarget.kind, entries ported verbatim from the old
+  // inline switch (adoption plan #20, Task 10). testId mirrors the old
+  // `nodetree-ctx-${action}` convention so existing e2e selectors still work.
+  const nodeTreeContextMenuProviders: ContextMenuProviders = useMemo(() => {
+    const buildEntries = (kind: CtxTarget['kind']) => (ctx: ContextMenuContext): ContextMenuEntry[] => {
+      const target: CtxTarget = { kind, id: ctx.targetId! };
+      const entries: ContextMenuEntry[] = [
+        {
+          id: 'rename', testId: 'nodetree-ctx-rename', label: 'Rename',
+          icon: <LucideIcon name="Pencil" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => startRename(target),
+        },
+        {
+          id: 'locate', testId: 'nodetree-ctx-locate', label: 'Locate',
+          icon: <LucideIcon name="Navigation" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => {
+            if (target.kind === 'window') navigateToWindow(target.id);
+            // Deliberate behavior change (pre-adoption): this used to
+            // re-derive the centering math inline and only re-center, so
+            // right-click → Locate and clicking the node's own row disagreed
+            // on whether selection followed. Delegating to
+            // navigateToMentalNode means Locate now also selects the node,
+            // matching row-click behavior (the old split was a duplication
+            // artifact, not an intentional difference).
+            else if (target.kind === 'mental') navigateToMentalNode(target.id);
+            else if (target.kind === 'grid') navigateToGrid(target.id);
+          },
+        },
+      ];
+      if (kind === 'window') {
+        entries.push({
+          id: 'minimize', testId: 'nodetree-ctx-minimize', label: 'Minimize',
+          icon: <LucideIcon name="Minus" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => {
+            const win = useDesktopStore.getState().windows.find(w => w.id === target.id);
+            if (win) setWindowState(target.id, win.state === 'minimized' ? 'normal' : 'minimized');
+          },
+        });
+        entries.push({
+          id: 'delete', testId: 'nodetree-ctx-delete', label: 'Close window', danger: true,
+          icon: <LucideIcon name="Trash2" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => removeWindow(target.id),
+        });
+      } else {
+        entries.push({
+          id: 'delete', testId: 'nodetree-ctx-delete', label: 'Delete', danger: true,
+          icon: <LucideIcon name="Trash2" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => {
+            if (target.kind === 'mental') removeMentalNode(target.id);
+            else if (target.kind === 'grid') removeGrid(target.id);
+          },
+        });
       }
-      case 'locate':
-        if (target.kind === 'window') navigateToWindow(target.id);
-        // Deliberate behavior change: this branch used to re-derive the
-        // centering math inline and only re-center, so right-click → Locate
-        // and clicking the node's own row disagreed on whether selection
-        // followed. Delegating to navigateToMentalNode means Locate now also
-        // selects the node, matching row-click behavior (the old split was a
-        // duplication artifact, not an intentional difference).
-        else if (target.kind === 'mental') navigateToMentalNode(target.id);
-        else if (target.kind === 'grid') navigateToGrid(target.id);
-        break;
-      case 'minimize':
-        if (target.kind === 'window') {
-          const win = useDesktopStore.getState().windows.find(w => w.id === target.id);
-          if (win) setWindowState(target.id, win.state === 'minimized' ? 'normal' : 'minimized');
-        }
-        break;
-      case 'delete':
-        if (target.kind === 'window') removeWindow(target.id);
-        else if (target.kind === 'mental') removeMentalNode(target.id);
-        else if (target.kind === 'grid') removeGrid(target.id);
-        break;
-    }
-    setContextMenu(null);
-  }, [contextMenu, navigateToWindow, navigateToGrid, navigateToMentalNode, setWindowState, removeWindow, removeMentalNode, removeGrid]);
+      return entries;
+    };
+    return { window: buildEntries('window'), mental: buildEntries('mental'), grid: buildEntries('grid') };
+  }, [startRename, navigateToWindow, navigateToMentalNode, navigateToGrid, setWindowState, removeWindow, removeMentalNode, removeGrid]);
 
   const commitRename = useCallback(() => {
     if (renamingItem && renameValue.trim()) {
@@ -1128,59 +1162,13 @@ export function NodeTree() {
       )}
 
       {/* Right-click context menu for all item types */}
-      {contextMenu && (
-        <div
-          data-testid="nodetree-context-menu-backdrop"
-          style={{ position: 'fixed', inset: 0, zIndex: 10001 }}
-          onClick={() => setContextMenu(null)}
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
-        >
-          <div
-            data-testid="nodetree-context-menu"
-            style={{
-              position: 'absolute',
-              left: contextMenu.x,
-              top: contextMenu.y,
-              minWidth: 150,
-              padding: '4px 0',
-              borderRadius: 8,
-              background: 'rgba(20, 20, 20, 0.95)',
-              border: '1px solid rgba(255, 255, 255, 0.14)',
-              boxShadow: '0 8px 20px rgba(0,0,0,0.35)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {[
-              { label: 'Rename', icon: 'Pencil', action: 'rename' },
-              { label: 'Locate', icon: 'Navigation', action: 'locate' },
-              ...(contextMenu.target.kind === 'window'
-                ? [
-                  { label: 'Minimize', icon: 'Minus', action: 'minimize' },
-                  { label: 'Close window', icon: 'Trash2', action: 'delete' },
-                ]
-                : [{ label: 'Delete', icon: 'Trash2', action: 'delete' }]),
-            ].map((item) => (
-              <button
-                key={item.action}
-                data-testid={`nodetree-ctx-${item.action}`}
-                onClick={() => handleContextMenuAction(item.action)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  width: '100%', padding: '6px 12px',
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: item.action === 'delete' ? '#f87171' : '#f4f4f5',
-                  fontSize: 12, textAlign: 'left',
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none'; }}
-              >
-                <LucideIcon name={item.icon} size={13} style={{ opacity: 0.6, flexShrink: 0 }} />
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <ContextMenu
+        state={contextMenuState}
+        providers={nodeTreeContextMenuProviders}
+        onClose={closeContextMenu}
+        backdropTestId="nodetree-context-menu-backdrop"
+        menuTestId="nodetree-context-menu"
+      />
     </div>
   );
 }

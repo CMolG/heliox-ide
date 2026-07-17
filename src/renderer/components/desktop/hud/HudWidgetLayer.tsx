@@ -25,10 +25,16 @@ import { AgentSessionsWidget } from '../../atoms/widgets/AgentSessionsWidget';
 import { HudAutoChatPanel } from './HudAutoChatPanel';
 import { NotificationsWidget } from '../../atoms/widgets/NotificationsWidget';
 import { LucideIcon } from '../LucideIcon';
+// Generic HUD grid math (HUD_GRID/snap/clamp/placement) now lives in
+// @javadaba/daba-engine's core/hud-grid (adoption plan #20, javadaba-web Core,
+// Task 10). This file used to import its own copy from `logic/hud-grid.ts`
+// (deleted) — the Fluxor-specific policy that used to live there (widget size
+// mins, the reserved top-right safe zone) moved to `logic/hud-widget-policy.ts`,
+// a thin adapter over the motor's primitives. See that file's docblock.
 import {
   snapSizeToHudGrid, MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT, resolveHudWidgetPlacement,
-} from '../../../logic/hud-grid';
-import type { HudRect } from '../../../logic/hud-grid';
+} from '../../../logic/hud-widget-policy';
+import type { HudRect } from '../../../logic/hud-widget-policy';
 import { theme } from '../../../logic/theme';
 
 // ─── Widget metadata ─────────────────────────────────────────────

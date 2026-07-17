@@ -10,7 +10,11 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { getConnectedComponent } from '../logic/mental-graph';
 import { debouncedLocalStorage } from '../logic/debounced-storage';
-import { MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT } from '../logic/hud-grid';
+// MIN_WIDGET_WIDTH/HEIGHT moved with the HUD widget adoption onto @javadaba/daba-engine
+// (Task 10, #20): logic/hud-grid.ts is gone (its generic math ported to the motor's
+// core/hud-grid); these two constants are Fluxor's own widget-sizing policy, now in
+// logic/hud-widget-policy.ts (a thin adapter over the motor's primitives).
+import { MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT } from '../logic/hud-widget-policy';
 import { normalizeEdgeTypes } from '../logic/normalize-edge-types';
 import type {
   DesktopWindow, WindowPosition, WindowSize, WindowConnection,

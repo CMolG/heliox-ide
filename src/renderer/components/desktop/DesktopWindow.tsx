@@ -13,7 +13,7 @@
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
 // src/renderer/components/desktop/DesktopWindow.tsx — Draggable/resizable window with external attachments
-import React, { useRef, useCallback, useState, useContext, useEffect } from 'react';
+import React, { useRef, useCallback, useMemo, useState, useContext, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useDroppable } from '@dnd-kit/core';
 import { useDesktopStore, GRID_PADDING, GRID_GAP } from '../../store/desktop-store';
@@ -22,8 +22,12 @@ import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
 import { AttachmentInfoModal } from './AttachmentInfoModal';
 import type { AttachmentModalInfo } from './AttachmentInfoModal';
-import { WindowContextMenu } from './WindowContextMenu';
-import type { ContextMenuItem } from './WindowContextMenu';
+// Window context menu adopted onto @javadaba/daba-engine's unified ContextMenu
+// (adoption plan #20, javadaba-web Core, Task 10 — this used to be its own
+// WindowContextMenu.tsx, deleted). `labelColor` (engine addition, same Task)
+// preserves the per-action semantic colors (orange/blue/purple for role/mod/
+// flow removal) the old component had, independent of `danger` (close).
+import { ContextMenu, useContextMenuState, type ContextMenuEntry, type ContextMenuProviders } from '@javadaba/daba-engine';
 import type { WindowPosition, WindowSize, AttachableType } from '@/types/desktop';
 import { TYPE_META } from './DesktopAttachable';
 import { kebabToTitle } from './attachable-helpers';
@@ -97,7 +101,7 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
   const [interacting, setInteracting] = useState(false);
   const dragArmRef = useRef<{ startX: number; startY: number } | null>(null);
   const [attachmentModal, setAttachmentModal] = useState<AttachmentModalInfo | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ items: ContextMenuItem[]; position: { x: number; y: number } } | null>(null);
+  const { state: contextMenuState, open: openContextMenu, close: closeContextMenu } = useContextMenuState();
 
   const isActive = activeWindowId === windowId;
   const isHighlighted = hoveredWindowId === windowId;
@@ -155,57 +159,67 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
     setAttachmentModal(info);
   }, []);
 
-  // Context menu on right-click
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const items: ContextMenuItem[] = [];
+  // Context menu on right-click — entries ported verbatim from the deleted
+  // WindowContextMenu.tsx call site (adoption plan #20, Task 10). testId
+  // mirrors the old component's own slug (`ctx-menu-${label.toLowerCase()
+  // .replace(/\s+/g,'-')}`) so existing e2e selectors keep working.
+  const windowContextMenuProviders: ContextMenuProviders = useMemo(() => {
+    const testIdFor = (label: string) => `ctx-menu-${label.toLowerCase().replace(/\s+/g, '-')}`;
+    const entries: ContextMenuEntry[] = [];
     if (inventoryRole) {
-      items.push({
-        label: `Remove role: ${kebabToTitle(inventoryRole.name)}`,
-        icon: 'UserMinus',
-        color: '#E87040',
-        action: () => detachFromWindow(windowId, 'role', inventoryRole.name),
+      const label = `Remove role: ${kebabToTitle(inventoryRole.name)}`;
+      entries.push({
+        id: 'remove-role', label, testId: testIdFor(label),
+        icon: <LucideIcon name="UserMinus" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+        labelColor: '#E87040',
+        onSelect: () => detachFromWindow(windowId, 'role', inventoryRole.name),
       });
     }
-    if (inventoryMods.length > 0) {
-      for (const mod of inventoryMods) {
-        if (!mod) continue;
-        items.push({
-          label: `Remove mod: ${kebabToTitle(mod.name)}`,
-          icon: 'WrenchIcon',
-          color: '#4285F4',
-          action: () => detachFromWindow(windowId, 'mod', mod.name),
-        });
-      }
+    for (const mod of inventoryMods) {
+      if (!mod) continue;
+      const label = `Remove mod: ${kebabToTitle(mod.name)}`;
+      entries.push({
+        id: `remove-mod-${mod.name}`, label, testId: testIdFor(label),
+        icon: <LucideIcon name="WrenchIcon" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+        labelColor: '#4285F4',
+        onSelect: () => detachFromWindow(windowId, 'mod', mod.name),
+      });
     }
     if (inventoryFlow) {
-      items.push({
-        label: `Remove flow: ${kebabToTitle(inventoryFlow.name)}`,
-        icon: 'GitBranch',
-        color: '#A78BFA',
-        action: () => detachFromWindow(windowId, 'flow', inventoryFlow.name),
+      const label = `Remove flow: ${kebabToTitle(inventoryFlow.name)}`;
+      entries.push({
+        id: 'remove-flow', label, testId: testIdFor(label),
+        icon: <LucideIcon name="GitBranch" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+        labelColor: '#A78BFA',
+        onSelect: () => detachFromWindow(windowId, 'flow', inventoryFlow.name),
       });
     }
     // Always show window actions
-    items.push({
-      label: win!.state === 'maximized' ? 'Restore' : 'Maximize',
-      icon: 'Square',
-      action: () => setWindowState(windowId, win!.state === 'maximized' ? 'normal' : 'maximized'),
+    const maximizeLabel = win?.state === 'maximized' ? 'Restore' : 'Maximize';
+    entries.push({
+      id: 'maximize', label: maximizeLabel, testId: testIdFor(maximizeLabel),
+      icon: <LucideIcon name="Square" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+      onSelect: () => setWindowState(windowId, win?.state === 'maximized' ? 'normal' : 'maximized'),
     });
-    items.push({
-      label: 'Minimize',
-      icon: 'Minus',
-      action: () => setWindowState(windowId, 'minimized'),
+    entries.push({
+      id: 'minimize', label: 'Minimize', testId: testIdFor('Minimize'),
+      icon: <LucideIcon name="Minus" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+      onSelect: () => setWindowState(windowId, 'minimized'),
     });
-    items.push({
-      label: 'Close window',
-      icon: 'X',
-      color: theme.danger,
-      action: () => removeWindow(windowId),
+    entries.push({
+      id: 'close-window', label: 'Close window', testId: testIdFor('Close window'),
+      icon: <LucideIcon name="X" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+      labelColor: theme.danger,
+      onSelect: () => removeWindow(windowId),
     });
-    setContextMenu({ items, position: { x: e.clientX, y: e.clientY } });
-  }, [inventoryRole, inventoryMods, inventoryFlow, windowId, detachFromWindow, setWindowState, removeWindow, win]);
+    return { window: () => entries };
+  }, [inventoryRole, inventoryMods, inventoryFlow, windowId, detachFromWindow, setWindowState, removeWindow, win?.state]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu({ targetKind: 'window', targetId: windowId, worldPos: { x: 0, y: 0 } }, { x: e.clientX, y: e.clientY });
+  }, [openContextMenu, windowId]);
 
   // ─── Grid-aware resize (merge/unmerge adjacent empty cells) ───
 
@@ -740,11 +754,12 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
       )}
 
       {/* Context menu — portalled to body to escape transform stacking context */}
-      {contextMenu && createPortal(
-        <WindowContextMenu
-          items={contextMenu.items}
-          position={contextMenu.position}
-          onClose={() => setContextMenu(null)}
+      {createPortal(
+        <ContextMenu
+          state={contextMenuState}
+          providers={windowContextMenuProviders}
+          onClose={closeContextMenu}
+          backdropTestId="window-context-menu"
         />,
         document.body,
       )}

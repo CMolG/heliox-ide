@@ -31,6 +31,31 @@
   --font-lexend: 'Atkinson Hyperlegible', 'Inter', 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
 }
 
+/* ─── @javadaba/daba-engine tokens — Fluxor's palette (adoption plan #20) ───
+   The motor's chrome (ContextMenu today; Dock/HUD/etc as later Tasks adopt
+   them) is styled entirely through these --daba-* custom properties —
+   tokens.css ships neutral defaults, this block maps them onto Fluxor's
+   existing dark IDE palette so the adoption is iso-visual (same look, no
+   redesign). Values sourced from logic/theme.ts (surfaceCard/borderLight/
+   textSecondary/danger) and the z-index/radius/blur the 3 pre-adoption
+   context menus already agreed on (z-index 10001; menus differed slightly
+   on radius 8-10px and blur 0-16px — consolidated to one value each, the
+   INTENDED effect of unifying 3 implementations into the motor's one). */
+:root {
+  --daba-surface: #1a1a1a;
+  --daba-surface-muted: #222222;
+  --daba-border: rgba(63, 63, 70, 0.15);
+  --daba-text: #d6d3d1;
+  --daba-text-muted: #8a8a8a;
+  --daba-danger: #F02525;
+  --daba-radius-sm: 4px;
+  --daba-radius-md: 8px;
+  --daba-chrome-blur: 16px;
+  --daba-chrome-surface: rgba(26, 26, 26, 0.95);
+  --daba-chrome-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --daba-z-menu: 10001;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -4267,7 +4292,7 @@ body {
    mirror each other bottom-left/bottom-right. The inspector one moved to
    top-right — it was overlapping the HUD widget field at the bottom edge,
    and top-right is now a protected 72x72 SAFE_ZONE reserved specifically
-   for it (see `logic/hud-grid.ts`'s `SAFE_ZONE`, Phase 4). Sidebar stays
+   for it (see `logic/hud-widget-policy.ts`'s `SAFE_ZONE`, Phase 4). Sidebar stays
    bottom-left, unchanged. Position (bottom/left vs. top/right) no longer
    shared, so the recipe below only keeps the geometry-independent parts;
    .notification-bell (above) looks similar but is still NOT grouped in — it
@@ -4297,7 +4322,7 @@ body {
    `.fluxor-topbar` only sets grid placement), so this is computed from
    TopBar.tsx's Tailwind utility classes, not measured live. 53px + 12px
    margin = 65px. The button's footprint (right: 20px, 36×36 → x:[w-56,w-20],
-   y:[65,101]) is fully contained by hud-grid.ts's SAFE_ZONE, which is sized
+   y:[65,101]) is fully contained by hud-widget-policy.ts's SAFE_ZONE, which is sized
    72×120 precisely to reserve this corner from HUD widgets — keep this
    button's position and SAFE_ZONE's dimensions in sync. */
 .expand-inspector-btn { top: 65px; right: 20px; }
