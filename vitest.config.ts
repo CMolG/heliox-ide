@@ -12,6 +12,14 @@ import path from 'path';
 export default defineConfig({
   plugins: [react()],
   resolve: {
+    // @javadaba/daba-engine is consumed via `npm link` for local dev (see
+    // docs/superpowers/backlog/2026-07-17-daba-engine-registro-privado.md). A
+    // linked package is a symlink to its real location outside this project's
+    // node_modules, so Node/Vite resolve ITS nested `react`/`react-dom` (a
+    // devDependency of the engine, needed only to build/test the engine itself)
+    // instead of this project's copy — two React instances, hooks break
+    // silently. `dedupe` forces both to resolve to this project's single copy.
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@': path.resolve(__dirname, 'src'),
       // monaco-config.ts imports Monaco's language workers via Vite's `?worker`
