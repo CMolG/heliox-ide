@@ -2,7 +2,13 @@
  * Dock.tsx — Renderer Desktop Surface Component
  *
  * Responsibility:
- * - Renders the Dock surface in the renderer layer.
+ * - Renders the Dock surface in the renderer layer as a composition over
+ *   @javadaba/daba-engine's <Dock>: Fluxor supplies the item specs (icons,
+ *   labels, click / drag-out behavior, the mental-mode popover content) via
+ *   `DockItemSpec[]`, plus the attachables strip and Settings button as
+ *   `children`. The engine owns the item button chrome, drag-out gesture
+ *   detection + ghost, tooltip visibility rules, and popover open/close
+ *   mechanics for the items it renders.
  * - Encapsulates Desktop canvas/window composition within the renderer workspace.
  *
  * Boundaries:
@@ -13,10 +19,10 @@
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
 import React, { useCallback, useRef, useState, useMemo } from 'react';
+import { Dock as DabaDock, type DockItemSpec, type DockPopoverControls } from '@javadaba/daba-engine';
 import { useDesktopStore } from '../../store/desktop-store';
 import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
-import { DockPopover } from './DockPopover';
 import type { AttachableType, MentalMode, MentalShape, MentalTool } from '@/types/desktop';
 
 const ATTACHABLE_TYPE_COLORS: Record<string, string> = {
@@ -27,13 +33,23 @@ const ATTACHABLE_TYPE_COLORS: Record<string, string> = {
 
 const ATTACHABLE_VISIBLE_COUNT = 3;
 
+/**
+ * `.fluxor-dock`'s live bounding box. The engine's <Dock> owns its root DOM
+ * node and doesn't forward a ref (no `forwardRef` in its contract), so the
+ * attachables strip below — unchanged since before the engine adoption —
+ * reads the dock's rect straight off the DOM via this stable class instead
+ * of the React ref it used to close over.
+ */
+function getDockRect(): DOMRect | undefined {
+  return document.querySelector('.fluxor-dock')?.getBoundingClientRect();
+}
+
 export function Dock() {
   const dockItems = useDesktopStore(s => s.dockItems);
   const addWindow = useDesktopStore(s => s.addWindow);
   const setShowMarketplace = useDesktopStore(s => s.setShowMarketplace);
   const installedPlugins = useDesktopStore(s => s.installedPlugins);
   const windows = useDesktopStore(s => s.windows);
-  const focusWindow = useDesktopStore(s => s.focusWindow);
   const projectPath = useFluxorStore(s => s.projectPath);
   const availablePlugins = useDesktopStore(s => s.availablePlugins);
   const deployPlugin = useDesktopStore(s => s.deployPlugin);
@@ -41,28 +57,20 @@ export function Dock() {
   const canvasPan = useDesktopStore(s => s.canvasPan);
   const canvasZoom = useDesktopStore(s => s.canvasZoom);
   const navigateToWindow = useDesktopStore(s => s.navigateToWindow);
-  const settings = useDesktopStore(s => s.settings);
-  const updateSettings = useDesktopStore(s => s.updateSettings);
-  const focusAttachable = useDesktopStore(s => s.focusAttachable);
-  const selectedAttachableId = useDesktopStore(s => s.selectedAttachableId);
-  const setSelectedAttachableId = useDesktopStore(s => s.setSelectedAttachableId);
   const mentalMode = useDesktopStore(s => s.mentalMode);
   const setMentalMode = useDesktopStore(s => s.setMentalMode);
-  const mentalTool = useDesktopStore(s => s.mentalTool);
   const setMentalTool = useDesktopStore(s => s.setMentalTool);
   const setHudWidgetVisible = useDesktopStore(s => s.setHudWidgetVisible);
 
-  // Drag-out state for spawning windows at drop position
-  const [dragItem, setDragItem] = useState<string | null>(null);
-  const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
-  const [draggedOut, setDraggedOut] = useState(false);
+  // Local hover state — kept only for the attachables strip + Settings
+  // button below (plain hand-rolled buttons in `children`). The dockItems-
+  // derived items no longer need it: the engine tracks its own hover state
+  // internally and drives `renderTooltip` from it.
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [attachableOffset, setAttachableOffset] = useState(0);
   const [attachDragItem, setAttachDragItem] = useState<{ id: string; category: string; name: string } | null>(null);
   const [attachDragPos, setAttachDragPos] = useState({ x: 0, y: 0 });
   const [attachDraggedOut, setAttachDraggedOut] = useState(false);
-  const [mentalMenuOpen, setMentalMenuOpen] = useState(false);
-  const dockRef = useRef<HTMLDivElement>(null);
   const startPos = useRef({ x: 0, y: 0 });
 
   const projectName = projectPath?.split('/').pop() ?? 'project';
@@ -108,7 +116,9 @@ export function Dock() {
     requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('fluxor:focus-auto-chat')));
   }, [setHudWidgetVisible]);
 
-  const handleClick = useCallback((item: typeof dockItems[0]) => {
+  // ─── Item select (click) — unchanged 1:1 from the pre-engine handleClick,
+  // just invoked via each item's `onSelect` instead of a DOM onClick. ─────
+  const handleClick = (item: typeof dockItems[0]) => {
     if (item.type === 'action') {
       switch (item.action) {
         case 'new-chat': {
@@ -221,84 +231,135 @@ export function Dock() {
       });
       requestAnimationFrame(() => navigateToWindow(winId));
     }
-  }, [dockItems, addWindow, setShowMarketplace, revealAutoChat, installedPlugins, windows, focusWindow, projectName, navigateToWindow, setMentalMode]);
+  };
 
-  // ─── Drag-out handling (like LegallyOS) ────────────────────
-
-  const onDragStart = useCallback((e: React.MouseEvent, itemId: string) => {
-    e.preventDefault();
-    setDragItem(itemId);
-    startPos.current = { x: e.clientX, y: e.clientY };
-    setDragPos({ x: 0, y: 0 });
-    setDraggedOut(false);
-
-    const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - startPos.current.x;
-      const dy = ev.clientY - startPos.current.y;
-      setDragPos({ x: dx, y: dy });
-      // Check if dragged outside dock zone
-      const dockRect = dockRef.current?.getBoundingClientRect();
-      if (dockRect) {
-        const out = ev.clientY < dockRect.top - 20;
-        setDraggedOut(out);
+  // ─── Drag-out (release above the dock) — unchanged 1:1 from the
+  // pre-engine onUp switch, invoked via the engine's onDragOut. ──────────
+  const handleDragOut = (spec: DockItemSpec, screenPos: { x: number; y: number }) => {
+    const item = dockItems.find(d => d.id === spec.id);
+    if (!item) return;
+    const dropX = screenPos.x - 240;
+    const dropY = screenPos.y - 30;
+    if (item.type === 'action' && item.action === 'new-chat') {
+      // Auto-Chat is a fixed HUD panel, not a spawnable window — the
+      // drop position is intentionally not honored (see revealAutoChat).
+      revealAutoChat();
+    } else if (item.type === 'action' && item.action === 'file-explorer') {
+      addWindow('file-explorer', {
+        title: projectName,
+        iconName: 'FileText',
+        size: { width: 400, height: 560 },
+        position: { x: dropX, y: dropY },
+      });
+    } else if (item.type === 'action' && item.action === 'backlog') {
+      addWindow('backlog', {
+        title: 'Backlog',
+        iconName: 'KanbanSquare',
+        size: { width: 720, height: 480 },
+        position: { x: dropX, y: dropY },
+      });
+    } else if (item.type === 'plugin' && item.pluginId) {
+      const plugin = installedPlugins.find(p => p.id === item.pluginId);
+      if (plugin) {
+        addWindow('plugin', {
+          title: plugin.name,
+          iconName: plugin.iconName,
+          pluginId: plugin.id,
+          position: { x: dropX, y: dropY },
+        });
       }
+    }
+    // marketplace / prompt-dev-zone / new-step / new-flow: no-op on drag-out
+    // (dragOutSpawn is still on for them, matching today — they just don't
+    // spawn anything when released above the dock).
+  };
+
+  // ─── Main dock item specs, handed to the engine's <Dock> ─────────────
+  const items: DockItemSpec[] = dockItems.map(item => {
+    const isMentalToggle = item.type === 'action' && item.action === 'mental-draw-toggle';
+    const isPluginOpen = item.type === 'plugin' && windows.some(w => w.pluginId === item.pluginId);
+    const isToggleActive = isMentalToggle && mentalMode !== 'off';
+    const showDot = isPluginOpen || isToggleActive;
+
+    const spec: DockItemSpec = {
+      id: item.id,
+      label: item.label,
+      testId: item.action ? `dock-${item.action}` : `dock-plugin-${item.pluginId}`,
+      className: `dock-item${isToggleActive ? ' dock-item-active' : ''}`,
+      icon: (
+        <>
+          <LucideIcon name={item.iconName} size={20} className="dock-icon" />
+          {showDot && <div className="dock-active-dot" aria-hidden="true" />}
+        </>
+      ),
+      onSelect: () => handleClick(item),
+      ariaCurrent: isPluginOpen ? true : undefined,
+      // Every item is drag-out-spawnable except the mental toggle (today it
+      // isn't draggable at all — see handleDragOut for what each spawns).
+      dragOutSpawn: !isMentalToggle,
     };
 
-    const onUp = (ev: MouseEvent) => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+    if (isMentalToggle) {
+      // Sole source of aria-pressed, exactly as before.
+      spec.isActive = () => mentalMode !== 'off';
+      spec.popoverOpenOn = 'hover';
+      spec.popoverClassName = 'dock-mental-menu';
+      spec.popoverAriaLabel = 'Mental tools';
+      spec.popover = (controls: DockPopoverControls) => {
+        const handleMentalModeSelect = (mode: MentalMode) => {
+          setMentalMode(mode);
+          controls.close();
+        };
+        // No tool picker in the popover UI (legacy from before Select/
+        // Ramification were removed) — kept unused, same as before the
+        // engine adoption, for parity with the store's setMentalTool surface.
+        const handleMentalToolSelect = (tool: MentalTool) => {
+          setMentalTool(tool);
+          controls.close();
+        };
+        return (
+          <div className="dock-mental-mode-options" role="none">
+            {(['square'] as const).map((shape) => {
+              const iconMap: Record<MentalShape, string> = {
+                square: 'Square',
+                circle: 'Circle',
+                triangle: 'Triangle',
+              };
+              const labelMap: Record<MentalShape, string> = {
+                square: 'Square',
+                circle: 'Circle',
+                triangle: 'Triangle',
+              };
+              return (
+                <div
+                  key={shape}
+                  className={`dock-mental-icon-option${mentalMode === shape ? ' active' : ''}`}
+                  role="menuitemradio"
+                  aria-checked={mentalMode === shape}
+                  aria-label={`${labelMap[shape]} shape`}
+                  tabIndex={0}
+                  onClick={() => handleMentalModeSelect(shape)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleMentalModeSelect(shape);
+                    }
+                  }}
+                >
+                  <LucideIcon name={iconMap[shape]} size={20} className="dock-icon" />
+                  <div className="dock-tooltip dock-mental-option-tooltip" role="tooltip">{labelMap[shape]}</div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      };
+    }
 
-      const dockRect = dockRef.current?.getBoundingClientRect();
-      const isOut = dockRect ? ev.clientY < dockRect.top - 20 : false;
+    return spec;
+  });
 
-      if (isOut) {
-        // Spawn window at drop position
-        const item = dockItems.find(d => d.id === itemId);
-        if (item) {
-          const dropX = ev.clientX - 240;
-          const dropY = ev.clientY - 30;
-          if (item.type === 'action' && item.action === 'new-chat') {
-            // Auto-Chat is a fixed HUD panel, not a spawnable window — the
-            // drop position is intentionally not honored (see revealAutoChat).
-            revealAutoChat();
-          } else if (item.type === 'action' && item.action === 'file-explorer') {
-            addWindow('file-explorer', {
-              title: projectName,
-              iconName: 'FileText',
-              size: { width: 400, height: 560 },
-              position: { x: dropX, y: dropY },
-            });
-          } else if (item.type === 'action' && item.action === 'backlog') {
-            addWindow('backlog', {
-              title: 'Backlog',
-              iconName: 'KanbanSquare',
-              size: { width: 720, height: 480 },
-              position: { x: dropX, y: dropY },
-            });
-          } else if (item.type === 'plugin' && item.pluginId) {
-            const plugin = installedPlugins.find(p => p.id === item.pluginId);
-            if (plugin) {
-              addWindow('plugin', {
-                title: plugin.name,
-                iconName: plugin.iconName,
-                pluginId: plugin.id,
-                position: { x: dropX, y: dropY },
-              });
-            }
-          }
-        }
-      }
-
-      setDragItem(null);
-      setDragPos({ x: 0, y: 0 });
-      setDraggedOut(false);
-    };
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, [dockItems, addWindow, installedPlugins, projectName, revealAutoChat]);
-
-  // ─── Attachable drag-to-desktop ────────────────────────────
+  // ─── Attachable drag-to-desktop (unchanged) ────────────────────────
   const onAttachDragStart = useCallback((e: React.MouseEvent, plugin: { id: string; category: string; name: string; iconName: string }) => {
     e.preventDefault();
     const attachStartPos = { x: e.clientX, y: e.clientY };
@@ -308,7 +369,7 @@ export function Dock() {
 
     const onMove = (ev: MouseEvent) => {
       setAttachDragPos({ x: ev.clientX - attachStartPos.x, y: ev.clientY - attachStartPos.y });
-      const dockRect = dockRef.current?.getBoundingClientRect();
+      const dockRect = getDockRect();
       if (dockRect) setAttachDraggedOut(ev.clientY < dockRect.top - 20);
     };
 
@@ -316,7 +377,7 @@ export function Dock() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
 
-      const dockRect = dockRef.current?.getBoundingClientRect();
+      const dockRect = getDockRect();
       const isOut = dockRect ? ev.clientY < dockRect.top - 20 : false;
 
       if (isOut) {
@@ -349,127 +410,15 @@ export function Dock() {
 
   return (
     <>
-      {/* Drag ghost element */}
-      {dragItem && draggedOut && (
-        <div
-          className="dock-drag-ghost"
-          style={{
-            position: 'fixed',
-            left: startPos.current.x + dragPos.x - 22,
-            top: startPos.current.y + dragPos.y - 22,
-            pointerEvents: 'none',
-            zIndex: 9999,
-          }}
-        >
-          <LucideIcon
-            name={dockItems.find(d => d.id === dragItem)?.iconName ?? 'Blocks'}
-            size={28}
-            className="text-white"
-          />
-        </div>
-      )}
-
-      <div ref={dockRef} className="fluxor-dock" data-testid="dock" role="toolbar" aria-label="Application dock">
-        {/* Action items + tool plugins */}
-        {dockItems.map(item => {
-          const isDragging = dragItem === item.id;
-          const isMentalToggle = item.type === 'action' && item.action === 'mental-draw-toggle';
-          const isToggleActive = isMentalToggle && mentalMode !== 'off';
-          const showMentalMenu = isMentalToggle && mentalMenuOpen && !isDragging;
-
-          const handleMentalModeSelect = (mode: MentalMode) => {
-            setMentalMode(mode);
-            setMentalMenuOpen(false);
-          };
-
-          const handleMentalToolSelect = (tool: MentalTool) => {
-            setMentalTool(tool);
-            setMentalMenuOpen(false);
-          };
-
-          return (
-            <button
-              key={item.id}
-              className={`dock-item${isToggleActive ? ' dock-item-active' : ''}`}
-              aria-label={item.label}
-              aria-pressed={isMentalToggle ? mentalMode !== 'off' : undefined}
-              aria-current={item.type === 'plugin' && windows.some(w => w.pluginId === item.pluginId) ? 'true' : undefined}
-              onClick={() => !isDragging && handleClick(item)}
-              onMouseDown={isMentalToggle ? undefined : (e) => onDragStart(e, item.id)}
-              onMouseEnter={() => setHoveredItem(item.id)}
-              onMouseLeave={() => {
-                if (!isMentalToggle) setHoveredItem(null);
-              }}
-              onPointerEnter={isMentalToggle ? () => {
-                setHoveredItem(item.id);
-                setMentalMenuOpen(true);
-              } : undefined}
-              onPointerLeave={isMentalToggle ? () => {
-                setHoveredItem(null);
-                setMentalMenuOpen(false);
-              } : undefined}
-              data-testid={item.action ? `dock-${item.action}` : `dock-plugin-${item.pluginId}`}
-              style={{
-                opacity: isDragging && draggedOut ? 0.3 : 1,
-                transform: isDragging && !draggedOut ? `translate(${dragPos.x}px, ${dragPos.y}px)` : undefined,
-              }}
-            >
-              <LucideIcon name={item.iconName} size={20} className="dock-icon" />
-              {hoveredItem === item.id && !isDragging && (!isMentalToggle || !showMentalMenu) && (
-                <div className="dock-tooltip" role="tooltip">{item.label}</div>
-              )}
-              {showMentalMenu && (
-                <DockPopover
-                  className="dock-mental-menu"
-                  ariaLabel="Mental tools"
-                  onPointerDownOutside={() => setMentalMenuOpen(false)}
-                  onEscape={() => setMentalMenuOpen(false)}
-                >
-                  <div className="dock-mental-mode-options" role="none">
-                    {(['square'] as const).map((shape) => {
-                      const iconMap: Record<MentalShape, string> = {
-                        square: 'Square',
-                        circle: 'Circle',
-                        triangle: 'Triangle',
-                      };
-                      const labelMap: Record<MentalShape, string> = {
-                        square: 'Square',
-                        circle: 'Circle',
-                        triangle: 'Triangle',
-                      };
-                      return (
-                        <div
-                          key={shape}
-                          className={`dock-mental-icon-option${mentalMode === shape ? ' active' : ''}`}
-                          role="menuitemradio"
-                          aria-checked={mentalMode === shape}
-                          aria-label={`${labelMap[shape]} shape`}
-                          tabIndex={0}
-                          onClick={() => handleMentalModeSelect(shape)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              handleMentalModeSelect(shape);
-                            }
-                          }}
-                        >
-                          <LucideIcon name={iconMap[shape]} size={20} className="dock-icon" />
-                          <div className="dock-tooltip dock-mental-option-tooltip" role="tooltip">{labelMap[shape]}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </DockPopover>
-              )}
-              {/* Active indicator for plugin windows */}
-              {item.type === 'plugin' && windows.some(w => w.pluginId === item.pluginId) && (
-                <div className="dock-active-dot" aria-hidden="true" />
-              )}
-              {isToggleActive && <div className="dock-active-dot" aria-hidden="true" />}
-            </button>
-          );
-        })}
-
+      <DabaDock
+        items={items}
+        onDragOut={handleDragOut}
+        className="fluxor-dock"
+        testId="dock"
+        ariaLabel="Application dock"
+        renderTooltip={(item) => <div className="dock-tooltip" role="tooltip">{item.label}</div>}
+        dragOutTrigger={({ clientY, dockRect }) => clientY < dockRect.top - 20}
+      >
         {/* Pipe separator + attachable items (macOS-style, infinite scroll) */}
         {attachableItems.length > 0 && (
           <div className="dock-attachables-section" data-testid="attachables-dock">
@@ -537,9 +486,10 @@ export function Dock() {
             <div className="dock-tooltip" role="tooltip">Settings</div>
           )}
         </button>
-      </div>
+      </DabaDock>
 
-      {/* Attachable drag ghost */}
+      {/* Attachable drag ghost — own ghost, unchanged. The engine's ghost
+          (.daba-dock__ghost) only covers `items`, not this `children` strip. */}
       {attachDragItem && attachDraggedOut && (
         <div
           className="dock-drag-ghost"

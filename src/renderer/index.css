@@ -1518,6 +1518,24 @@ body {
   flex-shrink: 0;
   color: #3d3d3d;
 }
+/* The engine's `.daba-dock__item[aria-pressed='true']` (class + attribute =
+   same specificity as two classes, 0-2-0) would otherwise beat this file's
+   plain `.dock-item-active` (0-1-0, below) for background/color whenever the
+   mental toggle is active — worse, its --daba-accent/--daba-accent-contrast
+   tokens aren't mapped in this app's :root (only the tokens the
+   already-adopted ContextMenu/HUD chrome needs are), so unfixed it would
+   compute to invalid-at-computed-value-time (background→transparent,
+   color→inherited), not just "a different purple". Match the engine
+   selector's specificity here so Fluxor's active look keeps winning.
+   Placed BEFORE .dock-item:hover so hovering an active item still shows the
+   hover look first — unchanged from before the engine adoption, where
+   :hover's own 0-2-0 already beat .dock-item-active's 0-1-0 outright. */
+.dock-item.dock-item-active {
+  background: rgba(109, 40, 217, 0.14);
+  border-color: rgba(109, 40, 217, 0.38);
+  box-shadow: 0 1px 8px rgba(109, 40, 217, 0.2);
+  color: #4c1d95;
+}
 .dock-item:hover {
   background: rgba(0, 0, 0, 0.09);
   border-color: rgba(0, 0, 0, 0.12);
@@ -1615,12 +1633,35 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.95);
 }
 
+/* The engine's popover wrapper only carries "daba-dock-popover" (its own
+   shell, mapped to this app's DARK --daba-chrome-* tokens) — not this file's
+   own .dock-popover-shell, which MentalNode.tsx's picker (still on Fluxor's
+   own <DockPopover>) keeps using. So this rule now also owns the mental
+   menu's card look, duplicated from .dock-popover-shell (above) rather than
+   inheriting it, to keep its distinct light card look (equal 0-1-0
+   specificity to .daba-dock-popover, wins on source order — this file loads
+   after engine.css). Declaration order matters here: `padding` before
+   `padding-bottom` reproduces the original .dock-popover-shell + .dock-
+   mental-menu combo (7px all round, 12px on the bottom) exactly. */
 .dock-mental-menu {
   position: absolute;
   bottom: calc(100% + 10px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 210;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px;
+  border-radius: 12px;
+  background: rgba(249, 249, 251, 0.96);
+  border: 1px solid rgba(0, 0, 0, 0.11);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
   padding-bottom: 12px;
 }
 
@@ -1704,6 +1745,44 @@ body {
   height: 48px;
   color: var(--cli-accent, #555);
   opacity: 0.9;
+}
+
+/* Engine-rendered drag-out ghost for the main dock items (the attachables
+   strip above still renders its own .dock-drag-ghost, untouched). The
+   engine positions this at the raw cursor coordinates with no offset, and
+   reuses the item's `icon` node as-is — there's no separate "ghost icon" in
+   its DockItemSpec contract, so this is the same LucideIcon (size 20,
+   .dock-icon) the live button renders, not a dedicated size-28 one. This
+   rule reproduces .dock-drag-ghost's card look (same declarations,
+   duplicated rather than shared — the engine hardcodes "daba-dock__ghost"
+   with no className passthrough, so there's no class to hang a shared rule
+   off), restores the -22px cursor offset the old dedicated ghost got from
+   its inline style, and bumps the reused icon back up to that ghost's
+   original 28px. Color is explicit white (not .dock-drag-ghost's own
+   var(--cli-accent, #555)) to match what this specific ghost actually
+   rendered before — its LucideIcon carried an extra "text-white" utility
+   class that only existed on that call site, not in .dock-drag-ghost's own
+   rule (the attachable ghost below never had it, hence the two ghosts'
+   different icon color even before this change). */
+.daba-dock__ghost {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--cli-accent-rgb), 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  color: #fff;
+  opacity: 0.9;
+  z-index: 9999;
+  transform: translate(-22px, -22px);
+}
+.daba-dock__ghost svg {
+  width: 28px;
+  height: 28px;
 }
 
 /* Dock separator */
