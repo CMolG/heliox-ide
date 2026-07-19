@@ -381,11 +381,27 @@ interface DesktopStore {
   cliProvider: CliProvider;
   setCliProvider: (p: CliProvider) => void;
 
-  // Canvas pan + zoom
+  // Canvas pan + zoom — canvasPan/canvasZoom are a mirror of the daba-engine
+  // camera (src/renderer/store/engine-bridge.ts): setCanvasPan/setCanvasZoom
+  // delegate to the engine (which clamps/normalizes and echoes back into
+  // these fields), so every existing READ call-site keeps working untouched.
   canvasPan: CanvasPan;
   setCanvasPan: (pan: CanvasPan) => void;
   canvasZoom: number;
   setCanvasZoom: (zoom: number) => void;
+  /**
+   * Internal seam patched by engine-bridge.ts (undefined until that module
+   * loads — a no-op via the `?.()` call sites below). desktop-store.ts must
+   * NOT import engine-bridge.ts directly: engine-bridge.ts needs
+   * `useDesktopStore.getState()` synchronously at its own module-eval time
+   * to hydrate the engine's initial camera, so a static import in the other
+   * direction would deadlock on load (same class of cycle this file already
+   * avoids with harness-store — see the comment above `switchBoard`).
+   * switchBoard/deleteBoard change canvasPan/canvasZoom via a raw `set()`
+   * (the active-slice board-snapshot swap) and call this afterward so the
+   * incoming board's camera reaches the engine too, not just this mirror.
+   */
+  _pushCameraToEngine?: () => void;
   /** xyflow authoring gate — 'off' = read-only; otherwise the default shape for new nodes. */
   mentalMode: MentalMode;
   setMentalMode: (mode: MentalMode) => void;
@@ -1617,6 +1633,10 @@ export const useDesktopStore = create<DesktopStore>()(
             mentalZ: {},
           };
         });
+        // Push the ENTERING board's camera (just written above) to the
+        // engine — the bridge's own onChange reflects it back into this
+        // mirror, so both end up consistent with the new active board.
+        get()._pushCameraToEngine?.();
       },
 
       renameBoard: (id, name) => {
@@ -1660,8 +1680,17 @@ export const useDesktopStore = create<DesktopStore>()(
             mentalZ: {},
           };
         });
+        // Only this branch (deleting the ACTIVE board) changes canvasPan/
+        // canvasZoom — the `id !== state.activeBoardId` branch above already
+        // returned, so it never reaches here (it must NOT push: it never
+        // touches the active camera). Same reasoning as switchBoard above.
+        get()._pushCameraToEngine?.();
       },
 
+      // duplicateBoard intentionally does NOT push to the engine: it never
+      // changes activeBoardId/canvasPan/canvasZoom — it only clones a
+      // snapshot into a NEW, inactive board entry (see sourceSnapshot below,
+      // read-only against the active slice when id === activeBoardId).
       duplicateBoard: (id) => {
         const state = get();
         const orig = state.boards.find((b) => b.id === id);
@@ -2290,7 +2319,13 @@ export const useDesktopStore = create<DesktopStore>()(
         const zoom = state.canvasZoom;
         const centerX = -(win.position.x * zoom) + (vpW / 2) - (win.size.width * zoom / 2);
         const centerY = -(win.position.y * zoom) + (vpH / 2) - (win.size.height * zoom / 2);
-        set({ canvasPan: { x: centerX, y: centerY } });
+        // Was a raw set({canvasPan:...}) — bypassed setCanvasPan entirely,
+        // which would have silently desynced canvasPan (this mirror) from
+        // the engine's actual camera post-Task-12 (found while auditing every
+        // canvasPan/canvasZoom write site for the bridge; not one of the
+        // call-sites the scout/decisions docs named — see final report).
+        // Routing through the action keeps this a single delegation point.
+        get().setCanvasPan({ x: centerX, y: centerY });
       },
 
       // Project picker

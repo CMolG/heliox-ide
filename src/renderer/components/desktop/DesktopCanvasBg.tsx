@@ -44,7 +44,18 @@ export function DesktopCanvasBg() {
         width: '100%',
         height: '100%',
         pointerEvents: 'none',
-        zIndex: 0,
+        // Task 12 (daba-engine adoption): was 0, painted BEHIND the old
+        // pan-layer purely by DOM order (this used to be its preceding
+        // sibling). SeamlessCanvas.tsx now renders this inside <DabaCanvas>'s
+        // `overlay` slot, which always paints AFTER the pan-layer in the DOM
+        // — and `.daba-pan-layer` carries no z-index of its own (auto), so a
+        // 0 here would now tie-break by DOM order and paint IN FRONT of the
+        // pan-layer's contents (window-connections/attachables) instead of
+        // behind them. A negative value paints behind BOTH non-positioned
+        // content and any z-index:auto/0 positioned content regardless of
+        // DOM order (CSS 2.1 Appendix E, step 2 vs. step 6), restoring the
+        // original stacking exactly.
+        zIndex: -1,
       }}
     />
   );

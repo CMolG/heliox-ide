@@ -885,7 +885,14 @@ body {
    all window text on the pixel grid for native subpixel anti-aliasing.
    scale() is added by JS only when canvasZoom !== 1.
    will-change: transform is set only during active pan/zoom so the GPU
-   compositing layer is not promoted at rest — text stays crisp at 100%. */
+   compositing layer is not promoted at rest — text stays crisp at 100%.
+   Task 12 (daba-engine adoption): this div is now rendered by <DabaCanvas>
+   itself (panLayerClassName="desktop-pan-layer" adds this class to the
+   motor's own .daba-pan-layer) — SeamlessCanvas.tsx no longer owns this
+   element directly, so `data-zooming` (still SeamlessCanvas's own state,
+   driven by its ctrl/cmd+wheel handler) can only be attached to the ROOT
+   (.desktop-canvas, via DabaCanvas's rootProps), not to this div — hence the
+   descendant selector below instead of the old compound one. */
 .desktop-pan-layer {
   position: absolute;
   inset: 0;
@@ -893,7 +900,7 @@ body {
   will-change: auto;
 }
 .desktop-canvas[data-panning="true"] .desktop-pan-layer,
-.desktop-pan-layer[data-zooming] {
+.desktop-canvas[data-zooming] .desktop-pan-layer {
   will-change: transform;
 }
 
