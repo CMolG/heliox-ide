@@ -18,10 +18,26 @@
  * import from it, so there's no runtime module to stand in for.
  */
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EngineProvider, createEngineStore } from '@javadaba/daba-engine';
 import type { AgenticExecutionStatus } from '@/types/harness';
 import type { ModelPolicy } from '@/types/ipc-events';
+
+// Task 13 (adoption plan #20), Fase 2: FrameNode now reads
+// `engine.hoveredItemId` (unified highlight — see FrameNode.tsx's own
+// doc-comment) via the motor's `useHoveredItem()`, which throws outside an
+// `<EngineProvider>`. Shadowing testing-library's `render` with a thin
+// wrapper (rather than touching every one of this file's ~16 `render(<...
+// />)` call sites individually) gives every existing call site a fresh,
+// throwaway engine store for free — this file only renders FrameNode in
+// isolation and never asserts on engine/hover state, so a real
+// `engine-bridge.ts` singleton (which needs a WORKING `useDesktopStore
+// .getState()`, unlike this file's simplified selector-only mock) isn't
+// needed here, just something that satisfies the Provider contract.
+function render(ui: React.ReactElement) {
+  return rtlRender(<EngineProvider store={createEngineStore()}>{ui}</EngineProvider>);
+}
 
 const mockDesktop = vi.hoisted(() => ({
   mentalNodes: [] as unknown[],
@@ -451,5 +467,34 @@ describe('FrameNode — no connection handles', () => {
       expect(el.getAttribute('class') ?? '').not.toMatch(/handle/i);
       expect(el.getAttribute('data-testid') ?? '').not.toMatch(/handle/i);
     }
+  });
+});
+
+// ── Task 13 (adoption plan #20), Fase 2: unified highlight ─────────────────
+// Same mechanism as StepNode.tsx's identical wiring — see
+// StepNode.test.tsx's "Task 13 unified highlight" describe block for the
+// full rationale. Uses a direct EngineProvider mount (not this file's
+// shared `render()` wrapper, which always creates a fresh, empty store) so
+// `hoveredItemId` can be pre-set.
+
+describe('FrameNode — Task 13 unified highlight', () => {
+  it('sets data-daba-highlighted="true" when engine.hoveredItemId matches this frame', () => {
+    const store = createEngineStore({ initialState: { hoveredItemId: 'flow:f-hl' } });
+    rtlRender(
+      <EngineProvider store={store}>
+        <FrameNode {...makeProps('f-hl')} />
+      </EngineProvider>,
+    );
+    expect(screen.getByTestId('pipeline-frame-f-hl')).toHaveAttribute('data-daba-highlighted', 'true');
+  });
+
+  it('omits the attribute when a DIFFERENT item is hovered', () => {
+    const store = createEngineStore({ initialState: { hoveredItemId: 'step:some-step' } });
+    rtlRender(
+      <EngineProvider store={store}>
+        <FrameNode {...makeProps('f-hl2')} />
+      </EngineProvider>,
+    );
+    expect(screen.getByTestId('pipeline-frame-f-hl2')).not.toHaveAttribute('data-daba-highlighted');
   });
 });

@@ -54,6 +54,26 @@
   --daba-chrome-surface: rgba(26, 26, 26, 0.95);
   --daba-chrome-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
   --daba-z-menu: 10001;
+  /* Task 13 (adoption plan #20), Fase 2, Q7: ComponentsPanel's row
+     highlight (`.daba-components-panel__row[data-daba-highlighted]`) and
+     any other --daba-accent/--daba-highlight consumer now map onto Fluxor's
+     existing selection-ring blue (#4285F4, already hardcoded throughout
+     index.css for window active/highlighted states — see
+     `.desktop-window-shell[data-highlighted]` etc. below) instead of the
+     motor's cyan/indigo defaults. --daba-marquee-fill/border mirror the
+     EXACT rgba(66,133,244,…) values `.selection-rect` already uses, so if
+     the motor's own (currently-unused-by-Fluxor) marquee overlay is ever
+     adopted later it inherits the same blue with zero extra mapping.
+     --daba-guide-color and --cli-accent-rgb are DELIBERATELY untouched —
+     alignment guides are not migrated onto the motor this task (Q5), and
+     unifying the three separate "accent" color systems is out of scope
+     (flagged for the human in this task's report, not fixed here). */
+  --daba-accent: #4285F4;
+  --daba-highlight: #4285F4;
+  --daba-accent-contrast: #ffffff;
+  --daba-radius-lg: 12px;
+  --daba-marquee-fill: rgba(66, 133, 244, 0.08);
+  --daba-marquee-border: rgba(66, 133, 244, 0.6);
 }
 
 * {
@@ -1927,6 +1947,18 @@ body {
   overflow: visible;
 }
 
+/* Task 13 (adoption plan #20), Fase 2: unified highlight — see the
+   equivalent `.step-node-shell[data-daba-highlighted]` rule's comment
+   (index.css:2681 block) for the full mechanism; MentalNode reads
+   `engine.hoveredItemId` the same way, comparing against `mental:<id>`.
+   Mental cards have no pre-existing :hover outline of their own to layer
+   against (unlike step/frame nodes), so this is the first outline state
+   this class gains. */
+.mental-card[data-daba-highlighted="true"] {
+  outline: 2px solid var(--daba-highlight);
+  outline-offset: -2px;
+}
+
 .mental-card-color-chip {
   position: absolute;
   top: -8px;
@@ -2297,6 +2329,19 @@ body {
 .react-flow__node.selected .pipeline-frame-node {
   border-color: #4285F4;
   border-style: solid;
+}
+
+/* Task 13 (adoption plan #20), Fase 2: unified highlight — see the
+   equivalent `.step-node-shell[data-daba-highlighted]` rule's comment
+   above (index.css:2681 block) for the full mechanism; FrameNode reads
+   `engine.hoveredItemId` the same way, comparing against `flow:<id>`. An
+   outline (not border-color, unlike :hover above) so it layers cleanly
+   without fighting the dashed/solid hover state — same non-fighting
+   rationale `.step-node-shell`'s own comment gives for using outline over
+   border-color. */
+.pipeline-frame-node[data-daba-highlighted="true"] {
+  outline: 2px solid var(--daba-highlight);
+  outline-offset: -2px;
 }
 
 .pipeline-frame-title {
@@ -2709,6 +2754,21 @@ body {
 .step-node-shell:focus-within,
 .react-flow__node.selected .step-node-shell {
   outline: 2px solid #4285F4;
+  outline-offset: -2px;
+}
+
+/* Task 13 (adoption plan #20), Fase 2: unified highlight — hovering this
+   step's row in the Components panel (NodeTree) sets `engine.hoveredItemId`
+   to `step:<id>`; StepNode reads it directly (mounted inside the canvas's
+   own <EngineProvider>, see SeamlessCanvas.tsx) and sets this data attribute
+   itself, no store round-trip needed (unlike windows — see
+   engine-bridge.ts's hover-mirror doc-comment for why those DO need one).
+   Same outline treatment as :hover above, `var(--daba-highlight)` instead of
+   the hardcoded hex so it stays in lockstep with ComponentsPanel's OWN row
+   highlight (`.daba-components-panel__row[data-daba-highlighted]`), both
+   mapped to Fluxor's blue in :root (Q7). */
+.step-node-shell[data-daba-highlighted="true"] {
+  outline: 2px solid var(--daba-highlight);
   outline-offset: -2px;
 }
 
@@ -4385,7 +4445,7 @@ body {
    omits the color transition/hover (background-only change), so folding it
    into this rule would alter its computed style. */
 .expand-sidebar-btn,
-.expand-inspector-btn {
+.inspector-side-toolbar.daba-side-toolbar__expand {
   position: fixed;
   width: 36px;
   height: 36px;
@@ -4410,10 +4470,19 @@ body {
    margin = 65px. The button's footprint (right: 20px, 36×36 → x:[w-56,w-20],
    y:[65,101]) is fully contained by hud-widget-policy.ts's SAFE_ZONE, which is sized
    72×120 precisely to reserve this corner from HUD widgets — keep this
-   button's position and SAFE_ZONE's dimensions in sync. */
-.expand-inspector-btn { top: 65px; right: 20px; }
+   button's position and SAFE_ZONE's dimensions in sync.
+   Task 13 (adoption plan #20), Fase 2: ExpandInspectorButton.tsx (a
+   standalone sibling component) is deleted — InspectorPanel.tsx now mounts
+   `<SideToolbar className="inspector-side-toolbar" .../>`, whose OWN
+   collapsed-state button (`.daba-side-toolbar__expand`, motor-owned markup/
+   icon glyph, see engine.css) is targeted here by the COMBINED selector so
+   it keeps landing in this exact fixed corner regardless of its new parent
+   (`.fluxor-inspector`, which can be width:0 while collapsed — position:fixed
+   escapes that; see App.tsx's own comment on why opacity no longer
+   toggles there). */
+.inspector-side-toolbar.daba-side-toolbar__expand { top: 65px; right: 20px; }
 .expand-sidebar-btn:hover,
-.expand-inspector-btn:hover {
+.inspector-side-toolbar.daba-side-toolbar__expand:hover {
   background: #222;
   color: #e4e4e7;
 }

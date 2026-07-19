@@ -15,6 +15,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { Handle, Position } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
+import { useHoveredItem } from '@javadaba/daba-engine';
 import type { MarketMod, MarketRole } from '@/types/market';
 import type { StepNodeData } from '@/types/desktop';
 import { useDesktopStore } from '../../../store/desktop-store';
@@ -249,6 +250,14 @@ export const StepNode = React.memo(function StepNode({ id, data }: NodeProps) {
   const isTerminal = edgeFacts.outCount === 0;
   const connCount  = edgeFacts.inCount + edgeFacts.outCount;
 
+  // Task 13 (adoption plan #20), Fase 2: unified highlight — see
+  // MentalNode.tsx's identical wiring (and its doc-comment on why the
+  // `step:` prefix is inlined rather than imported from engine-bridge.ts)
+  // for the full mechanism; compares against `step:<id>`. See index.css's
+  // `.step-node-shell[data-daba-highlighted]` for the resulting outline.
+  const { hoveredItemId } = useHoveredItem();
+  const isHighlighted = hoveredItemId === `step:${id}`;
+
   // Note: incoming/outgoing id lists + loop-edge lookups used to live here
   // too, computed solely to hand a `connections` prop to a StepInfoModal
   // this node portaled directly. Phase 8 moved that modal behind the
@@ -267,6 +276,7 @@ export const StepNode = React.memo(function StepNode({ id, data }: NodeProps) {
       data-step-node-id={id}
       data-step-type={stepData.stepType ?? 'llm_call'}
       data-execution-status={executionStatus ?? 'idle'}
+      data-daba-highlighted={isHighlighted ? 'true' : undefined}
       aria-label={`Step node ${stepData.title}`}
       style={{ ['--step-accent' as string]: meta.accent }}
       onMouseEnter={handleMouseEnter}

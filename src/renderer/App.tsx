@@ -24,7 +24,6 @@ import { SeamlessCanvas } from './components/desktop/SeamlessCanvas';
 import { SideBar } from './components/SideBar';
 import { ExpandSideBarButton } from './components/ExpandSideBarButton';
 import { InspectorPanel } from './components/inspector/InspectorPanel';
-import { ExpandInspectorButton } from './components/ExpandInspectorButton';
 import { useFluxorStore } from './store';
 import { useDesktopStore } from './store/desktop-store';
 import { useHarnessStore, lastLogMessage } from './store/harness-store';
@@ -436,21 +435,34 @@ export function App() {
           <SeamlessCanvas />
         </ErrorBoundary>
       </main>
+      {/*
+        Task 13 (adoption plan #20), Fase 2: InspectorPanel is now built on
+        the motor's <SideToolbar>, which owns its OWN open/collapsed
+        rendering internally (see InspectorPanel.tsx) — collapsed, it
+        renders just a small `position: fixed` button (index.css's
+        `.inspector-side-toolbar.daba-side-toolbar__expand` override
+        reproduces the exact spot the deleted ExpandInspectorButton.tsx used
+        to occupy) that ESCAPES this container's width/overflow. That's why
+        `opacity` no longer toggles to 0 here (it used to, alongside
+        ExpandInspectorButton being a separate sibling) — an opacity:0
+        ancestor would hide a `position: fixed` descendant too, unlike
+        width:0 + overflow:hidden, which only clips normal-flow content.
+        `width` still toggles so the canvas reclaims the 300px when
+        collapsed, exactly as before. InspectorPanel is ALWAYS mounted now
+        (no more `{showInspector && ...}` gate) so its collapsed button has
+        somewhere to render from.
+      */}
       <div
         className="fluxor-inspector overflow-hidden transition-all duration-200"
         style={{
           width: showInspector ? '300px' : '0px',
           minWidth: showInspector ? '300px' : '0px',
-          opacity: showInspector ? 1 : 0,
         }}
       >
-        {showInspector && (
-          <ErrorBoundary fallbackLabel="Inspector">
-            <InspectorPanel />
-          </ErrorBoundary>
-        )}
+        <ErrorBoundary fallbackLabel="Inspector">
+          <InspectorPanel />
+        </ErrorBoundary>
       </div>
-      {!showInspector && <ExpandInspectorButton />}
       <ToastContainer />
       <SettingsModal />
       <HelpModal />

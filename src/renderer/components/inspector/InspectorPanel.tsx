@@ -33,13 +33,15 @@
  *   the specifics (esp. how `updateMentalNode`'s per-node reference
  *   stability during drags makes this possible).
  */
-import React, { useCallback } from 'react';
+import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { SideToolbar, EngineProvider } from '@javadaba/daba-engine';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { StepInspector } from './StepInspector';
 import { FlowInspector } from './FlowInspector';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
+import { engineStore } from '@/renderer/store/engine-bridge';
 import type { CanvasGraphNode, FrameGraphNode, MentalGraphNode, StepGraphNode } from '@/types/desktop';
 
 function isStepNode(node: CanvasGraphNode): node is StepGraphNode {
@@ -182,7 +184,6 @@ export function InspectorPanel() {
     }),
   );
 
-  const updateSettings = useDesktopStore((s) => s.updateSettings);
   const removeMentalNode = useDesktopStore((s) => s.removeMentalNode);
 
   // Single-step status only: read just the ONE selected step's status (a
@@ -195,8 +196,6 @@ export function InspectorPanel() {
   const singleNode = resolvedNodes.length === 1 ? resolvedNodes[0] : undefined;
   const selectedStepId = singleNode !== undefined && isStepNode(singleNode) ? singleNode.id : undefined;
   const stepStatus = useHarnessStore((s) => (selectedStepId !== undefined ? s.stepStatuses[selectedStepId] : undefined));
-
-  const collapse = useCallback(() => updateSettings({ showInspector: false }), [updateSettings]);
 
   let body: React.ReactNode;
   if (resolvedNodes.length === 0) {
@@ -228,25 +227,32 @@ export function InspectorPanel() {
     );
   }
 
+  // SideToolbar routes 0/1/N purely off `engine.selection` (a mirror of
+  // `selectedMentalNodeIds`, see engine-bridge.ts's syncEngineSelection) —
+  // by construction that count always agrees with `resolvedNodes.length`
+  // above (both derive from the exact same store fields, synchronously kept
+  // in lockstep), so all three render props simply return the SAME
+  // pre-computed `body` regardless of which one SideToolbar happens to call;
+  // the actual 0/1/N BODY selection stays entirely in the `resolvedNodes`-
+  // driven logic above, unchanged from before this task. Plain closure, not
+  // `useCallback` — `body` is a freshly-constructed element every render
+  // regardless, so there is no stable dependency to memoize against, and
+  // SideToolbar calls this synchronously during its own render rather than
+  // holding onto it, so referential stability buys nothing here.
+  const renderBody = () => body;
+
   return (
-    <div className="inspector-panel panel-border-l" data-testid="inspector-panel">
-      <div className="inspector-header">
-        <LucideIcon name="Settings" size={13} />
-        <span className="inspector-header-label">Inspector</span>
-        <button
-          type="button"
-          className="inspector-collapse-btn"
-          onClick={collapse}
-          title="Collapse inspector (⌘.)"
-          aria-label="Collapse inspector"
-          data-testid="inspector-collapse-btn"
-        >
-          <LucideIcon name="ChevronRight" size={16} />
-        </button>
-      </div>
-      <div className="inspector-body">
-        {body}
-      </div>
-    </div>
+    <EngineProvider store={engineStore}>
+      <SideToolbar
+        title="Inspector"
+        panelKey="sideToolbar"
+        className="inspector-panel panel-border-l inspector-side-toolbar"
+        collapseButtonTestId="inspector-collapse-btn"
+        expandButtonTestId="expand-inspector-btn"
+        renderEmpty={renderBody}
+        renderOne={renderBody}
+        renderMany={renderBody}
+      />
+    </EngineProvider>
   );
 }

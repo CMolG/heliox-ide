@@ -10,7 +10,7 @@
  * file deletes the old `logic/hud-grid.ts` and keeps ONLY what is genuinely
  * Fluxor-specific policy, expressed on top of the motor's primitives:
  *   - MIN_WIDGET_WIDTH/HEIGHT: which sizes make sense for these 3 widgets.
- *   - SAFE_ZONE: which corner the ExpandInspectorButton reserves.
+ *   - SAFE_ZONE: which corner InspectorPanel's collapsed button reserves.
  *   - The placement adapter: the motor's `safeZone` option CONFINES
  *     placement to within a rect (a positive placement area) — the OPPOSITE
  *     of what Fluxor needs (avoid one reserved corner, otherwise free
@@ -55,9 +55,12 @@ export function snapSizeToHudGrid(size: { width: number; height: number }): { wi
 }
 
 /**
- * Reserved top-right safe zone for a given viewport — reserved for the
- * collapsed-inspector expand button (ExpandInspectorButton.tsx), which docks
- * top-right. Widgets may never occupy this rect.
+ * Reserved top-right safe zone for a given viewport — reserved for
+ * InspectorPanel's collapsed button (formerly its own component,
+ * ExpandInspectorButton.tsx, deleted in Task 13 — adoption plan #20 —
+ * once its role moved to the motor's `<SideToolbar>` collapsed state, see
+ * index.css's `.inspector-side-toolbar.daba-side-toolbar__expand`), which
+ * docks top-right. Widgets may never occupy this rect.
  *  - WIDTH 72 (3 cells): the 36px button plus its 20px right margin fit in 72.
  *  - HEIGHT 120 (5 cells): the button's bottom edge is at 65+36=101px; 120 is
  *    the smallest grid-aligned height that clears it under the ~53px TopBar
