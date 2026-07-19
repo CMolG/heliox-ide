@@ -32,6 +32,8 @@ import type {
   Connection,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { resolveSnap, type GridSpec } from '@javadaba/daba-engine';
+import { engineStore } from '../../../store/engine-bridge';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';
 import { getConnectedComponent } from '../../../logic/mental-graph';
@@ -97,6 +99,43 @@ function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
  * drops the `onConnect` prop entirely and makes it otherwise unreachable
  * from a render-based test.
  */
+/**
+ * Task 13 (adoption plan #20) — snap-to-grid quantization for a mental-node
+ * drag COMMIT only. Unlike `DesktopWindow.tsx` (which defers ALL store
+ * writes to pointerup, mutating the DOM directly mid-drag), React Flow fires
+ * an `onNodesChange` position event on every intermediate frame too — this
+ * function must stay a no-op passthrough for those (quantizing every frame
+ * would fight the live drag / feel jittery), and only quantize the FINAL one.
+ * xyflow signals that with `dragging: false` on the change (`dragging: true`
+ * for every frame in between, `undefined` for a position change that didn't
+ * come from a user drag at all — e.g. programmatic moves — which must also
+ * pass through unchanged, so `dragging !== false` covers both).
+ *
+ * Fluxor has no alignment-guide system for mental nodes (only windows do,
+ * via `calculateSnapGuides` in desktop-store.ts) — task13-decisiones.md's
+ * "Alcance extra" note is explicit that none should be invented here, so
+ * there is no guide precedence to honor, just grid-enabled-or-not. `width`/
+ * `height` are irrelevant to `resolveSnap`'s grid branch (see
+ * `DesktopWindow.tsx`'s `resolveWindowDropPosition` doc-comment) so a dummy
+ * 0x0 rect is passed instead of looking up the node's own size.
+ *
+ * Pure/exported for golden-value testing without simulating a real React
+ * Flow drag (same idiom as `resolveConnectionEdgeType` below, and
+ * `DesktopWindow.tsx`'s `resolveWindowDropPosition`).
+ */
+export function resolveMentalNodeDragPosition(
+  position: { x: number; y: number },
+  dragging: boolean | undefined,
+  snapGrid: { enabled: boolean; spec: GridSpec },
+): { x: number; y: number } {
+  if (dragging !== false || !snapGrid.enabled) return position;
+  return resolveSnap(
+    { x: position.x, y: position.y, width: 0, height: 0 },
+    [],
+    { grid: snapGrid, guides: { enabled: false, threshold: 0 } },
+  ).pos;
+}
+
 export function resolveConnectionEdgeType(
   sourceId: string,
   targetId: string,
@@ -315,7 +354,8 @@ function MentalGraphCanvasInner({ viewportChildren }: MentalGraphCanvasInnerProp
   const onNodesChange: OnNodesChange = useCallback((changes: NodeChange[]) => {
     for (const change of changes) {
       if (change.type === 'position' && change.position) {
-        updateMentalNode(change.id, { position: change.position });
+        const position = resolveMentalNodeDragPosition(change.position, change.dragging, engineStore.getState().snap.grid);
+        updateMentalNode(change.id, { position });
       }
       if (change.type === 'dimensions' && change.dimensions) {
         updateMentalNode(change.id, {

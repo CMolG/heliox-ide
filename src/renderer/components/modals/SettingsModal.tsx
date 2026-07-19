@@ -273,6 +273,44 @@ export function SettingsModal() {
             onChange={(v) => updateDesktopSettings({ canvasClickAnimation: v })}
             testId="settings-toggle-click-anim"
           />
+          <ToggleSetting
+            label="Snap to grid"
+            description="Quantize window and mental-node drag drops to a fixed grid (alignment guides still take precedence)"
+            value={desktopSettings.snapToGrid === true}
+            onChange={(v) => updateDesktopSettings({ snapToGrid: v })}
+            testId="settings-toggle-snap-grid"
+          />
+          {desktopSettings.snapToGrid === true && (
+            <div className="settings-row" data-testid="settings-snap-grid-size">
+              <div className="settings-row-copy">
+                <span className="settings-toggle-label">Grid cell size</span>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[16, 24, 32].map((size) => {
+                  const active = (desktopSettings.snapGridCellSize ?? 24) === size;
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      className="settings-outline-btn"
+                      data-testid={`settings-snap-grid-cell-${size}`}
+                      aria-pressed={active}
+                      style={{
+                        fontSize: 11,
+                        padding: '4px 10px',
+                        borderColor: active ? '#111' : undefined,
+                        color: active ? '#111' : undefined,
+                        fontWeight: active ? 600 : undefined,
+                      }}
+                      onClick={() => updateDesktopSettings({ snapGridCellSize: size })}
+                    >
+                      {size}px
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="settings-divider" />

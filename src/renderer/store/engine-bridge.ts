@@ -47,10 +47,53 @@
 // CONSTRUCTED store object after both modules have finished loading —
 // indistinguishable, from any caller's perspective, from those actions
 // having been written this way inline in desktop-store.ts itself.
-import { createEngineStore, type EngineStore } from '@javadaba/daba-engine';
+import { createEngineStore, type EngineStore, type GridSpec } from '@javadaba/daba-engine';
 import { useDesktopStore } from './desktop-store';
 
 const initial = useDesktopStore.getState();
+
+/**
+ * Fluxor's OWN default `GridSpec` for snap-to-grid quantization of window /
+ * mental-node drags (Task 13, adoption plan #20) — deliberately NOT the
+ * motor's `DEFAULT_GRID_SPEC` (that one is `javadaba-web-os`'s DESKTOP-ICON
+ * grid: 131x101 cells, 18px gap, 24/44 padding — the wrong domain for
+ * arbitrary IDE windows/mental nodes; see task13-scout.md Gap S6 /
+ * task13-decisiones.md Q6). Square cell, no gap, no padding, origin at 0,0:
+ * a dragged item's raw top-left simply rounds to the nearest multiple of
+ * `cell` on both axes (`core/grid.ts`'s `pixelsToColRow`/`colRowToPixels`
+ * only read `padding`/`originY`/`cell.width+gap`/`cell.height+gap` — with
+ * gap=0 and padding=0 those reduce to a plain `cell`-px rounding grid).
+ */
+export function fluxorWindowGridSpec(cell: number): GridSpec {
+  return { cell: { width: cell, height: cell, gap: 0 }, padding: { x: 0, y: 0 }, originY: 0 };
+}
+
+/** `settings.snapGridCellSize`'s default when unset (preset UI: 16/24/32, see SettingsModal.tsx). */
+export const DEFAULT_SNAP_GRID_CELL_SIZE = 24;
+
+/**
+ * Pushes `desktop-store`'s `settings.snapToGrid`/`settings.snapGridCellSize`
+ * into the engine's `snap.grid` slice — a ONE-WAY mirror (settings stay the
+ * source of truth, persisted as always; the engine's copy is a read replica
+ * for whichever drag-commit call site needs `resolveSnap`'s `SnapConfig`,
+ * see `DesktopWindow.tsx`/`MentalGraphCanvas.tsx`). Unlike the camera
+ * (bidirectional — see the module doc-comment above), nothing ever writes
+ * `snap.grid` FROM the engine back into `settings`, so there is no
+ * reentrancy concern here; this only needs to be called after any write to
+ * `settings`. Guards against a no-op `engineStore.setState` (which would
+ * otherwise fire on EVERY `updateSettings` call, including ones touching
+ * unrelated fields like `canvasClickAnimation`, since a freshly-built `spec`
+ * object is a new reference every time).
+ */
+function pushSnapSettingsToEngine(): void {
+  const { settings } = useDesktopStore.getState();
+  const enabled = settings.snapToGrid === true;
+  const cellSize = settings.snapGridCellSize ?? DEFAULT_SNAP_GRID_CELL_SIZE;
+  const spec = fluxorWindowGridSpec(cellSize);
+  const current = engineStore.getState().snap;
+  if (current.grid.enabled === enabled && current.grid.spec.cell.width === spec.cell.width) return;
+  engineStore.setState({ snap: { ...current, grid: { enabled, spec } } });
+}
 
 /**
  * Module singleton — same pattern as `useDesktopStore`: created once at
@@ -85,6 +128,17 @@ function pushCameraToEngine(): void {
   engineStore.setState({ camera: { pan: canvasPan, zoom: canvasZoom } });
 }
 
+// Captured BEFORE the patch below overwrites it — `updateSettings`'s own
+// merge-patch semantics (`set(s => ({settings: {...s.settings, ...patch}}))`)
+// stay completely intact; this only appends the engine push AFTER it runs
+// (same "wrap, don't replace" shape as `_pushCameraToEngine` above, chosen
+// here instead of `_pushCameraToEngine`'s "replace + explicit call-site"
+// shape because `updateSettings` is FLUXOR's single entry point for every
+// settings field, snap-related or not — wrapping means every call site that
+// already touches `settings.snapToGrid`/`settings.snapGridCellSize`, present
+// or future, mirrors correctly with zero extra wiring).
+const originalUpdateSettings = useDesktopStore.getState().updateSettings;
+
 useDesktopStore.setState({
   setCanvasPan: (pan) => {
     engineStore.setState({ camera: { pan, zoom: engineStore.getState().camera.zoom } });
@@ -99,4 +153,14 @@ useDesktopStore.setState({
     engineStore.setState({ camera: { pan: engineStore.getState().camera.pan, zoom: clamped } });
   },
   _pushCameraToEngine: pushCameraToEngine,
+  updateSettings: (patch) => {
+    originalUpdateSettings(patch);
+    pushSnapSettingsToEngine();
+  },
 });
+
+// Seed the engine's snap.grid from whatever settings.snapToGrid/
+// settings.snapGridCellSize zustand-persist already hydrated at THIS
+// module's load time — same "hydrate once at import time" shape as the
+// camera's own `initial` seed above.
+pushSnapSettingsToEngine();

@@ -225,4 +225,61 @@ describe('engine-bridge', () => {
     // update, silently desyncing it from the engine).
     expect(engineStore.getState().camera.pan).toEqual(useDesktopStore.getState().canvasPan);
   });
+
+  // ─── Task 13 (adoption plan #20): settings.snapToGrid/snapGridCellSize
+  // -> engine snap.grid mirror ──────────────────────────────────────
+  // One-way mirror (settings stay the source of truth, persisted as always)
+  // — see engine-bridge.ts's pushSnapSettingsToEngine doc-comment. Unlike
+  // the camera bridge, there is no round-trip to verify (nothing ever writes
+  // snap.grid FROM the engine back into settings).
+
+  it('defaults the engine grid to disabled, 24px cell, when nothing was persisted', async () => {
+    const { engineStore } = await loadFresh();
+    expect(engineStore.getState().snap.grid).toEqual({
+      enabled: false,
+      spec: { cell: { width: 24, height: 24, gap: 0 }, padding: { x: 0, y: 0 }, originY: 0 },
+    });
+  });
+
+  it('hydrates the engine grid from whatever desktop-store already persisted', async () => {
+    localStorage.setItem('fluxor-desktop', JSON.stringify({
+      state: { settings: { canvasClickAnimation: true, tourCompleted: false, tutorialCompleted: {}, snapToGrid: true, snapGridCellSize: 32 } },
+      version: 20,
+    }));
+    const { engineStore } = await loadFresh();
+    expect(engineStore.getState().snap.grid).toEqual({
+      enabled: true,
+      spec: { cell: { width: 32, height: 32, gap: 0 }, padding: { x: 0, y: 0 }, originY: 0 },
+    });
+  });
+
+  it('updateSettings({snapToGrid: true}) enables the engine grid (default 24px cell)', async () => {
+    const { useDesktopStore, engineStore } = await loadFresh();
+    useDesktopStore.getState().updateSettings({ snapToGrid: true });
+    expect(engineStore.getState().snap.grid.enabled).toBe(true);
+    expect(engineStore.getState().snap.grid.spec.cell).toEqual({ width: 24, height: 24, gap: 0 });
+  });
+
+  it('updateSettings({snapGridCellSize}) resizes the engine grid cell', async () => {
+    const { useDesktopStore, engineStore } = await loadFresh();
+    useDesktopStore.getState().updateSettings({ snapToGrid: true, snapGridCellSize: 16 });
+    expect(engineStore.getState().snap.grid.spec.cell).toEqual({ width: 16, height: 16, gap: 0 });
+  });
+
+  it('updateSettings still merges into settings exactly as before (patch semantics untouched)', async () => {
+    const { useDesktopStore } = await loadFresh();
+    useDesktopStore.getState().updateSettings({ canvasClickAnimation: false });
+    expect(useDesktopStore.getState().settings.canvasClickAnimation).toBe(false);
+    expect(useDesktopStore.getState().settings.tourCompleted).toBe(false); // untouched fields survive the merge
+  });
+
+  it('an unrelated settings patch does not touch the engine snap.grid reference', async () => {
+    const { useDesktopStore, engineStore } = await loadFresh();
+    const gridBefore = engineStore.getState().snap.grid;
+    useDesktopStore.getState().updateSettings({ canvasClickAnimation: false });
+    // Reference-stable: pushSnapSettingsToEngine's guard bailed out (same
+    // enabled/cell-width as before), so engineStore.setState was never even
+    // called for `snap` — not just that the values happen to still match.
+    expect(engineStore.getState().snap.grid).toBe(gridBefore);
+  });
 });

@@ -27,7 +27,11 @@ import type { AttachmentModalInfo } from './AttachmentInfoModal';
 // WindowContextMenu.tsx, deleted). `labelColor` (engine addition, same Task)
 // preserves the per-action semantic colors (orange/blue/purple for role/mod/
 // flow removal) the old component had, independent of `danger` (close).
-import { ContextMenu, useContextMenuState, type ContextMenuEntry, type ContextMenuProviders } from '@javadaba/daba-engine';
+import {
+  ContextMenu, useContextMenuState, resolveSnap,
+  type ContextMenuEntry, type ContextMenuProviders, type GridSpec,
+} from '@javadaba/daba-engine';
+import { engineStore } from '../../store/engine-bridge';
 import type { WindowPosition, WindowSize, AttachableType } from '@/types/desktop';
 import { TYPE_META } from './DesktopAttachable';
 import { kebabToTitle } from './attachable-helpers';
@@ -39,6 +43,38 @@ import type { MarketRole, MarketMod, MarketFlow } from '@/types/market';
 const RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const;
 type ResizeDir = typeof RESIZE_DIRS[number];
 const DRAG_ACTIVATION_PX = 4;
+
+/**
+ * Task 13 (adoption plan #20) — snap-to-grid quantization for the window
+ * drag COMMIT only (the live drag itself stays pure-DOM-transform, untouched
+ * — see `startInteraction`'s `onMouseMove` below). Precedence, exactly as
+ * decided (task13-decisiones.md Q5, mirroring the motor's own `resolveSnap`
+ * precedence rule): if Fluxor's OWN `calculateSnapGuides` (desktop-store.ts,
+ * untouched) already magnetized on EITHER axis, its result wins outright —
+ * grid quantization is skipped entirely, on BOTH axes, not just the matched
+ * one. Only when no guide matched at all AND the toggle is on does the
+ * raw/guide-less position get quantized, via the motor's `resolveSnap` with
+ * `guides.enabled: false` (Fluxor's guide system already had its turn above
+ * — this call only ever exercises the grid branch). `width`/`height` are
+ * irrelevant to that branch (`core/grid.ts`'s `pixelsToColRow` only reads
+ * `rect.x`/`rect.y`) so a dummy 0x0 rect is passed instead of `win.size`.
+ *
+ * Pure/exported so it's testable with golden values without simulating a
+ * real pointer drag (same "extract the decision, test it directly" idiom as
+ * `MentalGraphCanvas.tsx`'s `resolveConnectionEdgeType`).
+ */
+export function resolveWindowDropPosition(
+  snappedPos: WindowPosition,
+  guideMatched: boolean,
+  snapGrid: { enabled: boolean; spec: GridSpec },
+): WindowPosition {
+  if (guideMatched || !snapGrid.enabled) return snappedPos;
+  return resolveSnap(
+    { x: snappedPos.x, y: snappedPos.y, width: 0, height: 0 },
+    [],
+    { grid: snapGrid, guides: { enabled: false, threshold: 0 } },
+  ).pos;
+}
 
 interface InteractionState {
   type: 'drag' | `resize-${ResizeDir}` | null;
@@ -383,7 +419,8 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
 
       // ── 1. Commit final drag position instantly (zero transitions) ──
       if (wasDrag && lastDragPos && !isMultiDrag) {
-        const { snappedPos } = calculateSnapGuides(windowId, lastDragPos, win.size);
+        const { snappedPos, guides } = calculateSnapGuides(windowId, lastDragPos, win.size);
+        const finalPos = resolveWindowDropPosition(snappedPos, guides.length > 0, engineStore.getState().snap.grid);
         if (shell) {
           // Force-kill transitions so the position commit is instant.
           // The CSS rule [data-interacting="true"]{transition:none} would
@@ -392,13 +429,13 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
           // transition in the SAME render that changes left/top → bounce.
           shell.style.transition = 'none';
           shell.style.transform = '';
-          shell.style.left = `${snappedPos.x}px`;
-          shell.style.top = `${snappedPos.y}px`;
+          shell.style.left = `${finalPos.x}px`;
+          shell.style.top = `${finalPos.y}px`;
           // Force synchronous reflow — browser paints the final position
           // before anything else runs. No frame can show the old position.
           void shell.offsetHeight;
         }
-        moveWindow(windowId, snappedPos);
+        moveWindow(windowId, finalPos);
       }
 
       if (inter.type?.startsWith('resize-')) {

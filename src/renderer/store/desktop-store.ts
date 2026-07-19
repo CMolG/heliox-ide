@@ -562,6 +562,19 @@ interface DesktopStore {
      * rather than truthiness, so old and new state both render the same way.
      */
     showInspector?: boolean;
+    /**
+     * Snap-to-grid for window/mental-node drag commits (Task 13, adoption
+     * plan #20, `engine-bridge.ts` mirrors this into the daba-engine
+     * `snap.grid` slice). Optional + defaulted to OFF by absence — same
+     * default-by-absence convention as `showInspector`, but inverted:
+     * `showInspector !== false` there means "shown by default", while here
+     * `snapToGrid === true` means "enabled" — pre-existing persisted blobs
+     * (and anyone who never opens Settings) get byte-identical drag behavior
+     * to before this feature existed.
+     */
+    snapToGrid?: boolean;
+    /** Grid cell size in px (presets 16/24/32) for `snapToGrid` quantization; defaults to 24 when unset. */
+    snapGridCellSize?: number;
   };
   updateSettings: (patch: Partial<DesktopStore['settings']>) => void;
   /** Set the WS2 smart-routing policy applied to every subsequent harness dispatch. */
