@@ -1548,12 +1548,17 @@ body {
 /* The engine's `.daba-dock__item[aria-pressed='true']` (class + attribute =
    same specificity as two classes, 0-2-0) would otherwise beat this file's
    plain `.dock-item-active` (0-1-0, below) for background/color whenever the
-   mental toggle is active — worse, its --daba-accent/--daba-accent-contrast
-   tokens aren't mapped in this app's :root (only the tokens the
-   already-adopted ContextMenu/HUD chrome needs are), so unfixed it would
-   compute to invalid-at-computed-value-time (background→transparent,
-   color→inherited), not just "a different purple". Match the engine
-   selector's specificity here so Fluxor's active look keeps winning.
+   mental toggle is active. --daba-accent/--daba-accent-contrast ARE mapped
+   in this app's :root (index.tsx imports the engine's tokens.css + engine.css
+   BEFORE index.css specifically so this file's :root block wins by source
+   order — see that file's own comment), so the engine rule doesn't compute
+   to garbage; it resolves to a perfectly valid color, just the WRONG one:
+   --daba-accent is Fluxor's selection-ring blue (#4285F4, shared with
+   ComponentsPanel highlight/marquee/window-active elsewhere), while the
+   Dock's mental-mode toggle has always been purple (#4c1d95 / rgba(109,40,
+   217,…), below) — a distinct semantic the shared accent token doesn't
+   carry. Match the engine selector's specificity here so Fluxor's purple
+   keeps winning over the engine's blue default for this one control.
    Placed BEFORE .dock-item:hover so hovering an active item still shows the
    hover look first — unchanged from before the engine adoption, where
    :hover's own 0-2-0 already beat .dock-item-active's 0-1-0 outright. */
@@ -4020,8 +4025,13 @@ body {
    ancestor dependency on `.step-config-panel`), so reusing them here keeps
    the Inspector visually identical to the evidence panel with zero new CSS
    for the parts that are already covered. Only the genuinely new surfaces
-   (header/chrome, the editable title input, the description textarea, and
-   the destructive multi-select delete button) get dedicated classes below. */
+   (the editable title input, the description textarea, and the destructive
+   multi-select delete button) get dedicated classes below — header/chrome
+   (label, collapse button) moved to the motor's `.daba-side-toolbar__*`
+   (SideToolbar, engine.css) in Task 13 Fase 2; `.inspector-header`/
+   `.inspector-header-label`/`.inspector-collapse-btn`/`.inspector-body` were
+   that hand-rolled chrome and are gone along with it — see
+   InspectorPanel.tsx's `<SideToolbar className="inspector-panel …">`. */
 
 .inspector-panel {
   height: 100%;
@@ -4029,51 +4039,6 @@ body {
   flex-direction: column;
   background: #0f0f0f;
   overflow: hidden;
-}
-
-.inspector-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(63, 63, 70, 0.15);
-  color: #a1a1aa;
-  flex-shrink: 0;
-}
-
-.inspector-header-label {
-  flex: 1;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.inspector-collapse-btn {
-  background: none;
-  border: none;
-  color: #525252;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-
-.inspector-collapse-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #e4e4e7;
-}
-
-.inspector-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 12px 14px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 /* ── Step identity (title/description) — sits above the embedded
@@ -4174,7 +4139,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .inspector-collapse-btn,
   .inspector-title-input,
   .inspector-delete-all-btn {
     transition: none;

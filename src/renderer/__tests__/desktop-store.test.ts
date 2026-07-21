@@ -2001,7 +2001,7 @@ describe('resizeHudWidget', () => {
     expect(widget?.size).toEqual({ width: 500, height: 400 });
   });
 
-  it('clamps below the 216x144 minimum (grid-aligned — see hud-grid.ts MIN_WIDGET_WIDTH/HEIGHT)', () => {
+  it('clamps below the 216x144 minimum (grid-aligned — see hud-widget-policy.ts MIN_WIDGET_WIDTH/HEIGHT)', () => {
     useDesktopStore.getState().resizeHudWidget('notifications', { width: 50, height: 30 });
     const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'notifications');
     expect(widget?.size).toEqual({ width: 216, height: 144 });

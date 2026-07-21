@@ -242,8 +242,12 @@ test.describe('Window Management', () => {
   });
 
   test.skip('grid-snapped window shows in-surface eject control', async () => {
-    // REMOVED: Grid feature has been removed entirely (no grid dock button,
-    // no grid containers, no grid context-menu). This test is permanently skipped.
+    // REMOVED: the grid dock button is gone (desktop-store.ts's v14→v15
+    // migration drops the persisted 'grid' dock item and clears stale grid
+    // data), so a user can no longer create a grid from the UI. The
+    // underlying feature is still in the code (desktop-store.ts's
+    // removeGrid/grids state, NodeTree's "Grids" group) — just unreachable
+    // from here — so this test is permanently skipped rather than deleted.
   });
 });
 

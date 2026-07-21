@@ -619,7 +619,7 @@ interface DesktopStore {
   // ─── HUD Widgets ───────────────────────────────────────────────
   hudWidgets: HudWidget[];
   setHudWidgetVisible: (type: HudWidgetType, visible: boolean) => void;
-  /** Persists verbatim — caller must pass resolveHudWidgetPlacement's output (logic/hud-grid.ts). */
+  /** Persists verbatim — caller must pass resolveHudWidgetPlacement's output (logic/hud-widget-policy.ts). */
   moveHudWidget: (type: HudWidgetType, position: { x: number; y: number }) => void;
   /** Clamps SIZE only; does not reposition — see the implementation-site comment below. */
   resizeHudWidget: (type: HudWidgetType, size: { width: number; height: number }) => void;
@@ -2363,7 +2363,7 @@ export const useDesktopStore = create<DesktopStore>()(
 
       // ─── HUD Widgets ───────────────────────────────────────────────
       // Positions are stored already-resolved (Phase 4: callers must call
-      // resolveHudWidgetPlacement — logic/hud-grid.ts, which itself snaps +
+      // resolveHudWidgetPlacement — logic/hud-widget-policy.ts, which itself snaps +
       // clamps + dodges the top-right safe zone and other widgets — before
       // moveHudWidget; this setter persists verbatim and does no snapping,
       // clamping, or collision avoidance of its own). HudWidgetLayer is the

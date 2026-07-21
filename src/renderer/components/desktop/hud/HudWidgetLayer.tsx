@@ -6,8 +6,8 @@
  * - Each widget is independently draggable and snap-to-grid positioned.
  * - Sits ABOVE the canvas but BELOW modals/marketplace (z-index 180).
  * - Resolves each widget's placement (drag-release, resize-release, and
- *   spawn/reopen) through resolveHudWidgetPlacement (logic/hud-grid.ts) so
- *   a widget can never land in the top-right safe zone or overlap another
+ *   spawn/reopen) through resolveHudWidgetPlacement (logic/hud-widget-policy.ts)
+ *   so a widget can never land in the top-right safe zone or overlap another
  *   widget — see the `others`/safe-zone handling in DraggableWidget below.
  *
  * Boundaries:
@@ -84,7 +84,7 @@ interface DraggableWidgetProps {
    *  itself), in the same absolute px space as `position`. Passed down by
    *  HudWidgetLayer so drag-release, resize-release, and spawn/reopen can
    *  all resolve this widget's placement against its actual neighbours —
-   *  see resolveHudWidgetPlacement in logic/hud-grid.ts. */
+   *  see resolveHudWidgetPlacement in logic/hud-widget-policy.ts. */
   others: HudRect[];
 }
 

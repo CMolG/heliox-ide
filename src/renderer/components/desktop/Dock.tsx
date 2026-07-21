@@ -363,6 +363,13 @@ export function Dock() {
   const onAttachDragStart = useCallback((e: React.MouseEvent, plugin: { id: string; category: string; name: string; iconName: string }) => {
     e.preventDefault();
     const attachStartPos = { x: e.clientX, y: e.clientY };
+    // Ghost position below is `startPos.current + attachDragPos - 22` (an
+    // absolute-position + delta split, mirroring attachDragPos's own
+    // `ev.clientX - attachStartPos.x` delta math) — startPos.current must be
+    // seeded with the drag's origin here, or it stays the useRef's {0,0}
+    // initial value and the ghost renders pinned near the screen's top-left
+    // corner (only the delta moves it) instead of tracking the cursor.
+    startPos.current = attachStartPos;
     setAttachDragItem(plugin);
     setAttachDragPos({ x: 0, y: 0 });
     setAttachDraggedOut(false);
