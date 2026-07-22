@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HarnessEventPayload } from '@/types/ipc-events';
+import type { BacklogCard } from '@/types/market';
 import { useDesktopStore } from '../store/desktop-store';
 import { useHarnessStore, lastLogMessage } from '../store/harness-store';
 
@@ -557,6 +558,121 @@ describe('useHarnessStore', () => {
       expect(useHarnessStore.getState().executionStatus).toBe('error');
       expect(lastLogMessage(useHarnessStore.getState().executionLogs))
         .toBe('Cannot start execution because the harness IPC bridge is unavailable.');
+    });
+  });
+
+  describe('F4 — backlog card write-back (StepStatusChanged, F0 spec §3.4)', () => {
+    function makeBacklogCard(overrides: Partial<BacklogCard> = {}): BacklogCard {
+      return {
+        filename: 'card.md', taskId: 'T1', targetAgent: '', targetModule: '',
+        priority: 'medium', status: 'doing', runState: 'running', order: 0,
+        tags: [], estimate: 0, assignees: [], related: [],
+        createdAt: '2026-07-08T00:00:00.000Z', updatedAt: '2026-07-08T00:00:00.000Z',
+        title: 'Card', description: 'Desc', comments: [], attachments: [],
+        ...overrides,
+      };
+    }
+
+    it('a registered step reaching "running" writes doing/running and keeps the correlation (not yet terminal)', () => {
+      const card = makeBacklogCard({ status: 'todo', runState: 'idle' });
+      const updateBacklogCardStatus = vi.fn().mockResolvedValue({ success: true });
+      window.fluxorAPI = { updateBacklogCardStatus } as any;
+      useDesktopStore.setState({
+        backlogCards: [card],
+        backlogRunCorrelation: { 'step-1': { backlogDir: '/proj/.backlog', filename: 'card.md' } },
+      });
+
+      useHarnessStore.getState().handleHarnessEvent({
+        type: 'StepStatusChanged', flowId: 'flow-1', timestamp: 1, stepId: 'step-1', status: 'running',
+      });
+
+      expect(updateBacklogCardStatus).toHaveBeenCalledWith('/proj/.backlog', 'card.md', 'doing', undefined, 'running');
+      expect(useDesktopStore.getState().backlogCards[0]).toMatchObject({ status: 'doing', runState: 'running' });
+      expect(useDesktopStore.getState().backlogRunCorrelation['step-1']).toBeDefined();
+    });
+
+    it('a registered step reaching "completed" writes review/completed to the card + an open modal, then clears the correlation', () => {
+      const card = makeBacklogCard();
+      const updateBacklogCardStatus = vi.fn().mockResolvedValue({ success: true });
+      window.fluxorAPI = { updateBacklogCardStatus } as any;
+      useDesktopStore.setState({
+        backlogCards: [card],
+        canvasModalCard: card,
+        backlogRunCorrelation: { 'step-1': { backlogDir: '/proj/.backlog', filename: 'card.md' } },
+      });
+
+      useHarnessStore.getState().handleHarnessEvent({
+        type: 'StepStatusChanged', flowId: 'flow-1', timestamp: 1, stepId: 'step-1', status: 'completed',
+      });
+
+      expect(updateBacklogCardStatus).toHaveBeenCalledWith('/proj/.backlog', 'card.md', 'review', undefined, 'completed');
+      expect(useDesktopStore.getState().backlogCards[0]).toMatchObject({ status: 'review', runState: 'completed' });
+      expect(useDesktopStore.getState().canvasModalCard).toMatchObject({ status: 'review', runState: 'completed' });
+      expect(useDesktopStore.getState().backlogRunCorrelation['step-1']).toBeUndefined();
+    });
+
+    it('a registered step reaching "error" writes refine/failed and clears the correlation', () => {
+      const card = makeBacklogCard();
+      const updateBacklogCardStatus = vi.fn().mockResolvedValue({ success: true });
+      window.fluxorAPI = { updateBacklogCardStatus } as any;
+      useDesktopStore.setState({
+        backlogCards: [card],
+        backlogRunCorrelation: { 'step-1': { backlogDir: '/proj/.backlog', filename: 'card.md' } },
+      });
+
+      useHarnessStore.getState().handleHarnessEvent({
+        type: 'StepStatusChanged', flowId: 'flow-1', timestamp: 1, stepId: 'step-1', status: 'error',
+      });
+
+      expect(updateBacklogCardStatus).toHaveBeenCalledWith('/proj/.backlog', 'card.md', 'refine', undefined, 'failed');
+      expect(useDesktopStore.getState().backlogCards[0]).toMatchObject({ status: 'refine', runState: 'failed' });
+      expect(useDesktopStore.getState().backlogRunCorrelation['step-1']).toBeUndefined();
+    });
+
+    it('does not patch a canvasModalCard showing a DIFFERENT card', () => {
+      const card = makeBacklogCard();
+      const otherCard = makeBacklogCard({ filename: 'other.md', taskId: 'OTHER', status: 'todo', runState: 'idle' });
+      window.fluxorAPI = { updateBacklogCardStatus: vi.fn().mockResolvedValue({ success: true }) } as any;
+      useDesktopStore.setState({
+        backlogCards: [card, otherCard],
+        canvasModalCard: otherCard,
+        backlogRunCorrelation: { 'step-1': { backlogDir: '/proj/.backlog', filename: 'card.md' } },
+      });
+
+      useHarnessStore.getState().handleHarnessEvent({
+        type: 'StepStatusChanged', flowId: 'flow-1', timestamp: 1, stepId: 'step-1', status: 'completed',
+      });
+
+      expect(useDesktopStore.getState().canvasModalCard).toMatchObject({ filename: 'other.md', status: 'todo', runState: 'idle' });
+    });
+
+    it('an unregistered stepId is a no-op for the backlog write-back', () => {
+      const card = makeBacklogCard({ status: 'todo', runState: 'idle' });
+      const updateBacklogCardStatus = vi.fn();
+      window.fluxorAPI = { updateBacklogCardStatus } as any;
+      useDesktopStore.setState({ backlogCards: [card] });
+
+      useHarnessStore.getState().handleHarnessEvent({
+        type: 'StepStatusChanged', flowId: 'flow-1', timestamp: 1, stepId: 'not-registered', status: 'completed',
+      });
+
+      expect(updateBacklogCardStatus).not.toHaveBeenCalled();
+      expect(useDesktopStore.getState().backlogCards[0]).toMatchObject({ status: 'todo', runState: 'idle' });
+    });
+
+    it('does not call updateBacklogCardStatus when the harness bridge is unavailable, but still patches the store', () => {
+      delete window.fluxorAPI;
+      const card = makeBacklogCard();
+      useDesktopStore.setState({
+        backlogCards: [card],
+        backlogRunCorrelation: { 'step-1': { backlogDir: '/proj/.backlog', filename: 'card.md' } },
+      });
+
+      expect(() => useHarnessStore.getState().handleHarnessEvent({
+        type: 'StepStatusChanged', flowId: 'flow-1', timestamp: 1, stepId: 'step-1', status: 'completed',
+      })).not.toThrow();
+
+      expect(useDesktopStore.getState().backlogCards[0]).toMatchObject({ status: 'review', runState: 'completed' });
     });
   });
 });

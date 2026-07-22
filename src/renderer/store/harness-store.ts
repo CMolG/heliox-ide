@@ -511,7 +511,7 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
         }));
         return;
 
-      case 'StepStatusChanged':
+      case 'StepStatusChanged': {
         set((state) => ({
           executionStatus: event.status === 'error' ? 'error' : state.executionStatus === 'completed' ? 'completed' : 'running',
           currentStepId: event.status === 'running' ? event.stepId : state.currentStepId,
@@ -545,7 +545,33 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
             : state.stepModels,
           executionLogs: event.logs ? appendLog(state.executionLogs, event.logs) : state.executionLogs,
         }));
+
+        // F4 — card write-back (F0 spec §3.4). Per-step is sufficient for
+        // every launcher mode (a flow can't complete without its step(s)
+        // reporting a terminal status first) — no separate FlowCompleted
+        // handling is added (would double-write).
+        const correlation = useDesktopStore.getState().backlogRunCorrelation[event.stepId];
+        if (correlation) {
+          const { backlogDir, filename } = correlation;
+          const patch = event.status === 'running'
+            ? { status: 'doing' as const, runState: 'running' as const }
+            : event.status === 'completed'
+              ? { status: 'review' as const, runState: 'completed' as const }
+              : { status: 'refine' as const, runState: 'failed' as const }; // 'error'
+
+          void window.fluxorAPI?.updateBacklogCardStatus(backlogDir, filename, patch.status, undefined, patch.runState);
+
+          useDesktopStore.setState((s) => ({
+            backlogCards: s.backlogCards.map((c) => (c.filename === filename ? { ...c, ...patch } : c)),
+            canvasModalCard: s.canvasModalCard?.filename === filename ? { ...s.canvasModalCard, ...patch } : s.canvasModalCard,
+          }));
+
+          if (event.status === 'completed' || event.status === 'error') {
+            useDesktopStore.getState().clearBacklogRunStep(event.stepId);
+          }
+        }
         return;
+      }
 
       case 'ModExecutionEvent':
         set((state) => ({
