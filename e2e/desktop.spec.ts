@@ -2795,11 +2795,30 @@ test.describe('Backlog Widget', () => {
       if (!ds) return;
       const s = ds.getState();
       s.windows.forEach((w: any) => s.removeWindow(w.id));
+      s.setBacklogCards([]);
+      s.closeCanvasModal();
     });
     await page.waitForTimeout(200);
   });
 
-  test('backlog window can be opened and shows kanban board', async () => {
+  /**
+   * Minimal, valid v2 BacklogCard fixture (src/types/market.ts) with sane
+   * defaults, overridable per test. Mirrors BacklogPile.test.tsx's own
+   * `makeCard` helper so e2e fixtures match the same shape the unit suite
+   * already exercises.
+   */
+  function backlogCard(overrides: Record<string, unknown> = {}) {
+    return {
+      filename: 'x.md', taskId: 'x', targetAgent: '', targetModule: '',
+      priority: 'medium', status: 'todo', runState: 'idle', order: 0,
+      tags: [], estimate: 0, assignees: [], related: [],
+      createdAt: '2026-07-08T00:00:00.000Z', updatedAt: '2026-07-08T00:00:00.000Z',
+      title: 'Untitled', description: '', comments: [], attachments: [],
+      ...overrides,
+    };
+  }
+
+  async function openBacklogWindow() {
     await page.evaluate(() => {
       const store = (window as any).__DESKTOP_STORE__;
       if (!store) return;
@@ -2810,189 +2829,202 @@ test.describe('Backlog Widget', () => {
       });
     });
     await page.waitForTimeout(400);
-    const kanban = page.locator('.backlog-kanban');
-    await expect(kanban).toBeVisible({ timeout: 3000 });
+  }
+
+  async function seedCards(cards: unknown[]) {
+    await page.evaluate((c) => {
+      const ds = (window as any).__DESKTOP_STORE__;
+      if (ds) ds.getState().setBacklogCards(c);
+    }, cards);
+    await page.waitForTimeout(300);
+  }
+
+  test('backlog window can be opened and shows the bento pile', async () => {
+    await openBacklogWindow();
+    await expect(page.locator('[data-testid="backlog-bento-widget"]')).toBeVisible({ timeout: 3000 });
   });
 
-  test('mock backlog cards render in all four kanban columns', async () => {
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().addWindow('backlog', {
-        title: 'Backlog',
-        iconName: 'KanbanSquare',
-        size: { width: 720, height: 480 },
-      });
-    });
-    await page.waitForTimeout(600);
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().setBacklogCards([
-        { filename: 'task-1.md', taskId: 'task-1', targetAgent: 'frontend', targetModule: 'ui', priority: 'critical', status: 'pending', title: 'Fix login button', body: 'The login button is broken on mobile.' },
-        { filename: 'task-2.md', taskId: 'task-2', targetAgent: 'backend', targetModule: 'api', priority: 'high', status: 'in_progress', title: 'Optimize API endpoints', body: 'Reduce response time for search.' },
-        { filename: 'task-3.md', taskId: 'task-3', targetAgent: 'qa', targetModule: 'tests', priority: 'medium', status: 'completed', title: 'Add unit tests', body: 'Cover auth module with tests.' },
-        { filename: 'task-4.md', taskId: 'task-4', targetAgent: 'devops', targetModule: 'ci', priority: 'low', status: 'failed', title: 'Fix CI pipeline', body: 'Pipeline fails on macOS.' },
-      ]);
-    });
-    await page.waitForTimeout(400);
-    // Verify cards appear
-    await expect(page.locator('text=Fix login button')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('text=Optimize API endpoints')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('text=Add unit tests')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('text=Fix CI pipeline')).toBeVisible({ timeout: 3000 });
-    // Verify column headers (FlowDeck-style names)
-    await expect(page.locator('.fd-laneTitle h2', { hasText: 'Backlog' })).toBeVisible();
-    await expect(page.locator('.fd-laneTitle h2', { hasText: 'In Progress' })).toBeVisible();
-    await expect(page.locator('.fd-laneTitle h2', { hasText: 'Done' })).toBeVisible();
-    await expect(page.locator('.fd-laneTitle h2', { hasText: 'Failed' })).toBeVisible();
+  test('backlog cards render across multiple statuses in a single pile (no columns)', async () => {
+    await openBacklogWindow();
+    await seedCards([
+      backlogCard({ filename: 'task-1.md', taskId: 'task-1', status: 'todo', title: 'Fix login button', description: 'The login button is broken on mobile.' }),
+      backlogCard({ filename: 'task-2.md', taskId: 'task-2', status: 'doing', title: 'Optimize API endpoints', description: 'Reduce response time for search.' }),
+      backlogCard({ filename: 'task-3.md', taskId: 'task-3', status: 'review', title: 'Add unit tests', description: 'Cover auth module with tests.' }),
+      backlogCard({ filename: 'task-4.md', taskId: 'task-4', status: 'deploy', title: 'Ship CI pipeline fix', description: 'Pipeline was failing on macOS.' }),
+    ]);
+
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Fix login button' })).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Optimize API endpoints' })).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Add unit tests' })).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Ship CI pipeline fix' })).toBeVisible({ timeout: 3000 });
+
+    // All four cards' status badges render inline in the ONE pile — the
+    // bento redesign replaced the 4-column kanban board with a single flat,
+    // filterable pile (labels from statusConfig.ts's STATUS_CONFIG).
+    const pile = page.locator('[data-testid="backlog-pile"]');
+    await expect(pile.getByText('To Do', { exact: true })).toBeVisible();
+    await expect(pile.getByText('In Progress', { exact: true })).toBeVisible();
+    await expect(pile.getByText('Review', { exact: true })).toBeVisible();
+    await expect(pile.getByText('Deploy', { exact: true })).toBeVisible();
   });
 
-  test('clicking a backlog card expands its body details', async () => {
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().addWindow('backlog', {
-        title: 'Backlog',
-        iconName: 'KanbanSquare',
-        size: { width: 720, height: 480 },
-      });
-    });
-    await page.waitForTimeout(600);
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().setBacklogCards([
-        { filename: 'task-1.md', taskId: 'task-1', targetAgent: 'frontend', targetModule: 'ui', priority: 'critical', status: 'pending', title: 'Fix login button', body: 'The login button is broken on mobile devices and needs urgent attention.' },
-      ]);
-    });
-    await page.waitForTimeout(400);
-    const cardEl = page.locator('.fd-card', { hasText: 'Fix login button' });
+  test('clicking a backlog card opens the modal with its description', async () => {
+    await openBacklogWindow();
+    await seedCards([
+      backlogCard({
+        filename: 'task-1.md', taskId: 'task-1', title: 'Fix login button',
+        description: 'The login button is broken on mobile devices and needs urgent attention.',
+      }),
+    ]);
+
+    const cardEl = page.locator('[data-testid="backlog-card"]', { hasText: 'Fix login button' });
     await expect(cardEl).toBeVisible({ timeout: 3000 });
     await cardEl.click();
-    await page.waitForTimeout(300);
-    // Modal opens at canvas level (outside backlog window)
+
+    // Modal is a canvas-level surface (mounted in SeamlessCanvas.tsx, outside
+    // the backlog window itself) — same seam the old modal used.
     const modal = page.locator('[data-testid="backlog-card-modal"]');
     await expect(modal).toBeVisible({ timeout: 2000 });
-    await expect(page.locator('.fd-modalBody', { hasText: 'broken on mobile devices' })).toBeVisible({ timeout: 2000 });
-    // Close the modal
+    await expect(modal.getByText('The login button is broken on mobile devices and needs urgent attention.')).toBeVisible();
+
     await page.keyboard.press('Escape');
     await expect(modal).not.toBeVisible({ timeout: 2000 });
   });
 
-  test('backlog card count is displayed in header', async () => {
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().addWindow('backlog', {
-        title: 'Backlog',
-        iconName: 'KanbanSquare',
-        size: { width: 720, height: 480 },
-      });
-    });
-    await page.waitForTimeout(600);
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().setBacklogCards([
-        { filename: 'task-1.md', taskId: 'task-1', targetAgent: 'fe', targetModule: 'ui', priority: 'high', status: 'pending', title: 'Task A', body: '' },
-        { filename: 'task-2.md', taskId: 'task-2', targetAgent: 'be', targetModule: 'api', priority: 'low', status: 'pending', title: 'Task B', body: '' },
-      ]);
-    });
-    await page.waitForTimeout(400);
-    await expect(page.locator('text=2 cards')).toBeVisible({ timeout: 3000 });
-  });
-
   test('backlog shows empty state when no cards exist', async () => {
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().setBacklogCards([]);
-      ds.getState().addWindow('backlog', {
-        title: 'Backlog',
-        iconName: 'KanbanSquare',
-        size: { width: 720, height: 480 },
-      });
-    });
-    // Wait for the widget to leave the loading state before asserting.
-    // The picker view is hidden while `loading` is true (scanForBacklogs runs async),
-    // so we wait up to 5 s for any of the empty-state strings to appear in the DOM.
-    await page.waitForFunction(
-      () => {
-        const texts = [
-          'No backlog cards found',
-          'No project subdirectories found',
-          'Open a project to scan',
-        ];
-        return texts.some(t =>
-          Array.from(document.querySelectorAll('*')).some(
-            el => el.children.length === 0 && el.textContent?.includes(t),
-          ),
-        );
-      },
-      { timeout: 5_000 },
-    ).catch(() => null); // tolerate timeout — assertion below gives the real verdict
+    await openBacklogWindow();
+    // Seed one card first so the widget's own auto-switch effect
+    // (BacklogBentoWidget.tsx: `view === 'picker' && !selectedBacklog &&
+    // backlogCards.length > 0`) leaves the project picker and enters the
+    // pile view — real filesystem scanning of the fake e2e project path is
+    // irrelevant once this fires. Then clear the cards: the pile stays
+    // mounted and renders ITS OWN genuine empty state
+    // (`data-testid="backlog-pile-empty"`) rather than the picker's
+    // no-backlogs-found copy. This is what the old spec actually needed to
+    // assert — it instead tolerated three unrelated strings behind a
+    // best-effort waitForFunction, which is the failure this rewrite fixes.
+    await seedCards([backlogCard({ filename: 'seed.md', taskId: 'seed', title: 'Seed' })]);
+    await expect(page.locator('[data-testid="backlog-pile"]')).toBeVisible({ timeout: 3000 });
 
-    // Widget shows picker view with no backlogs found, or kanban with empty state
-    const emptyKanban = page.locator('text=No backlog cards found');
-    const emptyPicker = page.locator('text=No project subdirectories found');
-    const noProject = page.locator('text=Open a project to scan');
-    // At least one of the empty states should be visible
-    const anyVisible = await emptyKanban.isVisible().catch(() => false)
-      || await emptyPicker.isVisible().catch(() => false)
-      || await noProject.isVisible().catch(() => false);
-    expect(anyVisible).toBe(true);
+    await seedCards([]);
+    await expect(page.locator('[data-testid="backlog-pile-empty"]')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="backlog-card"]')).toHaveCount(0);
   });
 
-  test('backlog card shows priority and target info', async () => {
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().addWindow('backlog', {
-        title: 'Backlog',
-        iconName: 'KanbanSquare',
-        size: { width: 720, height: 480 },
-      });
-    });
-    await page.waitForTimeout(600);
-    await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().setBacklogCards([
-        { filename: 'task-5.md', taskId: 'task-5', targetAgent: 'security', targetModule: 'auth', priority: 'critical', status: 'pending', title: 'Audit auth module', body: 'Review all authentication flows.' },
-      ]);
-    });
-    await page.waitForTimeout(400);
-    await expect(page.locator('text=Audit auth module')).toBeVisible({ timeout: 3000 });
-    // Should show target info (agent → module)
-    await expect(page.locator('text=security')).toBeVisible({ timeout: 2000 });
+  test('backlog card shows its priority', async () => {
+    await openBacklogWindow();
+    await seedCards([
+      backlogCard({
+        filename: 'task-5.md', taskId: 'task-5', priority: 'superHigh',
+        title: 'Audit auth module', description: 'Review all authentication flows.',
+      }),
+    ]);
+
+    const cardEl = page.locator('[data-testid="backlog-card"]', { hasText: 'Audit auth module' });
+    await expect(cardEl).toBeVisible({ timeout: 3000 });
+    // PRIORITY_CONFIG.superHigh.label === 'Critical' (priorityConfig.ts),
+    // rendered as the priority icon's title attribute. targetAgent/
+    // targetModule ("target info" in the old test) are vestigial-only under
+    // the v2 schema (F0 spec §1.1) and have no UI surface any more.
+    await expect(cardEl.locator('[title="Critical"]')).toBeVisible();
   });
 
-  test('multiple cards per column render correctly', async () => {
+  test('multiple cards render correctly in the pile', async () => {
+    await openBacklogWindow();
+    await seedCards([
+      backlogCard({ filename: 't1.md', taskId: 't1', title: 'Pending Task 1' }),
+      backlogCard({ filename: 't2.md', taskId: 't2', title: 'Pending Task 2' }),
+      backlogCard({ filename: 't3.md', taskId: 't3', title: 'Pending Task 3' }),
+    ]);
+
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Pending Task 1' })).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Pending Task 2' })).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Pending Task 3' })).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="backlog-card"]')).toHaveCount(3);
+  });
+
+  test('a status filter chip hides cards of that status', async () => {
+    await openBacklogWindow();
+    await seedCards([
+      backlogCard({ filename: 'todo.md', taskId: 'todo-1', status: 'todo', title: 'Todo Card' }),
+      backlogCard({ filename: 'doing.md', taskId: 'doing-1', status: 'doing', title: 'Doing Card' }),
+    ]);
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Todo Card' })).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Doing Card' })).toBeVisible({ timeout: 3000 });
+
+    const todoChip = page.locator('[data-testid="backlog-filters"]').getByRole('button', { name: 'To Do' });
+    await expect(todoChip).toHaveAttribute('aria-pressed', 'true');
+    await todoChip.click();
+    await expect(todoChip).toHaveAttribute('aria-pressed', 'false');
+
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Todo Card' })).not.toBeVisible({ timeout: 2000 });
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Doing Card' })).toBeVisible();
+  });
+
+  test('search filters cards by title', async () => {
+    await openBacklogWindow();
+    await seedCards([
+      backlogCard({ filename: 'task-1.md', taskId: 'task-1', title: 'Fix login button' }),
+      backlogCard({ filename: 'task-2.md', taskId: 'task-2', title: 'Optimize API endpoints' }),
+    ]);
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Fix login button' })).toBeVisible({ timeout: 3000 });
+
+    await page.locator('[aria-label="Search backlog"]').fill('login');
+    await page.waitForTimeout(200);
+
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Fix login button' })).toBeVisible();
+    await expect(page.locator('[data-testid="backlog-card"]', { hasText: 'Optimize API endpoints' })).not.toBeVisible();
+  });
+
+  test('autoflow launcher materializes a frame and optimistically marks the card running (harness mocked)', async () => {
+    await openBacklogWindow();
+    await seedCards([
+      backlogCard({
+        filename: 'task-launch.md', taskId: 'task-launch', title: 'Autoflow Launch Test',
+        description: 'Exercise the autoflow launcher end to end.',
+      }),
+    ]);
+
+    const cardEl = page.locator('[data-testid="backlog-card"]', { hasText: 'Autoflow Launch Test' });
+    await expect(cardEl).toBeVisible({ timeout: 3000 });
+
+    // The Meta-Agent assembly (assemblePipeline) and the harness dispatch
+    // (startHarness) both require a real AI/IPC round trip this E2E
+    // environment cannot provide deterministically — same constraint
+    // documented in new-features.spec.ts's Auto-Chat widget coverage. Stub
+    // both fluxorAPI seams launchActions.ts's launchAutoflow calls so the
+    // click still exercises the REAL LaunchMenu -> launchActions.ts ->
+    // insertPipelineAssembly wiring end to end, without a real backend.
     await page.evaluate(() => {
-      const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().addWindow('backlog', {
-        title: 'Backlog',
-        iconName: 'KanbanSquare',
-        size: { width: 720, height: 480 },
+      const api = (window as any).fluxorAPI;
+      api.assemblePipeline = async () => ({
+        success: true,
+        data: {
+          frameTitle: 'E2E Autoflow Frame',
+          description: 'Materialized by the autoflow launcher e2e test.',
+          missingCapabilitiesRequested: [],
+          steps: [
+            { id: 'step-1', prompt: 'Do the thing', roleId: 'general', modIds: [], prevStepIds: [] },
+          ],
+        },
       });
+      api.startHarness = async () => ({ success: true });
     });
-    await page.waitForTimeout(600);
-    await page.evaluate(() => {
+
+    await cardEl.locator('[data-testid="launch-menu-trigger"]').click();
+    await cardEl.getByRole('menuitem', { name: 'Autoflow' }).click();
+
+    await expect(page.locator('[aria-label="Pipeline frame E2E Autoflow Frame"]')).toBeVisible({ timeout: 5000 });
+
+    // Optimistic write-back (F0 spec §3.4): the SAME card flips to
+    // doing/running immediately, without waiting for a real run to complete.
+    await expect(cardEl.locator('[data-testid="run-state-overlay"][data-run-state="running"]')).toBeVisible({ timeout: 3000 });
+    const cardState = await page.evaluate(() => {
       const ds = (window as any).__DESKTOP_STORE__;
-      if (!ds) return;
-      ds.getState().setBacklogCards([
-        { filename: 't1.md', taskId: 't1', targetAgent: 'fe', targetModule: 'ui', priority: 'high', status: 'pending', title: 'Pending Task 1', body: '' },
-        { filename: 't2.md', taskId: 't2', targetAgent: 'fe', targetModule: 'ui', priority: 'medium', status: 'pending', title: 'Pending Task 2', body: '' },
-        { filename: 't3.md', taskId: 't3', targetAgent: 'be', targetModule: 'api', priority: 'low', status: 'pending', title: 'Pending Task 3', body: '' },
-      ]);
+      const card = ds.getState().backlogCards.find((c: any) => c.filename === 'task-launch.md');
+      return card ? { status: card.status, runState: card.runState } : null;
     });
-    await page.waitForTimeout(400);
-    await expect(page.locator('text=Pending Task 1')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('text=Pending Task 2')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('text=Pending Task 3')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('text=3 cards')).toBeVisible({ timeout: 3000 });
+    expect(cardState).toEqual({ status: 'doing', runState: 'running' });
   });
 });
 
