@@ -24,7 +24,7 @@ import { PRIORITY_CONFIG } from './priorityConfig';
 import { StatusShape } from './StatusShape';
 import { EpicBadge } from './EpicBadge';
 import { LaunchMenu } from './LaunchMenu';
-import { launchAutoflow, launchExistingFlow } from './launchActions';
+import { launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
 import type { BacklogCard } from '@/types/market';
 import type { CanvasGraphNode, FrameGraphNode } from '@/types/desktop';
 
@@ -75,6 +75,10 @@ export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOv
     () => mentalNodes.filter(isFrameGraphNode).map((f) => ({ id: f.id, title: f.data.title })),
     [mentalNodes],
   );
+  // Bound once — see LaunchMenu.tsx's own comment on why a locally-bound
+  // const (not a re-evaluated `card.epic` read) is what survives narrowing
+  // into a closure.
+  const epic = card.epic;
 
   return (
     <div
@@ -132,6 +136,7 @@ export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOv
               frames={frames}
               onLaunchExisting={(frameId) => { void launchExistingFlow(card, frameId, activeBacklogDir); }}
               onLaunchAutoflow={() => { void launchAutoflow(card, activeBacklogDir); }}
+              onLaunchEpic={epic ? () => { void launchEpicFlow(epic, activeBacklogDir); } : undefined}
             />
           </div>
         </div>

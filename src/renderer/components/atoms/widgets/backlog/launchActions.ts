@@ -38,6 +38,7 @@
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
 import { calculateSafeInsertionPoint } from '@/renderer/store/spatial-engine';
+import { epicToPipelineAssembly, slugify } from './epicPipeline';
 import type { BacklogCard } from '@/types/market';
 import type { PipelineAssembly } from '@/types/meta-agent';
 
@@ -140,5 +141,47 @@ export async function launchAutoflow(card: BacklogCard, backlogDir: string | nul
   centerViewportOn(position, frameSize);
   if (useHarnessStore.getState().executionStatus !== 'error') {
     optimisticallyMarkRunning(backlogDir, card.filename);
+  }
+}
+
+/**
+ * Mode 3 — "Flow por épica": the deterministic `epicToPipelineAssembly`
+ * mapper (no LLM call) replaces the Meta-Agent step autoflow uses, but from
+ * there on reuses the exact same seam: the SAME `insertPipelineAssembly` and
+ * the SAME `runFromStep`.
+ *
+ * Per the F0 spec §3.4 launch-time row, only the run's ROOT card — the
+ * unique epic member whose assembled step has an empty `prevStepIds` (always
+ * the highest-priority, lowest-`order` card; `epicToPipelineAssembly`
+ * guarantees exactly one such step) — gets the immediate optimistic write.
+ * The rest of the epic's cards simply wait for their own individual
+ * `StepStatusChanged:'running'` event as the harness reaches their turn in
+ * the DAG (F4, out of this task's scope) — writing all of them here would
+ * double-report cards that haven't actually started yet.
+ */
+export async function launchEpicFlow(epicName: string, backlogDir: string | null): Promise<void> {
+  const { backlogCards, mentalNodes, insertPipelineAssembly } = useDesktopStore.getState();
+  const epicCards = backlogCards.filter((c) => c.epic === epicName);
+  if (epicCards.length === 0) return;
+
+  const assembly = epicToPipelineAssembly(epicCards, epicName);
+  const frameSize = estimateFrameSize(assembly);
+  const position = calculateSafeInsertionPoint(mentalNodes, frameSize.width, frameSize.height);
+  const { frameId } = insertPipelineAssembly({
+    assembly,
+    position,
+    frameWidth: frameSize.width,
+    frameHeight: frameSize.height,
+  });
+
+  // Same root-resolution pattern as launchAutoflow, reused verbatim.
+  const rootStep = assembly.steps.find((s) => s.prevStepIds.length === 0);
+  const rootNodeId = `${frameId}-${rootStep?.id}`;
+  await useHarnessStore.getState().runFromStep(rootNodeId);
+
+  centerViewportOn(position, frameSize);
+  if (useHarnessStore.getState().executionStatus !== 'error') {
+    const rootCard = rootStep ? epicCards.find((c) => slugify(c.taskId) === rootStep.id) : undefined;
+    if (rootCard) optimisticallyMarkRunning(backlogDir, rootCard.filename);
   }
 }

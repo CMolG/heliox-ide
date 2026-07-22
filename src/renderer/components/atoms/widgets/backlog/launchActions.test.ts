@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
-import { launchAutoflow, launchExistingFlow } from './launchActions';
+import { launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
 import type { BacklogCard } from '@/types/market';
 import type { PipelineAssembly } from '@/types/meta-agent';
 
@@ -161,5 +161,49 @@ describe('launchAutoflow (F3 mode 2 — autoflow)', () => {
     expect(useDesktopStore.getState().mentalNodes.some((n) => n.type === 'frame')).toBe(true);
     expect(updateBacklogCardStatus).not.toHaveBeenCalled();
     expect(useDesktopStore.getState().backlogCards[0].status).toBe('todo');
+  });
+});
+
+describe('launchEpicFlow (F3 mode 3 — flow por épica)', () => {
+  it('gathers every card sharing the epic, materializes via insertPipelineAssembly, runs from the root, and marks only the root card running', async () => {
+    const startHarness = vi.fn().mockResolvedValue({ success: true });
+    const updateBacklogCardStatus = vi.fn().mockResolvedValue({ success: true });
+    window.fluxorAPI = { startHarness, onHarnessEvent: vi.fn(() => vi.fn()), updateBacklogCardStatus } as any;
+
+    const high = makeCard({ filename: 'high.md', taskId: 'HIGH', priority: 'high', epic: 'Security' });
+    const low = makeCard({ filename: 'low.md', taskId: 'LOW', priority: 'low', epic: 'Security' });
+    const other = makeCard({ filename: 'other.md', taskId: 'OTHER', epic: 'Billing' });
+    useDesktopStore.setState({ backlogCards: [low, high, other] });
+
+    await launchEpicFlow('Security', '/proj/.backlog');
+
+    // Only the 2 Security cards became steps — Billing's card is excluded.
+    expect(startHarness).toHaveBeenCalledTimes(1);
+    const dispatchedFlow = startHarness.mock.calls[0][0];
+    expect(Object.keys(dispatchedFlow.stepsRecord)).toHaveLength(2);
+
+    const frame = useDesktopStore.getState().mentalNodes.find((n) => n.type === 'frame');
+    expect(frame).toBeDefined();
+    // HIGH sorts first (superHigh/high before low) -> it is the DAG root.
+    expect(dispatchedFlow.rootStepId).toBe(`${frame!.id}-high`);
+
+    expect(updateBacklogCardStatus).toHaveBeenCalledTimes(1);
+    expect(updateBacklogCardStatus).toHaveBeenCalledWith('/proj/.backlog', 'high.md', 'doing', undefined, 'running');
+    const cards = useDesktopStore.getState().backlogCards;
+    expect(cards.find((c) => c.filename === 'high.md')).toMatchObject({ status: 'doing', runState: 'running' });
+    // The non-root epic member is untouched — it waits for its own StepStatusChanged (F4).
+    expect(cards.find((c) => c.filename === 'low.md')).toMatchObject({ status: 'todo', runState: 'idle' });
+    expect(cards.find((c) => c.filename === 'other.md')).toMatchObject({ status: 'todo', runState: 'idle' });
+  });
+
+  it('is a no-op when no card carries the given epic', async () => {
+    const startHarness = vi.fn();
+    window.fluxorAPI = { startHarness, onHarnessEvent: vi.fn(() => vi.fn()) } as any;
+    useDesktopStore.setState({ backlogCards: [makeCard({ epic: 'Other' })] });
+
+    await launchEpicFlow('Security', '/proj/.backlog');
+
+    expect(startHarness).not.toHaveBeenCalled();
+    expect(useDesktopStore.getState().mentalNodes).toHaveLength(0);
   });
 });

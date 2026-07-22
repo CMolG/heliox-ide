@@ -44,7 +44,7 @@ import { StatusShape } from './StatusShape';
 import { BacklogModalSidebar } from './BacklogModalSidebar';
 import { formatCardDate } from './BacklogCardItem';
 import { LaunchMenu } from './LaunchMenu';
-import { launchAutoflow, launchExistingFlow } from './launchActions';
+import { launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
 import type { BacklogCard, BacklogComment } from '@/types/market';
 import type { CanvasGraphNode, FrameGraphNode } from '@/types/desktop';
 
@@ -139,6 +139,10 @@ export function BacklogCardModal() {
   const relatedCards = modalCard.related
     .map((taskId) => backlogCards.find((c) => c.taskId === taskId))
     .filter((c): c is BacklogCard => !!c);
+  // Bound once — see LaunchMenu.tsx's own comment on why a locally-bound
+  // const (not a re-evaluated `modalCard.epic` read) is what survives
+  // narrowing into a closure.
+  const epic = modalCard.epic;
 
   return (
     <div
@@ -182,6 +186,7 @@ export function BacklogCardModal() {
               frames={frames}
               onLaunchExisting={(frameId) => { void launchExistingFlow(modalCard, frameId, activeBacklogDir); }}
               onLaunchAutoflow={() => { void launchAutoflow(modalCard, activeBacklogDir); }}
+              onLaunchEpic={epic ? () => { void launchEpicFlow(epic, activeBacklogDir); } : undefined}
             />
             {isEditing ? (
               <button onClick={handleSaveEdit} aria-label="Save edit" className="p-3 hover:bg-emerald-100 text-emerald-700 rounded-full transition-colors border border-emerald-300">
