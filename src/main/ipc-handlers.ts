@@ -1114,8 +1114,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     _event,
     backlogDir: string,
     filename: string,
-    newStatus: string,
+    newStatus?: string,
     newOrder?: number,
+    newRunState?: string,
   ) => {
     try {
       const filePath = join(backlogDir, filename);
@@ -1126,20 +1127,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       let fm = frontmatterMatch[1];
       const rest = content.slice(frontmatterMatch[0].length);
 
-      // Replace or add status field
-      if (/^status:\s*.+$/m.test(fm)) {
-        fm = fm.replace(/^status:\s*.+$/m, `status: ${newStatus}`);
-      } else {
-        fm = fm.trimEnd() + `\nstatus: ${newStatus}`;
+      if (newStatus !== undefined) {
+        fm = /^status:\s*.+$/m.test(fm)
+          ? fm.replace(/^status:\s*.+$/m, `status: ${newStatus}`)
+          : fm.trimEnd() + `\nstatus: ${newStatus}`;
       }
-
-      // Replace or add order field when provided
       if (newOrder !== undefined) {
-        if (/^order:\s*.+$/m.test(fm)) {
-          fm = fm.replace(/^order:\s*.+$/m, `order: ${newOrder}`);
-        } else {
-          fm = fm.trimEnd() + `\norder: ${newOrder}`;
-        }
+        fm = /^order:\s*.+$/m.test(fm)
+          ? fm.replace(/^order:\s*.+$/m, `order: ${newOrder}`)
+          : fm.trimEnd() + `\norder: ${newOrder}`;
+      }
+      if (newRunState !== undefined) {
+        fm = /^runState:\s*.+$/m.test(fm)
+          ? fm.replace(/^runState:\s*.+$/m, `runState: ${newRunState}`)
+          : fm.trimEnd() + `\nrunState: ${newRunState}`;
       }
 
       const updatedContent = `---\n${fm}\n---${rest}`;
@@ -1210,7 +1211,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('fluxor:update-backlog-cards', async (
     _event,
     backlogDir: string,
-    updates: Array<{ filename: string; status?: string; order?: number }>,
+    updates: Array<{ filename: string; status?: string; order?: number; runState?: string }>,
   ) => {
     try {
       for (const update of updates) {
@@ -1235,6 +1236,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
             fm = fm.replace(/^order:\s*.+$/m, `order: ${update.order}`);
           } else {
             fm = fm.trimEnd() + `\norder: ${update.order}`;
+          }
+        }
+
+        if (update.runState !== undefined) {
+          if (/^runState:\s*.+$/m.test(fm)) {
+            fm = fm.replace(/^runState:\s*.+$/m, `runState: ${update.runState}`);
+          } else {
+            fm = fm.trimEnd() + `\nrunState: ${update.runState}`;
           }
         }
 
