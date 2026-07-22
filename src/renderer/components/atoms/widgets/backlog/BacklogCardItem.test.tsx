@@ -88,3 +88,39 @@ describe('BacklogCardItem', () => {
     expect(screen.getByTestId('overlay-slot')).toBeInTheDocument();
   });
 });
+
+describe('runState overlay (F4 — write-back overlay, F0 spec §3.1)', () => {
+  it('renders nothing for idle (no explicit override)', () => {
+    render(<BacklogCardItem card={makeCard({ runState: 'idle' })} onOpen={() => {}} isSelected={false} onSelect={() => {}} />);
+    expect(screen.queryByTestId('run-state-overlay')).not.toBeInTheDocument();
+  });
+
+  it('renders a spinner overlay for running', () => {
+    render(<BacklogCardItem card={makeCard({ runState: 'running' })} onOpen={() => {}} isSelected={false} onSelect={() => {}} />);
+    expect(screen.getByTestId('run-state-overlay')).toHaveAttribute('data-run-state', 'running');
+  });
+
+  it('renders a check overlay for completed', () => {
+    render(<BacklogCardItem card={makeCard({ runState: 'completed' })} onOpen={() => {}} isSelected={false} onSelect={() => {}} />);
+    expect(screen.getByTestId('run-state-overlay')).toHaveAttribute('data-run-state', 'completed');
+  });
+
+  it('renders a cross overlay for failed', () => {
+    render(<BacklogCardItem card={makeCard({ runState: 'failed' })} onOpen={() => {}} isSelected={false} onSelect={() => {}} />);
+    expect(screen.getByTestId('run-state-overlay')).toHaveAttribute('data-run-state', 'failed');
+  });
+
+  it('an explicit runStateOverlay prop still overrides the computed default', () => {
+    render(
+      <BacklogCardItem
+        card={makeCard({ runState: 'running' })}
+        onOpen={() => {}}
+        isSelected={false}
+        onSelect={() => {}}
+        runStateOverlay={<span data-testid="overlay-slot">custom</span>}
+      />
+    );
+    expect(screen.getByTestId('overlay-slot')).toBeInTheDocument();
+    expect(screen.queryByTestId('run-state-overlay')).not.toBeInTheDocument();
+  });
+});

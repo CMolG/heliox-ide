@@ -106,4 +106,18 @@ describe('BacklogCardModal', () => {
     fireEvent.click(screen.getByTestId('backlog-card-modal'));
     expect(useDesktopStore.getState().canvasModalCard).toBeNull();
   });
+
+  it('shows the runState overlay in the header next to the status shape (F4)', () => {
+    const card = makeCard({ runState: 'failed' });
+    useDesktopStore.setState({ canvasModalCard: card });
+    render(<BacklogCardModal />);
+    expect(screen.getByTestId('run-state-overlay')).toHaveAttribute('data-run-state', 'failed');
+  });
+
+  it('shows no runState overlay when idle', () => {
+    const card = makeCard({ runState: 'idle' });
+    useDesktopStore.setState({ canvasModalCard: card });
+    render(<BacklogCardModal />);
+    expect(screen.queryByTestId('run-state-overlay')).not.toBeInTheDocument();
+  });
 });

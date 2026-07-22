@@ -42,7 +42,7 @@ import { STATUS_CONFIG } from './statusConfig';
 import { PRIORITY_CONFIG } from './priorityConfig';
 import { StatusShape } from './StatusShape';
 import { BacklogModalSidebar } from './BacklogModalSidebar';
-import { formatCardDate } from './BacklogCardItem';
+import { formatCardDate, runStateOverlayIcon } from './BacklogCardItem';
 import { LaunchMenu } from './LaunchMenu';
 import { launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
 import type { BacklogCard, BacklogComment } from '@/types/market';
@@ -161,6 +161,7 @@ export function BacklogCardModal() {
             <div className="flex items-center gap-3 mb-2">
               <span className="text-xs font-black bg-black text-white px-3 py-1 rounded-full uppercase tracking-widest">{modalCard.taskId}</span>
               <StatusShape sides={statusObj.sides} className="w-6 h-6" fillClass={statusObj.fillClass} strokeClass={statusObj.strokeClass} />
+              {runStateOverlayIcon(modalCard.runState)}
               <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-extrabold uppercase ${statusObj.colorClass}`}>
                 <LucideIcon name={statusObj.icon} size={16} strokeWidth={2.5} />
                 {statusObj.label}

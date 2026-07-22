@@ -25,7 +25,7 @@ import { StatusShape } from './StatusShape';
 import { EpicBadge } from './EpicBadge';
 import { LaunchMenu } from './LaunchMenu';
 import { launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
-import type { BacklogCard } from '@/types/market';
+import type { BacklogCard, BacklogRunState } from '@/types/market';
 import type { CanvasGraphNode, FrameGraphNode } from '@/types/desktop';
 
 function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
@@ -53,12 +53,48 @@ function excerptOf(description: string): string {
   return line?.trim() ?? '';
 }
 
+/**
+ * F4 — the `runState` overlay (F0 spec §3.1: "se pinta como overlay...
+ * nunca como columna/filtro"): spinner for `running`, check for `completed`,
+ * cross for `failed`, nothing for `idle`. Exported so both this file's own
+ * default (below) and BacklogCardModal.tsx's header can render the exact
+ * same icon for the exact same runState, mirroring the existing
+ * `formatCardDate` cross-import convention between these two files.
+ */
+const RUN_STATE_OVERLAY_CONFIG: Record<Exclude<BacklogRunState, 'idle'>, { icon: string; className: string; label: string }> = {
+  running: { icon: 'Loader2', className: 'animate-spin text-amber-600', label: 'Running' },
+  completed: { icon: 'CheckCircle', className: 'text-emerald-600', label: 'Completed' },
+  failed: { icon: 'XCircle', className: 'text-red-600', label: 'Failed' },
+};
+
+export function runStateOverlayIcon(runState: BacklogRunState): React.ReactNode {
+  if (runState === 'idle') return null;
+  const cfg = RUN_STATE_OVERLAY_CONFIG[runState];
+  return (
+    <span
+      data-testid="run-state-overlay"
+      data-run-state={runState}
+      title={cfg.label}
+      aria-label={cfg.label}
+      className={`inline-flex items-center justify-center ${cfg.className}`}
+    >
+      <LucideIcon name={cfg.icon} size={16} strokeWidth={2.5} />
+    </span>
+  );
+}
+
 export interface BacklogCardItemProps {
   card: BacklogCard;
   onOpen: () => void;
   isSelected: boolean;
   onSelect: (filename: string, event: React.MouseEvent) => void;
-  /** F4 write-back overlay slot (spinner/check/cross next to the StatusShape) — wired in F4, unused in F2. */
+  /**
+   * F4 write-back overlay slot (spinner/check/cross next to the
+   * StatusShape). Optional explicit override — when omitted (the normal
+   * case), the render below falls back to `runStateOverlayIcon(card.runState)`
+   * so the pile always reflects the card's live runState with zero extra
+   * wiring from callers.
+   */
   runStateOverlay?: React.ReactNode;
 }
 
@@ -121,7 +157,7 @@ export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOv
         <div className="flex flex-wrap items-center gap-2 mb-2">
           {/* Status Shape (outside the badge) */}
           <StatusShape sides={statusObj.sides} className="w-5 h-5" fillClass={statusObj.fillClass} strokeClass={statusObj.strokeClass} />
-          {runStateOverlay}
+          {runStateOverlay ?? runStateOverlayIcon(card.runState)}
 
           {/* Status Badge */}
           <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-extrabold uppercase ${statusObj.colorClass}`}>
