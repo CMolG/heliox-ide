@@ -362,9 +362,12 @@ export interface FluxorAPI {
     projectName: string;
   }>>;
   initBacklog: (projectPath: string) => Promise<{ success: boolean; backlogPath?: string; error?: string }>;
-  updateBacklogCardStatus: (backlogDir: string, filename: string, newStatus: string) => Promise<{ success: boolean; error?: string }>;
-  updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number }>) => Promise<{ success: boolean; error?: string }>;
+  updateBacklogCardStatus: (backlogDir: string, filename: string, newStatus?: string, newOrder?: number, newRunState?: string) => Promise<{ success: boolean; error?: string }>;
+  updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number; runState?: string }>) => Promise<{ success: boolean; error?: string }>;
   readBacklogDir: (backlogDir: string) => Promise<import('./market').BacklogCard[]>;
+  watchBacklogDir: (backlogDir: string, projectRoot: string) => Promise<{ success: boolean; error?: string }>;
+  unwatchBacklogDir: (backlogDir: string) => Promise<{ success: boolean; error?: string }>;
+  onBacklogChanged: (callback: (payload: { backlogDir: string; cards: import('./market').BacklogCardV2[] }) => void) => () => void;
   approveDiff: (diffId: string) => Promise<IpcResult>;
   rejectDiff: (diffId: string, feedback: string) => Promise<IpcResult>;
   shutdown: () => Promise<IpcResult>;

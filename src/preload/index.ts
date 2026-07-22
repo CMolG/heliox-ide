@@ -23,6 +23,7 @@ import type {
   ModelPolicy,
 } from '../types/ipc-events';
 import type { BrowserAction } from '../types/browser';
+import type { BacklogCardV2 } from '../types/market';
 
 const fluxorAPI: FluxorAPI = {
   initBaselines: (flows: Flow[]) =>
@@ -199,11 +200,23 @@ const fluxorAPI: FluxorAPI = {
   initBacklog: (projectPath: string) =>
     ipcRenderer.invoke('fluxor:init-backlog', projectPath),
 
-  updateBacklogCardStatus: (backlogDir: string, filename: string, newStatus: string) =>
-    ipcRenderer.invoke('fluxor:update-backlog-card-status', backlogDir, filename, newStatus),
+  updateBacklogCardStatus: (backlogDir: string, filename: string, newStatus?: string, newOrder?: number, newRunState?: string) =>
+    ipcRenderer.invoke('fluxor:update-backlog-card-status', backlogDir, filename, newStatus, newOrder, newRunState),
 
-  updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number }>) =>
+  updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number; runState?: string }>) =>
     ipcRenderer.invoke('fluxor:update-backlog-cards', backlogDir, updates),
+
+  watchBacklogDir: (backlogDir: string, projectRoot: string) =>
+    ipcRenderer.invoke('fluxor:watch-backlog-dir', backlogDir, projectRoot),
+
+  unwatchBacklogDir: (backlogDir: string) =>
+    ipcRenderer.invoke('fluxor:unwatch-backlog-dir', backlogDir),
+
+  onBacklogChanged: (callback: (payload: { backlogDir: string; cards: BacklogCardV2[] }) => void) => {
+    const handler = (_event: IpcRendererEvent, data: { backlogDir: string; cards: BacklogCardV2[] }) => callback(data);
+    ipcRenderer.on('fluxor:backlog-changed', handler);
+    return () => { ipcRenderer.removeListener('fluxor:backlog-changed', handler); };
+  },
 
   readBacklogDir: (backlogDir: string) =>
     ipcRenderer.invoke('fluxor:read-backlog-dir', backlogDir),
