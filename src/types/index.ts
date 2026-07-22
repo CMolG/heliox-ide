@@ -364,6 +364,12 @@ export interface FluxorAPI {
   initBacklog: (projectPath: string) => Promise<{ success: boolean; backlogPath?: string; error?: string }>;
   updateBacklogCardStatus: (backlogDir: string, filename: string, newStatus?: string, newOrder?: number, newRunState?: string) => Promise<{ success: boolean; error?: string }>;
   updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number; runState?: string }>) => Promise<{ success: boolean; error?: string }>;
+  /** F2 Task 9 — the modal's edit-save and comment-submit path (title/description overwrite; a `newComment` appends). */
+  updateBacklogCardContent: (
+    backlogDir: string,
+    filename: string,
+    changes: { title?: string; description?: string; newComment?: { author: string; text: string } },
+  ) => Promise<{ success: boolean; error?: string }>;
   readBacklogDir: (backlogDir: string) => Promise<import('./market').BacklogCard[]>;
   watchBacklogDir: (backlogDir: string, projectRoot: string) => Promise<{ success: boolean; error?: string }>;
   unwatchBacklogDir: (backlogDir: string) => Promise<{ success: boolean; error?: string }>;

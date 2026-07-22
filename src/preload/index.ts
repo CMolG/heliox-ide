@@ -206,6 +206,12 @@ const fluxorAPI: FluxorAPI = {
   updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number; runState?: string }>) =>
     ipcRenderer.invoke('fluxor:update-backlog-cards', backlogDir, updates),
 
+  updateBacklogCardContent: (
+    backlogDir: string,
+    filename: string,
+    changes: { title?: string; description?: string; newComment?: { author: string; text: string } },
+  ) => ipcRenderer.invoke('fluxor:update-backlog-card-content', backlogDir, filename, changes),
+
   watchBacklogDir: (backlogDir: string, projectRoot: string) =>
     ipcRenderer.invoke('fluxor:watch-backlog-dir', backlogDir, projectRoot),
 

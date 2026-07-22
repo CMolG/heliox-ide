@@ -43,7 +43,7 @@ import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
 import { registerMcpCommandPolicyIpcHandlers } from './harness-engine/mcp-command-policy';
 import { registerScorecardIpc, registerArenaIpc } from './performance-frontier/ipc';
 import { registerTelemetryIpcHandlers } from './telemetry-ping';
-import { parseBacklogCard } from './backlog/frontmatter';
+import { parseBacklogCard, renderBody, serializeBacklogCard } from './backlog/frontmatter';
 import type { BacklogCard } from '../types/market';
 
 const execFileAsync = promisify(execFile);
@@ -1113,6 +1113,49 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       }
 
       const updatedContent = `---\n${fm}\n---${rest}`;
+      await writeFile(filePath, updatedContent, 'utf-8');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
+  // ─── Update Backlog Card Content (title/description/new comment) ──
+  //
+  // F2 Task 9 — the modal's edit-save and comment-submit both funnel through
+  // this one generalized read-modify-write path (mirrors
+  // update-backlog-card-status's file-read-modify-write shape, but rebuilds
+  // the whole body via the v2 serializer instead of a frontmatter-only regex
+  // patch, since title/description/comments all live in the body, not
+  // frontmatter). New comments append at the end (F0 spec §1.2).
+  ipcMain.handle('fluxor:update-backlog-card-content', async (
+    _event,
+    backlogDir: string,
+    filename: string,
+    changes: { title?: string; description?: string; newComment?: { author: string; text: string } },
+  ) => {
+    try {
+      const filePath = join(backlogDir, filename);
+      const content = await readFile(filePath, 'utf-8');
+      const card = await parseBacklogCard(filePath, content, { projectRoot: backlogDir });
+      if (!card) return { success: false, error: 'Could not parse card' };
+
+      const nextTitle = changes.title ?? card.title;
+      const nextDescription = changes.description ?? card.description;
+      const nextComments = changes.newComment
+        ? [...card.comments, { author: changes.newComment.author, date: new Date().toISOString(), text: changes.newComment.text }]
+        : card.comments;
+
+      const updatedCard: BacklogCard = {
+        ...card,
+        title: nextTitle,
+        description: nextDescription,
+        comments: nextComments,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const body = renderBody(nextTitle, nextDescription, nextComments, card.attachments);
+      const updatedContent = serializeBacklogCard(updatedCard, body);
       await writeFile(filePath, updatedContent, 'utf-8');
       return { success: true };
     } catch (err) {

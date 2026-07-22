@@ -315,6 +315,16 @@ interface DesktopStore {
   // Backlog
   backlogCards: BacklogCard[];
   setBacklogCards: (cards: BacklogCard[]) => void;
+  /**
+   * Directory backing the currently-open backlog (set by
+   * BacklogBentoWidget's picker/back navigation — F2 Task 10). Read by
+   * BacklogCardModal (F2 Task 9) to resolve where to persist content edits:
+   * the modal is a canvas-level surface (mounted in SeamlessCanvas.tsx, not
+   * inside the widget's own wrapper) so it has no other route to this path.
+   * Transient, not persisted (mirrors canvasModalCard's own treatment).
+   */
+  activeBacklogDir: string | null;
+  setActiveBacklogDir: (dir: string | null) => void;
 
   // Connections
   connections: WindowConnection[];
@@ -1001,6 +1011,8 @@ export const useDesktopStore = create<DesktopStore>()(
       // ─── Backlog ───────────────────────────────────────
       backlogCards: [],
       setBacklogCards: (cards) => set({ backlogCards: cards }),
+      activeBacklogDir: null,
+      setActiveBacklogDir: (dir) => set({ activeBacklogDir: dir }),
 
       // ─── Connections ───────────────────────────────────
       connections: [],
