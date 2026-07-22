@@ -24,6 +24,7 @@ import { updateElectronApp } from 'update-electron-app';
 import { registerIpcHandlers } from './ipc-handlers';
 import { registerContextMapIpcHandlers } from './context-map';
 import { registerDevServerIpcHandlers } from './browser/dev-server-watcher';
+import { registerBacklogWatcherIpcHandlers } from './backlog/watcher';
 import { registerBrowserIpcHandlers } from './browser/browser-ipc';
 import { initializeStorage, shutdownStorage } from './storage';
 import { settingsGet, settingsSet } from './storage/settings-store';
@@ -176,6 +177,7 @@ function createWindow(): BrowserWindow {
   registerIpcHandlers(mainWindow);
   registerContextMapIpcHandlers(mainWindow);
   registerDevServerIpcHandlers(mainWindow);
+  registerBacklogWatcherIpcHandlers(mainWindow);
   // M2 — native CDP browser control (no mainWindow needed — no push events)
   registerBrowserIpcHandlers();
 
