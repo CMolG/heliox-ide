@@ -34,7 +34,7 @@
  * reference's Spanish verbatim per Gate 1 — see this task's final report
  * for the exact scoping of that decision.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { theme } from '@/renderer/logic/theme';
@@ -43,7 +43,14 @@ import { PRIORITY_CONFIG } from './priorityConfig';
 import { StatusShape } from './StatusShape';
 import { BacklogModalSidebar } from './BacklogModalSidebar';
 import { formatCardDate } from './BacklogCardItem';
+import { LaunchMenu } from './LaunchMenu';
+import { launchAutoflow, launchExistingFlow } from './launchActions';
 import type { BacklogCard, BacklogComment } from '@/types/market';
+import type { CanvasGraphNode, FrameGraphNode } from '@/types/desktop';
+
+function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
+  return node.type === 'frame';
+}
 
 interface EditForm {
   title: string;
@@ -57,6 +64,14 @@ export function BacklogCardModal() {
   const backlogCards = useDesktopStore((s) => s.backlogCards);
   const setBacklogCards = useDesktopStore((s) => s.setBacklogCards);
   const activeBacklogDir = useDesktopStore((s) => s.activeBacklogDir);
+  // F3 launchers — see launchActions.ts for the actual orchestration (zero
+  // new materializer: runFrameWithContext / assemblePipeline+
+  // insertPipelineAssembly+runFromStep, both already-existing seams).
+  const mentalNodes = useDesktopStore((s) => s.mentalNodes);
+  const frames = useMemo(
+    () => mentalNodes.filter(isFrameGraphNode).map((f) => ({ id: f.id, title: f.data.title })),
+    [mentalNodes],
+  );
 
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<EditForm>({ title: '', description: '' });
@@ -161,6 +176,13 @@ export function BacklogCardModal() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <LaunchMenu
+              variant="full"
+              card={modalCard}
+              frames={frames}
+              onLaunchExisting={(frameId) => { void launchExistingFlow(modalCard, frameId, activeBacklogDir); }}
+              onLaunchAutoflow={() => { void launchAutoflow(modalCard, activeBacklogDir); }}
+            />
             {isEditing ? (
               <button onClick={handleSaveEdit} aria-label="Save edit" className="p-3 hover:bg-emerald-100 text-emerald-700 rounded-full transition-colors border border-emerald-300">
                 <LucideIcon name="Check" size={24} />

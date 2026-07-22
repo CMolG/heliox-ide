@@ -16,13 +16,21 @@
  * reference itself has no multi-select) — kept visually minimal (a ring only
  * when selected) so the unselected/default look stays 1:1.
  */
-import React from 'react';
+import React, { useMemo } from 'react';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
+import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { STATUS_CONFIG } from './statusConfig';
 import { PRIORITY_CONFIG } from './priorityConfig';
 import { StatusShape } from './StatusShape';
 import { EpicBadge } from './EpicBadge';
+import { LaunchMenu } from './LaunchMenu';
+import { launchAutoflow, launchExistingFlow } from './launchActions';
 import type { BacklogCard } from '@/types/market';
+import type { CanvasGraphNode, FrameGraphNode } from '@/types/desktop';
+
+function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
+  return node.type === 'frame';
+}
 
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
@@ -57,6 +65,16 @@ export interface BacklogCardItemProps {
 export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOverlay }: BacklogCardItemProps) {
   const statusObj = STATUS_CONFIG[card.status];
   const priorityInfo = PRIORITY_CONFIG[card.priority] ?? PRIORITY_CONFIG.medium;
+
+  // F3 launchers — see launchActions.ts for the actual orchestration (zero
+  // new materializer: runFrameWithContext / assemblePipeline+
+  // insertPipelineAssembly+runFromStep, both already-existing seams).
+  const mentalNodes = useDesktopStore((s) => s.mentalNodes);
+  const activeBacklogDir = useDesktopStore((s) => s.activeBacklogDir);
+  const frames = useMemo(
+    () => mentalNodes.filter(isFrameGraphNode).map((f) => ({ id: f.id, title: f.data.title })),
+    [mentalNodes],
+  );
 
   return (
     <div
@@ -107,6 +125,15 @@ export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOv
             {statusObj.label}
           </div>
           <EpicBadge epic={card.epic} />
+
+          <div className="ml-auto">
+            <LaunchMenu
+              card={card}
+              frames={frames}
+              onLaunchExisting={(frameId) => { void launchExistingFlow(card, frameId, activeBacklogDir); }}
+              onLaunchAutoflow={() => { void launchAutoflow(card, activeBacklogDir); }}
+            />
+          </div>
         </div>
 
         <h3 className="text-lg sm:text-xl font-black text-black leading-tight mb-2 truncate group-hover:whitespace-normal group-hover:overflow-visible group-hover:line-clamp-none line-clamp-1">{card.title}</h3>
