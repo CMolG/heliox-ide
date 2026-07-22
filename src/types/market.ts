@@ -201,6 +201,53 @@ export interface BacklogCard {
   body: string;
 }
 
+// ─── Backlog Cards v2 (frontmatter schema v2 — see
+// docs/superpowers/specs/2026-07-21-backlog-schema-v2-f0.md). V2-suffixed
+// because BacklogCard/BacklogStatus/BacklogPriority above are still live —
+// consumed by the kanban quintet until the F2 Task 1 cutover promotes these
+// to the canonical unsuffixed names and renames the old ones to Legacy*.
+export type BacklogStatusV2 = 'refine' | 'todo' | 'ready' | 'doing' | 'review' | 'deploy';
+export type BacklogPriorityV2 = 'superHigh' | 'high' | 'medium' | 'low' | 'superLow';
+export type BacklogRunState = 'idle' | 'running' | 'completed' | 'failed';
+
+export interface BacklogComment {
+  author: string;
+  date: string; // ISO-8601
+  text: string;
+}
+
+export interface BacklogAttachment {
+  path: string;
+  name: string;
+  /** Resolved hot via fs.stat at read time — never persisted (F0 spec §1.2). Undefined when the stat fails (moved/deleted file); UI renders "—". */
+  size?: string;
+}
+
+export interface BacklogCardV2 {
+  filename: string;
+  taskId: string;
+  /** Vestigial under v2 — retained for read-compat only (F0 spec §1.1). */
+  targetAgent: string;
+  /** Vestigial under v2 — retained for read-compat only (F0 spec §1.1). */
+  targetModule: string;
+  priority: BacklogPriorityV2;
+  status: BacklogStatusV2;
+  runState: BacklogRunState;
+  order: number;
+  epic?: string;
+  tags: string[];
+  estimate: number;
+  assignees: string[];
+  /** task_id values of OTHER cards, resolved against the loaded backlog — not file paths. */
+  related: string[];
+  createdAt: string; // ISO-8601
+  updatedAt: string; // ISO-8601
+  title: string;
+  description: string;
+  comments: BacklogComment[];
+  attachments: BacklogAttachment[];
+}
+
 // ─── Connector State ─────────────────────────────────────────────
 
 export interface ConnectorState {
