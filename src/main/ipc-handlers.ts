@@ -43,6 +43,8 @@ import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
 import { registerMcpCommandPolicyIpcHandlers } from './harness-engine/mcp-command-policy';
 import { registerScorecardIpc, registerArenaIpc } from './performance-frontier/ipc';
 import { registerTelemetryIpcHandlers } from './telemetry-ping';
+import { parseBacklogCard } from './backlog/frontmatter';
+import type { BacklogCard } from '../types/market';
 
 const execFileAsync = promisify(execFile);
 
@@ -957,52 +959,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // ─── Backlog Cards ─────────────────────────────────────────────
 
   ipcMain.handle('fluxor:read-backlog', async (_event, projectPath: string) => {
+    const backlogDir = join(projectPath, '.backlog');
     try {
-      const backlogDir = join(projectPath, '.backlog');
       const entries = await readdir(backlogDir);
-      const cards: Array<{
-        filename: string;
-        taskId: string;
-        targetAgent: string;
-        targetModule: string;
-        priority: string;
-        status: string;
-        order: number;
-        title: string;
-        body: string;
-      }> = [];
-
+      const cards: BacklogCard[] = [];
       for (const entry of entries) {
         if (!entry.endsWith('.md')) continue;
         try {
-          const content = await readFile(join(backlogDir, entry), 'utf-8');
-          const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-          if (!frontmatterMatch) continue;
-
-          const fm = frontmatterMatch[1];
-          const parseField = (key: string): string => {
-            const match = fm.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-            return match?.[1]?.trim() ?? '';
-          };
-
-          const body = content.slice(frontmatterMatch[0].length).trim();
-          const firstLine = body.split('\n')[0] ?? '';
-          const title = firstLine.replace(/^#+\s*/, '') || entry.replace('.md', '');
-
-          cards.push({
-            filename: entry,
-            taskId: parseField('task_id'),
-            targetAgent: parseField('target_agent'),
-            targetModule: parseField('target_module'),
-            priority: parseField('priority') || 'medium',
-            status: parseField('status') || 'pending',
-            order: parseInt(parseField('order'), 10) || 0,
-            title,
-            body,
-          });
+          const filePath = join(backlogDir, entry);
+          const content = await readFile(filePath, 'utf-8');
+          const card = await parseBacklogCard(filePath, content, { projectRoot: projectPath });
+          if (card) cards.push(card);
         } catch { /* skip unreadable cards */ }
       }
-
       cards.sort((a, b) => a.order - b.order);
       return cards;
     } catch {
@@ -1153,52 +1122,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ─── Read Backlog from Specific Directory ────────────────────────
 
-  ipcMain.handle('fluxor:read-backlog-dir', async (_event, backlogDir: string) => {
+  ipcMain.handle('fluxor:read-backlog-dir', async (_event, backlogDir: string, projectRoot?: string) => {
     try {
       const entries = await readdir(backlogDir);
-      const cards: Array<{
-        filename: string;
-        taskId: string;
-        targetAgent: string;
-        targetModule: string;
-        priority: string;
-        status: string;
-        order: number;
-        title: string;
-        body: string;
-      }> = [];
-
+      const cards: BacklogCard[] = [];
       for (const entry of entries) {
         if (!entry.endsWith('.md')) continue;
         try {
-          const content = await readFile(join(backlogDir, entry), 'utf-8');
-          const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-          if (!frontmatterMatch) continue;
-
-          const fm = frontmatterMatch[1];
-          const parseField = (key: string): string => {
-            const match = fm.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-            return match?.[1]?.trim() ?? '';
-          };
-
-          const body = content.slice(frontmatterMatch[0].length).trim();
-          const firstLine = body.split('\n')[0] ?? '';
-          const title = firstLine.replace(/^#+\s*/, '') || entry.replace('.md', '');
-
-          cards.push({
-            filename: entry,
-            taskId: parseField('task_id'),
-            targetAgent: parseField('target_agent'),
-            targetModule: parseField('target_module'),
-            priority: parseField('priority') || 'medium',
-            status: parseField('status') || 'pending',
-            order: parseInt(parseField('order'), 10) || 0,
-            title,
-            body,
-          });
+          const filePath = join(backlogDir, entry);
+          const content = await readFile(filePath, 'utf-8');
+          const card = await parseBacklogCard(filePath, content, { projectRoot: projectRoot ?? backlogDir });
+          if (card) cards.push(card);
         } catch { /* skip unreadable cards */ }
       }
-
       cards.sort((a, b) => a.order - b.order);
       return cards;
     } catch {

@@ -23,7 +23,7 @@ import type {
   ModelPolicy,
 } from '../types/ipc-events';
 import type { BrowserAction } from '../types/browser';
-import type { BacklogCardV2 } from '../types/market';
+import type { BacklogCard } from '../types/market';
 
 const fluxorAPI: FluxorAPI = {
   initBaselines: (flows: Flow[]) =>
@@ -212,8 +212,8 @@ const fluxorAPI: FluxorAPI = {
   unwatchBacklogDir: (backlogDir: string) =>
     ipcRenderer.invoke('fluxor:unwatch-backlog-dir', backlogDir),
 
-  onBacklogChanged: (callback: (payload: { backlogDir: string; cards: BacklogCardV2[] }) => void) => {
-    const handler = (_event: IpcRendererEvent, data: { backlogDir: string; cards: BacklogCardV2[] }) => callback(data);
+  onBacklogChanged: (callback: (payload: { backlogDir: string; cards: BacklogCard[] }) => void) => {
+    const handler = (_event: IpcRendererEvent, data: { backlogDir: string; cards: BacklogCard[] }) => callback(data);
     ipcRenderer.on('fluxor:backlog-changed', handler);
     return () => { ipcRenderer.removeListener('fluxor:backlog-changed', handler); };
   },

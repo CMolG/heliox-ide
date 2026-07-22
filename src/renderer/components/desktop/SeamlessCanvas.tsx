@@ -30,14 +30,14 @@ import { WindowContextPlugin } from '@/renderer/components/atoms/plugins/WindowC
 import { FileExplorerAppp } from '@/renderer/components/atoms/apps/FileExplorerAppp';
 import { FileViewerApp } from '@/renderer/components/atoms/apps/FileViewerApp';
 import { DiffViewerApp } from '@/renderer/components/atoms/apps/DiffViewerApp';
-import { BacklogKanbanWidget } from '@/renderer/components/atoms/widgets/BacklogKanbanWidget';
+import { BacklogBentoWidget } from '@/renderer/components/atoms/widgets/backlog/BacklogBentoWidget';
 import { PromptDevZoneApp } from '@/renderer/components/atoms/apps/PromptDevZoneApp';
 import { WebPreviewApp } from '@/renderer/components/atoms/apps/WebPreviewApp';
 import { ArenaDashboardApp } from '@/renderer/components/atoms/apps/ArenaDashboardApp';
 import { WidgetLauncher } from './hud/WidgetLauncher';
 import { HudWidgetLayer } from './hud/HudWidgetLayer';
 import { DesktopCanvasBg } from './DesktopCanvasBg';
-import { BacklogCardModal } from './BacklogCardModal';
+import { BacklogCardModal } from '../atoms/widgets/backlog/BacklogCardModal';
 import { LucideIcon } from './LucideIcon';
 // Canvas context menu adopted onto @javadaba/daba-engine's unified ContextMenu
 // (adoption plan #20, javadaba-web Core, Task 10 — this used to be its own
@@ -524,7 +524,7 @@ export function SeamlessCanvas() {
     if (win.type === 'file-explorer') return <FileExplorerAppp windowId={win.id} />;
     if (win.type === 'file-viewer' && win.filePath) return <FileViewerApp windowId={win.id} filePath={win.filePath} />;
     if (win.type === 'diff-viewer') return <DiffViewerApp windowId={win.id} sessionId={win.sessionId} />;
-    if (win.type === 'backlog') return <BacklogKanbanWidget windowId={win.id} />;
+    if (win.type === 'backlog') return <BacklogBentoWidget windowId={win.id} />;
     if (win.type === 'prompt-dev-zone') {
       if (!import.meta.env.DEV) return null;
       return <PromptDevZoneApp windowId={win.id} />;

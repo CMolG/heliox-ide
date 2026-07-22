@@ -11,16 +11,16 @@ import { join } from 'path';
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { parseBacklogCard } from './frontmatter';
-import type { BacklogCardV2 } from '../../types/market';
+import type { BacklogCard } from '../../types/market';
 
 const DEBOUNCE_MS = 300;
 
 interface WatchEntry { fsWatcher: FSWatcher; timer: ReturnType<typeof setTimeout> | null }
 const activeWatches = new Map<string, WatchEntry>();
 
-async function readAllCards(backlogDir: string, projectRoot: string): Promise<BacklogCardV2[]> {
+async function readAllCards(backlogDir: string, projectRoot: string): Promise<BacklogCard[]> {
   const entries = await readdir(backlogDir).catch(() => [] as string[]);
-  const cards: BacklogCardV2[] = [];
+  const cards: BacklogCard[] = [];
   for (const entry of entries) {
     if (!entry.endsWith('.md')) continue;
     try {
@@ -80,7 +80,7 @@ export function stopBacklogWatch(backlogDir?: string): void {
  * Channels ({success, error?} convention, matches dev-server-watcher.ts):
  *   'fluxor:watch-backlog-dir'   args: [backlogDir, projectRoot]
  *   'fluxor:unwatch-backlog-dir' args: [backlogDir]
- * Push event: 'fluxor:backlog-changed' payload: { backlogDir, cards: BacklogCardV2[] }
+ * Push event: 'fluxor:backlog-changed' payload: { backlogDir, cards: BacklogCard[] }
  */
 export function registerBacklogWatcherIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('fluxor:watch-backlog-dir', async (_event, backlogDir: string, projectRoot: string) => {

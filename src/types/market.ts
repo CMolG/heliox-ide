@@ -184,30 +184,34 @@ export interface MarketInventory {
   steps?: MarketStep[];
 }
 
-// ─── Backlog Cards (parsed from .backlog/*.md YAML frontmatter) ──
+// ─── Backlog Cards (legacy, parsed from .backlog/*.md YAML frontmatter v1) ──
+// Superseded by the v2 BacklogCard below (F2 Task 1 cutover, 2026-07-22).
+// Retained under Legacy*-prefixed names for any remaining read-compat use —
+// nothing live constructs these anymore; the old kanban quintet that
+// consumed them was deleted in the same cutover.
 
-export type BacklogPriority = 'critical' | 'high' | 'medium' | 'low';
-export type BacklogStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type LegacyBacklogPriority = 'critical' | 'high' | 'medium' | 'low';
+export type LegacyBacklogStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
-export interface BacklogCard {
+export interface LegacyBacklogCard {
   filename: string;
   taskId: string;
   targetAgent: string;
   targetModule: string;
-  priority: BacklogPriority;
-  status: BacklogStatus;
+  priority: LegacyBacklogPriority;
+  status: LegacyBacklogStatus;
   order: number;
   title: string;
   body: string;
 }
 
 // ─── Backlog Cards v2 (frontmatter schema v2 — see
-// docs/superpowers/specs/2026-07-21-backlog-schema-v2-f0.md). V2-suffixed
-// because BacklogCard/BacklogStatus/BacklogPriority above are still live —
-// consumed by the kanban quintet until the F2 Task 1 cutover promotes these
-// to the canonical unsuffixed names and renames the old ones to Legacy*.
-export type BacklogStatusV2 = 'refine' | 'todo' | 'ready' | 'doing' | 'review' | 'deploy';
-export type BacklogPriorityV2 = 'superHigh' | 'high' | 'medium' | 'low' | 'superLow';
+// docs/superpowers/specs/2026-07-21-backlog-schema-v2-f0.md). Promoted to
+// the canonical unsuffixed names by the F2 Task 1 cutover (2026-07-22): the
+// live read-backlog/read-backlog-dir IPC handlers and the new bento widget
+// consume these; the v1 shape above lives on only as Legacy*.
+export type BacklogStatus = 'refine' | 'todo' | 'ready' | 'doing' | 'review' | 'deploy';
+export type BacklogPriority = 'superHigh' | 'high' | 'medium' | 'low' | 'superLow';
 export type BacklogRunState = 'idle' | 'running' | 'completed' | 'failed';
 
 export interface BacklogComment {
@@ -223,15 +227,15 @@ export interface BacklogAttachment {
   size?: string;
 }
 
-export interface BacklogCardV2 {
+export interface BacklogCard {
   filename: string;
   taskId: string;
   /** Vestigial under v2 — retained for read-compat only (F0 spec §1.1). */
   targetAgent: string;
   /** Vestigial under v2 — retained for read-compat only (F0 spec §1.1). */
   targetModule: string;
-  priority: BacklogPriorityV2;
-  status: BacklogStatusV2;
+  priority: BacklogPriority;
+  status: BacklogStatus;
   runState: BacklogRunState;
   order: number;
   epic?: string;

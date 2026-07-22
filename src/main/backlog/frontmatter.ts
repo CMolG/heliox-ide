@@ -4,11 +4,11 @@
 // import — safe to unit test directly. Legacy mapping tables are verbatim
 // from docs/superpowers/specs/2026-07-21-backlog-schema-v2-f0.md §2.1/§2.2.
 import type {
-  BacklogAttachment, BacklogCardV2, BacklogComment, BacklogPriorityV2, BacklogRunState, BacklogStatusV2,
+  BacklogAttachment, BacklogCard, BacklogComment, BacklogPriority, BacklogRunState, BacklogStatus,
 } from '../../types/market';
 
 // §2.1 — status v1 -> {status v2, runState}
-const LEGACY_STATUS_MAP: Record<string, { status: BacklogStatusV2; runState: BacklogRunState }> = {
+const LEGACY_STATUS_MAP: Record<string, { status: BacklogStatus; runState: BacklogRunState }> = {
   pending:     { status: 'todo',   runState: 'idle' },
   in_progress: { status: 'doing', runState: 'running' },
   completed:   { status: 'review', runState: 'completed' },
@@ -16,7 +16,7 @@ const LEGACY_STATUS_MAP: Record<string, { status: BacklogStatusV2; runState: Bac
 };
 
 // §2.2 — priority v1 -> v2
-const LEGACY_PRIORITY_MAP: Record<string, BacklogPriorityV2> = {
+const LEGACY_PRIORITY_MAP: Record<string, BacklogPriority> = {
   critical: 'superHigh', high: 'high', medium: 'medium', low: 'low',
 };
 
@@ -27,9 +27,9 @@ const V2_RUN_STATES = new Set<string>(['idle', 'running', 'completed', 'failed']
 export function resolveStatusAndRunState(
   rawStatus: unknown,
   rawRunState: unknown,
-): { status: BacklogStatusV2; runState: BacklogRunState } {
+): { status: BacklogStatus; runState: BacklogRunState } {
   if (typeof rawStatus === 'string' && V2_STATUSES.has(rawStatus)) {
-    const status = rawStatus as BacklogStatusV2;
+    const status = rawStatus as BacklogStatus;
     const runState = typeof rawRunState === 'string' && V2_RUN_STATES.has(rawRunState)
       ? (rawRunState as BacklogRunState)
       : 'idle';
@@ -42,9 +42,9 @@ export function resolveStatusAndRunState(
   return LEGACY_STATUS_MAP.pending;
 }
 
-export function resolvePriority(rawPriority: unknown): BacklogPriorityV2 {
+export function resolvePriority(rawPriority: unknown): BacklogPriority {
   if (typeof rawPriority === 'string' && V2_PRIORITIES.has(rawPriority)) {
-    return rawPriority as BacklogPriorityV2;
+    return rawPriority as BacklogPriority;
   }
   if (typeof rawPriority === 'string' && rawPriority in LEGACY_PRIORITY_MAP) {
     return LEGACY_PRIORITY_MAP[rawPriority];
@@ -131,7 +131,7 @@ export async function parseBacklogCard(
   filePath: string,
   content: string,
   opts: ParseBacklogCardOptions,
-): Promise<BacklogCardV2 | null> {
+): Promise<BacklogCard | null> {
   const parsed = splitFrontmatter(content);
   if (!parsed) return null;
   const { frontmatter: fm, rawBody } = parsed;
@@ -199,7 +199,7 @@ function formatBytes(bytes: number): string {
 import { stringify as stringifyYaml } from 'yaml';
 
 /**
- * Serializes a BacklogCardV2 back to a full .md file: v2 frontmatter (fixed
+ * Serializes a BacklogCard back to a full .md file: v2 frontmatter (fixed
  * key order per F0 spec §1.5, scalars always emitted, empty optional
  * arrays/epic omitted) + the body verbatim. `body` is the FULL body
  * (title heading + description + any ## sections) exactly as it should
@@ -209,7 +209,7 @@ import { stringify as stringifyYaml } from 'yaml';
  * reassemble body themselves (title + description + rendered sections)
  * before calling this.
  */
-export function serializeBacklogCard(card: BacklogCardV2, body: string): string {
+export function serializeBacklogCard(card: BacklogCard, body: string): string {
   const fm: Record<string, unknown> = {
     task_id: card.taskId,
     ...(card.targetAgent ? { target_agent: card.targetAgent } : {}),
