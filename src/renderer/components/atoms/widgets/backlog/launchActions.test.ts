@@ -59,6 +59,50 @@ describe('launchExistingFlow (F3 mode 1 — en flow existente)', () => {
     expect(useDesktopStore.getState().mentalNodes).toHaveLength(2); // the pre-existing step + frame only
   });
 
+  it('registers the frame\'s root step in backlogRunCorrelation before dispatch (F4)', async () => {
+    const desktop = useDesktopStore.getState();
+    const rootId = desktop.addStepNode({ id: 'step-root', title: 'Root' });
+    const frameId = desktop.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow', childIds: [rootId] });
+    const card = makeCard();
+    useDesktopStore.setState({ backlogCards: [card] });
+    window.fluxorAPI = {
+      startHarness: vi.fn().mockResolvedValue({ success: true }),
+      onHarnessEvent: vi.fn(() => vi.fn()),
+      updateBacklogCardStatus: vi.fn().mockResolvedValue({ success: true }),
+    } as any;
+
+    await launchExistingFlow(card, frameId, '/proj/.backlog');
+
+    expect(useDesktopStore.getState().backlogRunCorrelation[rootId]).toEqual({
+      backlogDir: '/proj/.backlog', filename: 't1.md',
+    });
+  });
+
+  it('does not register a correlation entry when backlogDir is unknown (null)', async () => {
+    const desktop = useDesktopStore.getState();
+    const rootId = desktop.addStepNode({ id: 'step-root', title: 'Root' });
+    const frameId = desktop.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow', childIds: [rootId] });
+    window.fluxorAPI = {
+      startHarness: vi.fn().mockResolvedValue({ success: true }),
+      onHarnessEvent: vi.fn(() => vi.fn()),
+    } as any;
+
+    await launchExistingFlow(makeCard(), frameId, null);
+
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({});
+  });
+
+  it('does not register a correlation entry when the frame cannot be found', async () => {
+    window.fluxorAPI = {
+      startHarness: vi.fn().mockResolvedValue({ success: true }),
+      onHarnessEvent: vi.fn(() => vi.fn()),
+    } as any;
+
+    await launchExistingFlow(makeCard(), 'does-not-exist', '/proj/.backlog');
+
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({});
+  });
+
   it('patches an open canvasModalCard in place when it matches the launched card', async () => {
     const desktop = useDesktopStore.getState();
     const rootId = desktop.addStepNode({ id: 'step-root', title: 'Root' });
@@ -135,6 +179,35 @@ describe('launchAutoflow (F3 mode 2 — autoflow)', () => {
     expect(useDesktopStore.getState().backlogCards[0]).toMatchObject({ status: 'doing', runState: 'running' });
   });
 
+  it('registers EVERY materialized step in backlogRunCorrelation, all mapped to the one originating card (F4)', async () => {
+    const assembly = makeAssembly();
+    const assemblePipeline = vi.fn().mockResolvedValue({ success: true, data: assembly });
+    const startHarness = vi.fn().mockResolvedValue({ success: true });
+    window.fluxorAPI = { assemblePipeline, startHarness, onHarnessEvent: vi.fn(() => vi.fn()), updateBacklogCardStatus: vi.fn().mockResolvedValue({ success: true }) } as any;
+
+    const card = makeCard();
+    useDesktopStore.setState({ backlogCards: [card] });
+    await launchAutoflow(card, '/proj/.backlog');
+
+    const frame = useDesktopStore.getState().mentalNodes.find((n) => n.type === 'frame')!;
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      [`${frame.id}-root`]: { backlogDir: '/proj/.backlog', filename: 't1.md' },
+      [`${frame.id}-next`]: { backlogDir: '/proj/.backlog', filename: 't1.md' },
+    });
+  });
+
+  it('does not register any correlation entry when backlogDir is unknown (null)', async () => {
+    const assembly = makeAssembly();
+    const assemblePipeline = vi.fn().mockResolvedValue({ success: true, data: assembly });
+    window.fluxorAPI = { assemblePipeline, startHarness: vi.fn().mockResolvedValue({ success: true }), onHarnessEvent: vi.fn(() => vi.fn()) } as any;
+
+    const card = makeCard();
+    useDesktopStore.setState({ backlogCards: [card] });
+    await launchAutoflow(card, null);
+
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({});
+  });
+
   it('throws when the Meta-Agent assembly fails, without touching the canvas or the card', async () => {
     const assemblePipeline = vi.fn().mockResolvedValue({ success: false, error: 'boom' });
     window.fluxorAPI = { assemblePipeline, startHarness: vi.fn(), onHarnessEvent: vi.fn(() => vi.fn()) } as any;
@@ -194,6 +267,34 @@ describe('launchEpicFlow (F3 mode 3 — flow por épica)', () => {
     // The non-root epic member is untouched — it waits for its own StepStatusChanged (F4).
     expect(cards.find((c) => c.filename === 'low.md')).toMatchObject({ status: 'todo', runState: 'idle' });
     expect(cards.find((c) => c.filename === 'other.md')).toMatchObject({ status: 'todo', runState: 'idle' });
+  });
+
+  it('registers EVERY epic-member step in backlogRunCorrelation, each mapped to its OWN card (F4)', async () => {
+    const startHarness = vi.fn().mockResolvedValue({ success: true });
+    window.fluxorAPI = { startHarness, onHarnessEvent: vi.fn(() => vi.fn()), updateBacklogCardStatus: vi.fn().mockResolvedValue({ success: true }) } as any;
+
+    const high = makeCard({ filename: 'high.md', taskId: 'HIGH', priority: 'high', epic: 'Security' });
+    const low = makeCard({ filename: 'low.md', taskId: 'LOW', priority: 'low', epic: 'Security' });
+    const other = makeCard({ filename: 'other.md', taskId: 'OTHER', epic: 'Billing' });
+    useDesktopStore.setState({ backlogCards: [low, high, other] });
+
+    await launchEpicFlow('Security', '/proj/.backlog');
+
+    const frame = useDesktopStore.getState().mentalNodes.find((n) => n.type === 'frame')!;
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      [`${frame.id}-high`]: { backlogDir: '/proj/.backlog', filename: 'high.md' },
+      [`${frame.id}-low`]: { backlogDir: '/proj/.backlog', filename: 'low.md' },
+    });
+  });
+
+  it('does not register any correlation entry when backlogDir is unknown (null)', async () => {
+    window.fluxorAPI = { startHarness: vi.fn().mockResolvedValue({ success: true }), onHarnessEvent: vi.fn(() => vi.fn()) } as any;
+    const high = makeCard({ filename: 'high.md', taskId: 'HIGH', epic: 'Security' });
+    useDesktopStore.setState({ backlogCards: [high] });
+
+    await launchEpicFlow('Security', null);
+
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({});
   });
 
   it('is a no-op when no card carries the given epic', async () => {

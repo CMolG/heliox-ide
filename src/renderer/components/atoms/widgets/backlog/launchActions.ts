@@ -20,9 +20,11 @@
  * starts immediately (the run's root — here, always the launched card
  * itself) gets `{status:'doing', runState:'running'}` written the moment the
  * user clicks, via the same extended `update-backlog-card-status` IPC path.
- * Correlation-map registration (`backlogRunCorrelation`) and the
- * completed/failed write-back are F4 (out of this task's scope) — this
- * module only ever writes the launch-time optimistic row.
+ * This module only ever performs that one launch-time optimistic write
+ * itself — the terminal completed/failed write-back (F4) lives in
+ * harness-store.ts's `StepStatusChanged` handling, keyed off the
+ * `backlogRunCorrelation` entries this module registers (see the F4 doc
+ * comment below).
  *
  * The write is skipped if `executionStatus` reads back 'error' immediately
  * after dispatch (frame not found, a compile error, or the IPC bridge being
@@ -34,13 +36,26 @@
  * it. This is still "optimistic, before waiting for the run's result" per
  * the spec — it only guards against a failure that is already known
  * synchronously, not against the run's real outcome.
+ *
+ * F4 addition — card<->run correlation registration (plan §0.3): immediately
+ * before dispatch, each mode registers `useDesktopStore.backlogRunCorrelation`
+ * entries (stepId -> {backlogDir, filename}) so harness-store's
+ * `StepStatusChanged` handling can write the terminal `{status, runState}`
+ * back once the run actually reports completed/error (this module still only
+ * ever performs the launch-time OPTIMISTIC write itself — the terminal
+ * write-back lives in harness-store.ts). Per plan §0.3: "en flow existente"
+ * registers only the frame's root step; "autoflow"/"flow por épica" register
+ * EVERY materialized step (autoflow: all mapped to the one originating card;
+ * epica: each mapped to its own originating card, via `idByTaskId`/`slugify`).
  */
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
 import { calculateSafeInsertionPoint } from '@/renderer/store/spatial-engine';
+import { compileFlowFromCanvas } from '@/renderer/lib/harness-compiler';
 import { epicToPipelineAssembly, slugify } from './epicPipeline';
 import type { BacklogCard } from '@/types/market';
 import type { PipelineAssembly } from '@/types/meta-agent';
+import type { FrameGraphNode } from '@/types/desktop';
 
 // Mirrors HudAutoChatPanel.tsx's own `estimateFrameSize` (MarketplaceApp.tsx
 // carries an equivalent third copy under a different name) — there is no
@@ -96,12 +111,42 @@ function optimisticallyMarkRunning(backlogDir: string | null, filename: string):
 }
 
 /**
+ * Read-only peek at a Frame's inferred root step id — F4's correlation
+ * registration needs it BEFORE `runFrameWithContext` dispatches, but that
+ * store action only exposes the compiled flow internally. Reuses the exact
+ * same `compileFlowFromCanvas` seam `runFrameWithContext` itself calls
+ * (harness-store.ts) — pure/read-only, safe to call twice; never throws
+ * (returns null for the same conditions `runFrameWithContext` already turns
+ * into a graceful error state: frame missing, compile failure).
+ */
+function findFrameRootStepId(frameId: string): string | null {
+  const { mentalNodes, mentalEdges } = useDesktopStore.getState();
+  const frame = mentalNodes.find((n): n is FrameGraphNode => n.type === 'frame' && n.id === frameId);
+  if (!frame) return null;
+  try {
+    return compileFlowFromCanvas(mentalNodes, mentalEdges, { includeIds: new Set(frame.data.childIds) }).rootStepId;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Mode 1 — "En flow existente": inject the card's title+description as
  * context onto an existing Frame's compiled flow and dispatch in place via
  * `runFrameWithContext`. No canvas node is created.
  */
 export async function launchExistingFlow(card: BacklogCard, frameId: string, backlogDir: string | null): Promise<void> {
   const contextText = `${card.title}\n\n${card.description}`;
+
+  // F4 — correlate the card with the frame's ROOT step (plan §0.3: "for 'en
+  // flow existing': the frame's root step") before dispatch.
+  if (backlogDir) {
+    const rootStepId = findFrameRootStepId(frameId);
+    if (rootStepId) {
+      useDesktopStore.getState().registerBacklogRunStep(rootStepId, backlogDir, card.filename);
+    }
+  }
+
   await useHarnessStore.getState().runFrameWithContext(frameId, contextText);
   if (useHarnessStore.getState().executionStatus !== 'error') {
     optimisticallyMarkRunning(backlogDir, card.filename);
@@ -129,6 +174,16 @@ export async function launchAutoflow(card: BacklogCard, backlogDir: string | nul
     frameWidth: frameSize.width,
     frameHeight: frameSize.height,
   });
+
+  // F4 — correlate EVERY materialized step back to this single originating
+  // card (plan §0.3: "for autoflow/epic: every materialized step") so a
+  // StepStatusChanged for any of them (not just the root) writes the card
+  // back; last-write-wins per the F0 spec §3.5 concurrency policy.
+  if (backlogDir) {
+    for (const step of result.data.steps) {
+      useDesktopStore.getState().registerBacklogRunStep(`${frameId}-${step.id}`, backlogDir, card.filename);
+    }
+  }
 
   // Mirrors insertPipelineAssembly's own internal `${frameId}-${step.id}`
   // node-naming convention (desktop-store.ts) — not a second id scheme.
@@ -173,6 +228,19 @@ export async function launchEpicFlow(epicName: string, backlogDir: string | null
     frameWidth: frameSize.width,
     frameHeight: frameSize.height,
   });
+
+  // F4 — one registration per epic-member card -> its OWN step node id
+  // (idByTaskId mapping surfaced by epicToPipelineAssembly's step ids via
+  // `slugify`, composed with the frame id — same `${frameId}-${step.id}`
+  // convention insertPipelineAssembly uses internally).
+  if (backlogDir) {
+    for (const step of assembly.steps) {
+      const memberCard = epicCards.find((c) => slugify(c.taskId) === step.id);
+      if (memberCard) {
+        useDesktopStore.getState().registerBacklogRunStep(`${frameId}-${step.id}`, backlogDir, memberCard.filename);
+      }
+    }
+  }
 
   // Same root-resolution pattern as launchAutoflow, reused verbatim.
   const rootStep = assembly.steps.find((s) => s.prevStepIds.length === 0);
