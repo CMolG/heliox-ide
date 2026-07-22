@@ -1,0 +1,197 @@
+// src/main/backlog/frontmatter.ts
+//
+// Pure v2 frontmatter parser/serializer for .backlog/*.md cards. No Electron
+// import — safe to unit test directly. Legacy mapping tables are verbatim
+// from docs/superpowers/specs/2026-07-21-backlog-schema-v2-f0.md §2.1/§2.2.
+import type {
+  BacklogAttachment, BacklogCardV2, BacklogComment, BacklogPriorityV2, BacklogRunState, BacklogStatusV2,
+} from '../../types/market';
+
+// §2.1 — status v1 -> {status v2, runState}
+const LEGACY_STATUS_MAP: Record<string, { status: BacklogStatusV2; runState: BacklogRunState }> = {
+  pending:     { status: 'todo',   runState: 'idle' },
+  in_progress: { status: 'doing', runState: 'running' },
+  completed:   { status: 'review', runState: 'completed' },
+  failed:      { status: 'refine', runState: 'failed' },
+};
+
+// §2.2 — priority v1 -> v2
+const LEGACY_PRIORITY_MAP: Record<string, BacklogPriorityV2> = {
+  critical: 'superHigh', high: 'high', medium: 'medium', low: 'low',
+};
+
+const V2_STATUSES = new Set<string>(['refine', 'todo', 'ready', 'doing', 'review', 'deploy']);
+const V2_PRIORITIES = new Set<string>(['superHigh', 'high', 'medium', 'low', 'superLow']);
+const V2_RUN_STATES = new Set<string>(['idle', 'running', 'completed', 'failed']);
+
+export function resolveStatusAndRunState(
+  rawStatus: unknown,
+  rawRunState: unknown,
+): { status: BacklogStatusV2; runState: BacklogRunState } {
+  if (typeof rawStatus === 'string' && V2_STATUSES.has(rawStatus)) {
+    const status = rawStatus as BacklogStatusV2;
+    const runState = typeof rawRunState === 'string' && V2_RUN_STATES.has(rawRunState)
+      ? (rawRunState as BacklogRunState)
+      : 'idle';
+    return { status, runState };
+  }
+  if (typeof rawStatus === 'string' && rawStatus in LEGACY_STATUS_MAP) {
+    return LEGACY_STATUS_MAP[rawStatus];
+  }
+  // Absent/unrecognized mirrors v1's own `status || 'pending'` fallback (§2.1 last row).
+  return LEGACY_STATUS_MAP.pending;
+}
+
+export function resolvePriority(rawPriority: unknown): BacklogPriorityV2 {
+  if (typeof rawPriority === 'string' && V2_PRIORITIES.has(rawPriority)) {
+    return rawPriority as BacklogPriorityV2;
+  }
+  if (typeof rawPriority === 'string' && rawPriority in LEGACY_PRIORITY_MAP) {
+    return LEGACY_PRIORITY_MAP[rawPriority];
+  }
+  return 'medium';
+}
+
+import { parse as parseYaml } from 'yaml';
+import { stat } from 'fs/promises';
+import { basename, join, isAbsolute } from 'path';
+
+const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---/;
+
+function splitFrontmatter(content: string): { frontmatter: Record<string, unknown>; rawBody: string } | null {
+  const match = content.match(FRONTMATTER_RE);
+  if (!match) return null;
+  const parsed = parseYaml(match[1]);
+  const frontmatter = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
+  const rawBody = content.slice(match[0].length).trim();
+  return { frontmatter, rawBody };
+}
+
+const SECTION_RE = /(?:^|\n)##\s+(Comments|Attachments)\s*\n([\s\S]*?)(?=\n##\s+|$)/gi;
+
+const COMMENT_LINE_RE = /^-\s+\*\*(.+?)\*\*\s+\(([^)]+)\):\s?(.*)$/;
+function parseCommentLine(line: string): BacklogComment | null {
+  const m = line.trim().match(COMMENT_LINE_RE);
+  if (!m) return null;
+  return { author: m[1], date: m[2], text: m[3] };
+}
+
+const ATTACHMENT_LINE_RE = /^-\s+(.+?)(?:\s+—\s+(.+))?$/;
+function parseAttachmentLine(line: string): { path: string; name: string } | null {
+  const m = line.trim().match(ATTACHMENT_LINE_RE);
+  if (!m) return null;
+  const path = m[1].trim();
+  const name = m[2]?.trim() || basename(path);
+  return { path, name };
+}
+
+function splitBody(bodyAfterTitle: string): {
+  description: string;
+  comments: BacklogComment[];
+  attachments: Array<{ path: string; name: string }>;
+} {
+  let commentsBlock = '';
+  let attachmentsBlock = '';
+  let firstSectionIndex = -1;
+
+  const re = new RegExp(SECTION_RE.source, 'gi');
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(bodyAfterTitle)) !== null) {
+    if (firstSectionIndex === -1) firstSectionIndex = match.index;
+    const heading = match[1].toLowerCase();
+    const block = match[2].trim();
+    if (heading === 'comments') commentsBlock = block;
+    else if (heading === 'attachments') attachmentsBlock = block;
+  }
+
+  const description = firstSectionIndex === -1
+    ? bodyAfterTitle.trim()
+    : bodyAfterTitle.slice(0, firstSectionIndex).trim();
+
+  const comments = commentsBlock
+    ? commentsBlock.split('\n').map(parseCommentLine).filter((c): c is BacklogComment => c !== null)
+    : [];
+  const attachments = attachmentsBlock
+    ? attachmentsBlock.split('\n').map(parseAttachmentLine).filter((a): a is { path: string; name: string } => a !== null)
+    : [];
+
+  return { description, comments, attachments };
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
+export interface ParseBacklogCardOptions {
+  /** Project root, used to resolve attachment paths for the hot fs.stat size lookup (F0 spec §1.2). */
+  projectRoot: string;
+}
+
+export async function parseBacklogCard(
+  filePath: string,
+  content: string,
+  opts: ParseBacklogCardOptions,
+): Promise<BacklogCardV2 | null> {
+  const parsed = splitFrontmatter(content);
+  if (!parsed) return null;
+  const { frontmatter: fm, rawBody } = parsed;
+
+  const firstLine = rawBody.split('\n')[0] ?? '';
+  const title = firstLine.replace(/^#+\s*/, '') || basename(filePath, '.md');
+  const bodyAfterTitle = rawBody.replace(/^#+[^\n]*\n?/, '');
+  const { description, comments, attachments: rawAttachments } = splitBody(bodyAfterTitle);
+
+  const { status, runState } = resolveStatusAndRunState(fm.status, fm.runState);
+  const priority = resolvePriority(fm.priority);
+
+  let createdAt = typeof fm.createdAt === 'string' ? fm.createdAt : '';
+  if (!createdAt) {
+    try {
+      createdAt = (await stat(filePath)).mtime.toISOString();
+    } catch {
+      createdAt = new Date().toISOString();
+    }
+  }
+  const updatedAt = typeof fm.updatedAt === 'string' ? fm.updatedAt : createdAt;
+
+  const attachments: BacklogAttachment[] = await Promise.all(rawAttachments.map(async (a) => {
+    const absPath = isAbsolute(a.path) ? a.path : join(opts.projectRoot, a.path);
+    try {
+      const s = await stat(absPath);
+      return { ...a, size: formatBytes(s.size) };
+    } catch {
+      return { ...a, size: undefined };
+    }
+  }));
+
+  const orderRaw = fm.order;
+  const order = typeof orderRaw === 'number' ? orderRaw : parseInt(String(orderRaw ?? '0'), 10) || 0;
+
+  return {
+    filename: basename(filePath),
+    taskId: typeof fm.task_id === 'string' ? fm.task_id : '',
+    targetAgent: typeof fm.target_agent === 'string' ? fm.target_agent : '',
+    targetModule: typeof fm.target_module === 'string' ? fm.target_module : '',
+    priority,
+    status,
+    runState,
+    order,
+    ...(typeof fm.epic === 'string' && fm.epic ? { epic: fm.epic } : {}),
+    tags: toStringArray(fm.tags),
+    estimate: typeof fm.estimate === 'number' ? fm.estimate : 0,
+    assignees: toStringArray(fm.assignees),
+    related: toStringArray(fm.related),
+    createdAt,
+    updatedAt,
+    title,
+    description,
+    comments,
+    attachments,
+  };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
