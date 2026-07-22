@@ -26,6 +26,9 @@ describe('BacklogBentoWidget', () => {
     (window as any).fluxorAPI = {
       scanBacklogs: vi.fn().mockResolvedValue([]),
       listProjectsWithoutBacklog: vi.fn().mockResolvedValue([]),
+      watchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      unwatchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      onBacklogChanged: vi.fn(() => vi.fn()),
     };
     useFluxorStore.setState({ projectPath: null });
     render(<BacklogBentoWidget windowId="w1" />);
@@ -39,6 +42,9 @@ describe('BacklogBentoWidget', () => {
       ]),
       listProjectsWithoutBacklog: vi.fn().mockResolvedValue([]),
       readBacklogDir: vi.fn().mockResolvedValue([makeCard()]),
+      watchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      unwatchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      onBacklogChanged: vi.fn(() => vi.fn()),
     };
     useFluxorStore.setState({ projectPath: '/proj' });
     render(<BacklogBentoWidget windowId="w1" />);
@@ -61,6 +67,9 @@ describe('BacklogBentoWidget', () => {
       ]),
       listProjectsWithoutBacklog: vi.fn().mockResolvedValue([]),
       readBacklogDir: vi.fn().mockResolvedValue([]),
+      watchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      unwatchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      onBacklogChanged: vi.fn(() => vi.fn()),
     };
     useFluxorStore.setState({ projectPath: '/root' });
     render(<BacklogBentoWidget windowId="w1" />);
@@ -84,6 +93,9 @@ describe('BacklogBentoWidget', () => {
       scanBacklogs: vi.fn().mockResolvedValue([]),
       listProjectsWithoutBacklog: vi.fn().mockResolvedValue([{ projectPath: '/c', projectName: 'Proj C' }]),
       initBacklog,
+      watchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      unwatchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      onBacklogChanged: vi.fn(() => vi.fn()),
     };
     useFluxorStore.setState({ projectPath: '/root' });
     render(<BacklogBentoWidget windowId="w1" />);
@@ -101,6 +113,9 @@ describe('BacklogBentoWidget', () => {
       ]),
       listProjectsWithoutBacklog: vi.fn().mockResolvedValue([]),
       readBacklogDir,
+      watchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      unwatchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      onBacklogChanged: vi.fn(() => vi.fn()),
     };
     useFluxorStore.setState({ projectPath: '/proj' });
     render(<BacklogBentoWidget windowId="w1" />);
@@ -109,5 +124,61 @@ describe('BacklogBentoWidget', () => {
     await waitFor(() => expect(readBacklogDir).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
     await waitFor(() => expect(readBacklogDir).toHaveBeenCalledTimes(2));
+  });
+
+  it('watches the selected backlog directory on mount and unwatches + unsubscribes on unmount (F4)', async () => {
+    const watchBacklogDir = vi.fn().mockResolvedValue({ success: true });
+    const unwatchBacklogDir = vi.fn().mockResolvedValue({ success: true });
+    const unsubscribe = vi.fn();
+    const onBacklogChanged = vi.fn(() => unsubscribe);
+    (window as any).fluxorAPI = {
+      scanBacklogs: vi.fn().mockResolvedValue([
+        { projectPath: '/proj', projectName: 'Proj', backlogPath: '/proj/.backlog', cardCount: 1, isExternal: false },
+      ]),
+      listProjectsWithoutBacklog: vi.fn().mockResolvedValue([]),
+      readBacklogDir: vi.fn().mockResolvedValue([makeCard()]),
+      watchBacklogDir,
+      unwatchBacklogDir,
+      onBacklogChanged,
+    };
+    useFluxorStore.setState({ projectPath: '/proj' });
+    const { unmount } = render(<BacklogBentoWidget windowId="w1" />);
+
+    await waitFor(() => expect(watchBacklogDir).toHaveBeenCalledWith('/proj/.backlog', '/proj'));
+    await waitFor(() => expect(onBacklogChanged).toHaveBeenCalledTimes(1));
+
+    unmount();
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(unwatchBacklogDir).toHaveBeenCalledWith('/proj/.backlog');
+  });
+
+  it('merges a pushed onBacklogChanged payload into the store, ignoring pushes for a different backlogDir (F4)', async () => {
+    let pushCallback: ((payload: { backlogDir: string; cards: BacklogCard[] }) => void) | undefined;
+    (window as any).fluxorAPI = {
+      scanBacklogs: vi.fn().mockResolvedValue([
+        { projectPath: '/proj', projectName: 'Proj', backlogPath: '/proj/.backlog', cardCount: 1, isExternal: false },
+      ]),
+      listProjectsWithoutBacklog: vi.fn().mockResolvedValue([]),
+      readBacklogDir: vi.fn().mockResolvedValue([makeCard()]),
+      watchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      unwatchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      onBacklogChanged: vi.fn((cb: typeof pushCallback) => { pushCallback = cb; return vi.fn(); }),
+    };
+    useFluxorStore.setState({ projectPath: '/proj' });
+    render(<BacklogBentoWidget windowId="w1" />);
+
+    await screen.findByText('A backlog card');
+    await waitFor(() => expect(pushCallback).toBeDefined());
+
+    const pushedCard = makeCard({ filename: 'y.md', taskId: 'Y', title: 'Externally-edited card' });
+    pushCallback!({ backlogDir: '/proj/.backlog', cards: [pushedCard] });
+    expect(await screen.findByText('Externally-edited card')).toBeInTheDocument();
+    // mergeBacklogCards replaces wholesale — the original auto-read card is gone.
+    expect(screen.queryByText('A backlog card')).not.toBeInTheDocument();
+
+    // A push for a DIFFERENT backlogDir (e.g. a stale subscription) is ignored.
+    pushCallback!({ backlogDir: '/other/.backlog', cards: [makeCard({ filename: 'z.md', taskId: 'Z', title: 'Should not appear' })] });
+    expect(screen.queryByText('Should not appear')).not.toBeInTheDocument();
   });
 });

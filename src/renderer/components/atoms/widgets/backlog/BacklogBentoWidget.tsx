@@ -118,6 +118,37 @@ export function BacklogBentoWidget({ windowId }: { windowId: string }) {
     setActiveBacklogDir(selectedBacklog?.backlogPath ?? null);
   }, [selectedBacklog, setActiveBacklogDir]);
 
+  // F4 — watcher wiring: external `.backlog` edits reflect without a manual
+  // Refresh. The main-process watcher (src/main/backlog/watcher.ts) re-reads
+  // + re-parses the directory itself on every fs event and pushes the fresh,
+  // already-parsed BacklogCard[] over `fluxor:backlog-changed`; mergeBacklogCards
+  // (desktop-store.ts) replaces backlogCards wholesale and live-patches an
+  // already-open canvasModalCard in place (never auto-closing it if its card
+  // disappeared from the fresh set).
+  useEffect(() => {
+    if (!selectedBacklog) return;
+    const dir = selectedBacklog.backlogPath;
+    const root = projectPath ?? selectedBacklog.projectPath;
+    let unsubscribe: (() => void) | undefined;
+    let cancelled = false;
+
+    void (async () => {
+      await window.fluxorAPI?.watchBacklogDir(dir, root);
+      if (cancelled) return;
+      unsubscribe = window.fluxorAPI?.onBacklogChanged(({ backlogDir, cards }) => {
+        if (backlogDir === dir) {
+          useDesktopStore.getState().mergeBacklogCards(cards as BacklogCard[]);
+        }
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+      void window.fluxorAPI?.unwatchBacklogDir(dir);
+    };
+  }, [selectedBacklog, projectPath]);
+
   // Auto-switch to the pile when cards are externally populated (e.g. store).
   useEffect(() => {
     if (view === 'picker' && !selectedBacklog && backlogCards.length > 0) {
