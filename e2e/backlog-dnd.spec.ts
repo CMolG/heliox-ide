@@ -125,6 +125,22 @@ test.afterAll(async () => {
   if (app) await app.close();
 });
 
+// Reset to exactly ONE backlog window before every test. The single Electron
+// session (beforeAll) means desktop-store windows persist across tests; without
+// this reset they accumulate, so page-scoped card locators
+// (`[data-testid="backlog-card"][data-filename=…]`) match the same card in every
+// leaked window → Playwright strict-mode "resolved to N elements" violations.
+test.beforeEach(async () => {
+  await page.evaluate((cards) => {
+    const ds = (window as any).__DESKTOP_STORE__;
+    if (!ds) return;
+    for (const w of [...ds.getState().windows]) ds.getState().removeWindow(w.id);
+    ds.getState().setBacklogCards(cards);
+    ds.getState().addWindow('backlog', { title: 'Test Backlog', iconName: 'KanbanSquare' });
+  }, TEST_CARDS);
+  await page.waitForTimeout(1500);
+});
+
 // ─── BacklogCard Order Field ─────────────────────────────────────
 
 test.describe('BacklogCard Order Field', () => {
