@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand';
 import type { AgenticExecutionStatus, AgenticFlow } from '@/types/harness';
+import type { FrameGraphNode } from '@/types/desktop';
 import type {
   HarnessEventPayload,
   ScorecardResult,
@@ -172,6 +173,15 @@ interface HarnessStore {
    * dispatching. Unknown `stepId` fails softly, same as `runStep`.
    */
   runFromStep: (stepId: string) => Promise<void>;
+  /**
+   * Compiles the Step nodes owned by `frameId` (via `includeIds`, root
+   * auto-inferred), prepends `contextText` to the compiled flow's root step
+   * prompt (a clone — the live canvas is never mutated), and dispatches through
+   * the same `executeFlow` path every other run uses. Used by the backlog
+   * "run on existing flow" launcher to inject a card's title+description
+   * without creating any canvas node (no materialization).
+   */
+  runFrameWithContext: (frameId: string, contextText: string) => Promise<void>;
   stopExecution: () => void;
   setStepStatus: (stepId: string | null, status?: AgenticExecutionStatus) => void;
   handleHarnessEvent: (event: HarnessEventPayload) => void;
@@ -412,6 +422,54 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
     }));
 
     await executeFlow(flow);
+  },
+
+  runFrameWithContext: async (frameId, contextText) => {
+    const { mentalNodes, mentalEdges } = useDesktopStore.getState();
+    const frame = mentalNodes.find((n): n is FrameGraphNode => n.type === 'frame' && n.id === frameId);
+    if (!frame) {
+      set((state) => ({
+        executionStatus: 'error',
+        executionLogs: appendLog(state.executionLogs, `Cannot run frame "${frameId}": not found on canvas.`),
+      }));
+      return;
+    }
+
+    let flow: AgenticFlow;
+    try {
+      flow = compileFlowFromCanvas(mentalNodes, mentalEdges, { includeIds: new Set(frame.data.childIds) });
+    } catch (error) {
+      set((state) => ({
+        executionStatus: 'error',
+        executionLogs: appendLog(state.executionLogs, `Cannot compile frame "${frameId}": ${getErrorMessage(error)}`),
+      }));
+      return;
+    }
+
+    // Clone — never mutate the compiled object's nested records in place.
+    const contextualFlow: AgenticFlow = {
+      ...flow,
+      stepsRecord: {
+        ...flow.stepsRecord,
+        [flow.rootStepId]: {
+          ...flow.stepsRecord[flow.rootStepId],
+          prompt: `${contextText}\n\n---\n\n${flow.stepsRecord[flow.rootStepId].prompt}`,
+        },
+      },
+    };
+
+    set((state) => ({
+      activeFlow: contextualFlow,
+      currentStepId: null,
+      stepStatuses: {},
+      stepIterations: {},
+      stepModels: {},
+      modStatuses: {},
+      stepThinkings: {},
+      executionLogs: appendLog(state.executionLogs, `Compiled frame "${frameId}" with injected context.`),
+    }));
+
+    await executeFlow(contextualFlow);
   },
 
   stopExecution: () => {

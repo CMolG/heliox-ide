@@ -191,6 +191,51 @@ describe('useHarnessStore', () => {
     expect(useHarnessStore.getState().executionLogs.at(-1)).toContain('also-missing');
   });
 
+  it('runFrameWithContext compiles only the frame\'s own steps, prepends context to the root prompt, and creates no canvas node', async () => {
+    const desktop = useDesktopStore.getState();
+    const rootId = desktop.addStepNode({ id: 'step-root', title: 'Root', prompt: 'Original prompt' });
+    const childId = desktop.addStepNode({ id: 'step-child', title: 'Child' });
+    const outsideId = desktop.addStepNode({ id: 'step-outside', title: 'Outside the frame' });
+    desktop.addMentalEdge(rootId, childId);
+    const frameId = desktop.addFrameNode({
+      position: { x: 0, y: 0 }, width: 400, height: 300, title: 'My Flow', childIds: [rootId, childId],
+    });
+
+    const startHarness = vi.fn().mockResolvedValue({ success: true });
+    window.fluxorAPI = {
+      startHarness,
+      onHarnessEvent: vi.fn(() => vi.fn()),
+    } as any;
+
+    const nodesBefore = useDesktopStore.getState().mentalNodes.length;
+    await useHarnessStore.getState().runFrameWithContext(frameId, 'Card title\n\nCard description');
+
+    expect(startHarness).toHaveBeenCalledTimes(1);
+    const dispatchedFlow = startHarness.mock.calls[0][0];
+    expect(dispatchedFlow.rootStepId).toBe(rootId);
+    expect(new Set(Object.keys(dispatchedFlow.stepsRecord))).toEqual(new Set([rootId, childId]));
+    expect(dispatchedFlow.stepsRecord[rootId].prompt).toBe('Card title\n\nCard description\n\n---\n\nOriginal prompt');
+    expect(dispatchedFlow.stepsRecord[outsideId]).toBeUndefined();
+
+    expect(useDesktopStore.getState().mentalNodes.length).toBe(nodesBefore);
+    expect(useHarnessStore.getState().activeFlow).toBe(dispatchedFlow);
+    expect(useHarnessStore.getState().executionStatus).toBe('running');
+  });
+
+  it('runFrameWithContext fails softly when the frame is not found on the canvas, without invoking startHarness', async () => {
+    const startHarness = vi.fn().mockResolvedValue({ success: true });
+    window.fluxorAPI = {
+      startHarness,
+      onHarnessEvent: vi.fn(() => vi.fn()),
+    } as any;
+
+    await useHarnessStore.getState().runFrameWithContext('does-not-exist', 'context');
+
+    expect(startHarness).not.toHaveBeenCalled();
+    expect(useHarnessStore.getState().executionStatus).toBe('error');
+    expect(useHarnessStore.getState().executionLogs.at(-1)).toContain('does-not-exist');
+  });
+
   it('subscribes once to harness events and tracks per-step status', () => {
     const callbacks: Array<(event: HarnessEventPayload) => void> = [];
     const unsubscribe = vi.fn();
