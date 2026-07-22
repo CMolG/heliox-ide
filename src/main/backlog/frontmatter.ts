@@ -195,3 +195,49 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
+
+import { stringify as stringifyYaml } from 'yaml';
+
+/**
+ * Serializes a BacklogCardV2 back to a full .md file: v2 frontmatter (fixed
+ * key order per F0 spec §1.5, scalars always emitted, empty optional
+ * arrays/epic omitted) + the body verbatim. `body` is the FULL body
+ * (title heading + description + any ## sections) exactly as it should
+ * appear after the frontmatter — callers that only changed frontmatter
+ * fields (e.g. a status/runState patch) pass the file's existing body
+ * unchanged; callers that edited description/comments/attachments must
+ * reassemble body themselves (title + description + rendered sections)
+ * before calling this.
+ */
+export function serializeBacklogCard(card: BacklogCardV2, body: string): string {
+  const fm: Record<string, unknown> = {
+    task_id: card.taskId,
+    ...(card.targetAgent ? { target_agent: card.targetAgent } : {}),
+    ...(card.targetModule ? { target_module: card.targetModule } : {}),
+    priority: card.priority,
+    status: card.status,
+    runState: card.runState,
+    order: card.order,
+    estimate: card.estimate,
+    ...(card.epic ? { epic: card.epic } : {}),
+    ...(card.tags.length > 0 ? { tags: card.tags } : {}),
+    ...(card.assignees.length > 0 ? { assignees: card.assignees } : {}),
+    ...(card.related.length > 0 ? { related: card.related } : {}),
+    createdAt: card.createdAt,
+    updatedAt: card.updatedAt,
+  };
+  const yamlText = stringifyYaml(fm).trimEnd();
+  return `---\n${yamlText}\n---\n${body}`;
+}
+
+/** Renders comments/attachments back into `## Comments` / `## Attachments` markdown sections, appended after `description`. Used by callers that edit those fields (F2's modal). */
+export function renderBody(title: string, description: string, comments: BacklogComment[], attachments: BacklogAttachment[]): string {
+  const parts = [`# ${title}`, '', description];
+  if (attachments.length > 0) {
+    parts.push('', '## Attachments', ...attachments.map(a => a.name && a.name !== basename(a.path) ? `- ${a.path} — ${a.name}` : `- ${a.path}`));
+  }
+  if (comments.length > 0) {
+    parts.push('', '## Comments', ...comments.map(c => `- **${c.author}** (${c.date}): ${c.text}`));
+  }
+  return parts.join('\n');
+}

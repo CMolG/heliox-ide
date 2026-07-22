@@ -138,3 +138,32 @@ describe('new v2 scalar/array fields + defaults (F0 spec §2.3)', () => {
     expect(card?.updatedAt).toBe(card?.createdAt);
   });
 });
+
+describe('serializeBacklogCard (F0 spec §1.5/§2.4)', () => {
+  it('emits v2 scalars always, omits empty optional arrays/epic', async () => {
+    const card = await parseBacklogCard('/proj/.backlog/t1.md', `---\ntask_id: T1\nstatus: doing\n---\n# Title\n\nDesc.`, { projectRoot: '/proj' });
+    const out = serializeBacklogCard(card!, '# Title\n\nDesc.');
+    expect(out).toContain('task_id: T1');
+    expect(out).toContain('status: doing');
+    expect(out).toContain('runState: idle');
+    expect(out).toContain('estimate: 0');
+    expect(out).not.toMatch(/^epic:/m);
+    expect(out).not.toMatch(/^tags:/m);
+    expect(out).not.toMatch(/^assignees:/m);
+    expect(out).not.toMatch(/^related:/m);
+  });
+
+  it('preserves the body verbatim (title + description + sections)', async () => {
+    const body = '# Title\n\nDesc.\n\n## Comments\n- **A** (2026-01-01T00:00:00.000Z): hi';
+    const card = await parseBacklogCard('/proj/.backlog/t1.md', `---\ntask_id: T1\n---\n${body}`, { projectRoot: '/proj' });
+    const out = serializeBacklogCard(card!, body);
+    expect(out.endsWith(body)).toBe(true);
+  });
+
+  it('emits tags/assignees/related as YAML block lists when present', async () => {
+    const content = `---\ntask_id: T1\ntags:\n  - Backend\n---\n# Title\n\nDesc.`;
+    const card = await parseBacklogCard('/proj/.backlog/t1.md', content, { projectRoot: '/proj' });
+    const out = serializeBacklogCard(card!, '# Title\n\nDesc.');
+    expect(out).toMatch(/tags:\n\s*-\s*Backend/);
+  });
+});
