@@ -316,6 +316,26 @@ interface DesktopStore {
   backlogCards: BacklogCard[];
   setBacklogCards: (cards: BacklogCard[]) => void;
   /**
+   * Replaces `backlogCards` wholesale (the main process/watcher is the
+   * source of truth) and live-patches `canvasModalCard` in place if it is
+   * one of the updated cards. Used by the F1 watcher push
+   * (`onBacklogChanged`) and any full-directory refetch. If the modal's card
+   * disappeared from the fresh set, the modal is left as-is (no surprise
+   * auto-close) — F4.
+   */
+  mergeBacklogCards: (cards: BacklogCard[]) => void;
+  /**
+   * Transient (NOT persisted — mirrors `activeBacklogDir`'s own treatment
+   * below), stepId -> owning card, populated by each F3 launcher at launch
+   * time (`launchActions.ts`). Lets harness-store's existing
+   * `StepStatusChanged` handling write the card's status/runState back
+   * without threading card identity through the harness event stream itself
+   * (F4 — card<->run correlation).
+   */
+  backlogRunCorrelation: Record<string, { backlogDir: string; filename: string }>;
+  registerBacklogRunStep: (stepId: string, backlogDir: string, filename: string) => void;
+  clearBacklogRunStep: (stepId: string) => void;
+  /**
    * Directory backing the currently-open backlog (set by
    * BacklogBentoWidget's picker/back navigation — F2 Task 10). Read by
    * BacklogCardModal (F2 Task 9) to resolve where to persist content edits:
@@ -1011,6 +1031,23 @@ export const useDesktopStore = create<DesktopStore>()(
       // ─── Backlog ───────────────────────────────────────
       backlogCards: [],
       setBacklogCards: (cards) => set({ backlogCards: cards }),
+      mergeBacklogCards: (cards) => set((s) => {
+        const byFilename = new Map(cards.map((c) => [c.filename, c]));
+        const nextModalCard = s.canvasModalCard && byFilename.has(s.canvasModalCard.filename)
+          ? byFilename.get(s.canvasModalCard.filename)!
+          : s.canvasModalCard;
+        return { backlogCards: cards, canvasModalCard: nextModalCard };
+      }),
+
+      backlogRunCorrelation: {},
+      registerBacklogRunStep: (stepId, backlogDir, filename) => set((s) => ({
+        backlogRunCorrelation: { ...s.backlogRunCorrelation, [stepId]: { backlogDir, filename } },
+      })),
+      clearBacklogRunStep: (stepId) => set((s) => {
+        const { [stepId]: _removed, ...rest } = s.backlogRunCorrelation;
+        return { backlogRunCorrelation: rest };
+      }),
+
       activeBacklogDir: null,
       setActiveBacklogDir: (dir) => set({ activeBacklogDir: dir }),
 

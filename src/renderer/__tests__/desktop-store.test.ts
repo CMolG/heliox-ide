@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { PipelineAssembly } from '@/types/meta-agent';
 import { LOOP_DEFAULT_MAX_ITERATIONS, LOOP_MAX_ITERATIONS_CAP } from '@/types/harness';
+import type { BacklogCard } from '@/types/market';
 import { useDesktopStore, getStepMentalAttachments } from '../store/desktop-store';
 import { compileFlowFromCanvas } from '../lib/harness-compiler';
 
@@ -2556,5 +2557,93 @@ describe('Boards — v18 migration (boards + persisted canvasZoom)', () => {
     expect(migrated.canvasZoom).toBe(1);
     expect(migrated.boards).toEqual([expect.objectContaining({ id: 'board-1' })]);
     expect(migrated.activeBoardId).toBe('board-1');
+  });
+});
+
+// ─── Backlog — F4 card<->run correlation + watcher merge ─────────
+
+function makeBacklogCard(overrides: Partial<BacklogCard> = {}): BacklogCard {
+  return {
+    filename: 'card.md', taskId: 'T1', targetAgent: '', targetModule: '',
+    priority: 'medium', status: 'todo', runState: 'idle', order: 0,
+    tags: [], estimate: 0, assignees: [], related: [],
+    createdAt: '2026-07-08T00:00:00.000Z', updatedAt: '2026-07-08T00:00:00.000Z',
+    title: 'A card', description: 'Desc', comments: [], attachments: [],
+    ...overrides,
+  };
+}
+
+describe('mergeBacklogCards (F4 — watcher push)', () => {
+  it('replaces backlogCards wholesale', () => {
+    const before = [makeBacklogCard({ filename: 'a.md', taskId: 'A' })];
+    const after = [makeBacklogCard({ filename: 'b.md', taskId: 'B' }), makeBacklogCard({ filename: 'c.md', taskId: 'C' })];
+    useDesktopStore.setState({ backlogCards: before });
+    useDesktopStore.getState().mergeBacklogCards(after);
+    expect(useDesktopStore.getState().backlogCards).toEqual(after);
+  });
+
+  it('live-patches an open canvasModalCard in place when it is one of the updated cards', () => {
+    const openCard = makeBacklogCard({ filename: 'open.md', taskId: 'OPEN', status: 'todo' });
+    useDesktopStore.setState({ backlogCards: [openCard], canvasModalCard: openCard });
+
+    const updated = { ...openCard, status: 'doing' as const, runState: 'running' as const };
+    useDesktopStore.getState().mergeBacklogCards([updated]);
+
+    expect(useDesktopStore.getState().canvasModalCard).toEqual(updated);
+  });
+
+  it('leaves a non-matching canvasModalCard alone (no surprise auto-close) when its card disappeared from the fresh set', () => {
+    const openCard = makeBacklogCard({ filename: 'open.md', taskId: 'OPEN' });
+    useDesktopStore.setState({ backlogCards: [openCard], canvasModalCard: openCard });
+
+    const other = makeBacklogCard({ filename: 'other.md', taskId: 'OTHER' });
+    useDesktopStore.getState().mergeBacklogCards([other]);
+
+    expect(useDesktopStore.getState().canvasModalCard).toBe(openCard);
+    expect(useDesktopStore.getState().backlogCards).toEqual([other]);
+  });
+
+  it('is a no-op for canvasModalCard when no modal is open', () => {
+    useDesktopStore.getState().mergeBacklogCards([makeBacklogCard()]);
+    expect(useDesktopStore.getState().canvasModalCard).toBeNull();
+  });
+});
+
+describe('backlogRunCorrelation (F4 — card<->run correlation map)', () => {
+  it('starts empty', () => {
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({});
+  });
+
+  it('registerBacklogRunStep adds an entry keyed by stepId', () => {
+    useDesktopStore.getState().registerBacklogRunStep('step-1', '/proj/.backlog', 'card.md');
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      'step-1': { backlogDir: '/proj/.backlog', filename: 'card.md' },
+    });
+  });
+
+  it('registerBacklogRunStep accumulates multiple entries without clobbering existing ones', () => {
+    useDesktopStore.getState().registerBacklogRunStep('step-1', '/proj/.backlog', 'a.md');
+    useDesktopStore.getState().registerBacklogRunStep('step-2', '/proj/.backlog', 'b.md');
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      'step-1': { backlogDir: '/proj/.backlog', filename: 'a.md' },
+      'step-2': { backlogDir: '/proj/.backlog', filename: 'b.md' },
+    });
+  });
+
+  it('clearBacklogRunStep removes only the targeted entry', () => {
+    useDesktopStore.getState().registerBacklogRunStep('step-1', '/proj/.backlog', 'a.md');
+    useDesktopStore.getState().registerBacklogRunStep('step-2', '/proj/.backlog', 'b.md');
+    useDesktopStore.getState().clearBacklogRunStep('step-1');
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      'step-2': { backlogDir: '/proj/.backlog', filename: 'b.md' },
+    });
+  });
+
+  it('clearBacklogRunStep is a no-op for an unknown stepId', () => {
+    useDesktopStore.getState().registerBacklogRunStep('step-1', '/proj/.backlog', 'a.md');
+    useDesktopStore.getState().clearBacklogRunStep('does-not-exist');
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      'step-1': { backlogDir: '/proj/.backlog', filename: 'a.md' },
+    });
   });
 });
