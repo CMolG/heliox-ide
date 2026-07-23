@@ -70,6 +70,13 @@ export type HarnessEventPayload =
 
 // ── Checkpoint / Time-Travel IPC ─────────────────────────────────────────────
 
+/** Mirrors checkpoints.ts's PhaseBoundaryMarker (main-process type) — see CheckpointRecord's own doc comment for why this is a duplicate declaration, not an import. */
+export interface PhaseBoundaryMarkerRecord {
+  phaseId: string;
+  phaseName: string;
+  boundaries: Array<'start' | 'end'>;
+}
+
 /** Serialisable Checkpoint shape for the renderer (mirrors the main-process type). */
 export interface CheckpointRecord {
   id: string;
@@ -82,6 +89,12 @@ export interface CheckpointRecord {
    * non-loop steps and for checkpoints persisted before this field existed.
    */
   iteration?: number;
+  /**
+   * Present only when this checkpoint's step belongs to an AgenticFlow.phases
+   * member AND is that phase's first or last completed instance this run —
+   * mirrors checkpoints.ts's Checkpoint.phaseBoundary (main-process type).
+   */
+  phaseBoundary?: PhaseBoundaryMarkerRecord;
   inputContext: string;
   output: string;
   completedStepIds: string[];

@@ -42,6 +42,26 @@ export interface ContextFileSnapshot {
   content: string;
 }
 
+/**
+ * Tags a checkpoint as coinciding with a phase boundary for THIS run. Frozen
+ * at checkpoint-creation time from the flow's `phases` AS THEY WERE WHEN THE
+ * RUN EXECUTED — not re-derived later — so a subsequent edit to the flow
+ * (renaming/removing/redefining a phase) never corrupts a historical
+ * checkpoint's own marker. Same "frozen at creation, immutable after"
+ * discipline as ContextFileSnapshot.
+ */
+export interface PhaseBoundaryMarker {
+  /** The phase this checkpoint's step belongs to (AgenticPhase.id at run time). */
+  phaseId: string;
+  /** AgenticPhase.name at run time, frozen here so display never re-reads a possibly since-edited flow. */
+  phaseName: string;
+  /**
+   * Whether this checkpoint is this phase's first ('start') or last ('end')
+   * completed instance in THIS run — both, for a single-instance phase.
+   */
+  boundaries: Array<'start' | 'end'>;
+}
+
 /** Immutable snapshot recorded after a step completes. */
 export interface Checkpoint {
   /** Unique checkpoint id — `ckpt_<runId>_<stepId>_<timestamp>`. */
@@ -76,6 +96,12 @@ export interface Checkpoint {
    * checkpoints and this field's shape are untouched by its addition.
    */
   contextFileSnapshot?: ContextFileSnapshot;
+  /**
+   * Present only when this checkpoint's step belongs to an AgenticFlow.phases
+   * member AND is that phase's first or last completed instance this run.
+   * Omitted entirely (never undefined-valued) otherwise.
+   */
+  phaseBoundary?: PhaseBoundaryMarker;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +195,8 @@ export class SqliteCheckpointStore implements CheckpointStore {
         model_id         TEXT,
         timestamp        INTEGER NOT NULL,
         context_file_path    TEXT,
-        context_file_content TEXT
+        context_file_content TEXT,
+        phase_boundary       TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_checkpoints_run_id
         ON harness_checkpoints (run_id, timestamp);
@@ -179,8 +206,8 @@ export class SqliteCheckpointStore implements CheckpointStore {
   save(checkpoint: Checkpoint): void {
     this.db.prepare(`
       INSERT INTO harness_checkpoints
-        (id, run_id, step_id, iteration, input_context, output, completed_step_ids, model_id, timestamp, context_file_path, context_file_content)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, run_id, step_id, iteration, input_context, output, completed_step_ids, model_id, timestamp, context_file_path, context_file_content, phase_boundary)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       checkpoint.id,
       checkpoint.runId,
@@ -193,6 +220,10 @@ export class SqliteCheckpointStore implements CheckpointStore {
       checkpoint.timestamp,
       checkpoint.contextFileSnapshot?.path ?? null,
       checkpoint.contextFileSnapshot?.content ?? null,
+      // One JSON-serialized TEXT column rather than three flat scalars:
+      // PhaseBoundaryMarker is a small nested object (its `boundaries` is
+      // itself an array), unlike contextFileSnapshot's two plain strings.
+      checkpoint.phaseBoundary ? JSON.stringify(checkpoint.phaseBoundary) : null,
     );
   }
 
@@ -225,6 +256,9 @@ export class SqliteCheckpointStore implements CheckpointStore {
       timestamp: Number(row.timestamp),
       ...(row.context_file_path != null && row.context_file_content != null
         ? { contextFileSnapshot: { path: String(row.context_file_path), content: String(row.context_file_content) } }
+        : {}),
+      ...(row.phase_boundary != null
+        ? { phaseBoundary: JSON.parse(String(row.phase_boundary)) as PhaseBoundaryMarker }
         : {}),
     };
   }
@@ -289,6 +323,12 @@ export interface SaveCheckpointInput {
    * `content` is truncated at CONTEXT_FILE_SNAPSHOT_MAX_CHARS before storage.
    */
   contextFileSnapshot?: ContextFileSnapshot;
+  /**
+   * Phase-boundary marker for this checkpoint's step; omit entirely when the
+   * step is not a phase's first/last completed instance this run (see
+   * Checkpoint.phaseBoundary).
+   */
+  phaseBoundary?: PhaseBoundaryMarker;
 }
 
 /**
@@ -327,6 +367,10 @@ export function saveCheckpoint(input: SaveCheckpointInput): Checkpoint {
           },
         }
       : {}),
+    // Same conditional-spread discipline again. Stored verbatim, with no
+    // truncation: the marker is three small, bounded fields, and losing any
+    // of them would break the resume-from-phase-start lookup below.
+    ...(input.phaseBoundary !== undefined ? { phaseBoundary: input.phaseBoundary } : {}),
   };
   activeStore.save(checkpoint);
   return checkpoint;
@@ -337,6 +381,20 @@ export function saveCheckpoint(input: SaveCheckpointInput): Checkpoint {
  */
 export function listCheckpoints(runId: string): Checkpoint[] {
   return activeStore.list(runId);
+}
+
+/**
+ * Finds the checkpoint marking a phase's first completed instance in a run —
+ * the checkpoint `replayFrom` (replay.ts, UNCHANGED) should target for
+ * "resume from phase start" (spec §5.3). Pure query over already-persisted
+ * checkpoints; does not call replayFrom itself — callers compose the two:
+ * `const ckpt = findPhaseStartCheckpoint(runId, phaseId); if (ckpt) await
+ * replayFrom(flow, ckpt.id, editedOutput, options);`
+ */
+export function findPhaseStartCheckpoint(runId: string, phaseId: string): Checkpoint | undefined {
+  return listCheckpoints(runId).find(
+    (c) => c.phaseBoundary?.phaseId === phaseId && c.phaseBoundary.boundaries.includes('start'),
+  );
 }
 
 /**
