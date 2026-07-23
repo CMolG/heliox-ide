@@ -238,6 +238,26 @@ function getStep(flow: AgenticFlow, stepId: string): AgenticStep {
   return step;
 }
 
+/**
+ * Undirected BFS, inclusive of `start` — a local copy for phase connectivity
+ * re-validation. Mirrors loop-plan.ts's own independent copy of the same shape
+ * rather than importing harness-compiler.ts's across the main/renderer
+ * boundary, following the precedent already set in this engine.
+ */
+function reachableSetUndirected(start: string, adjacency: Map<string, string[]>): Set<string> {
+  const visited = new Set<string>([start]);
+  const queue: string[] = [start];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const next of adjacency.get(current) ?? []) {
+      if (visited.has(next)) continue;
+      visited.add(next);
+      queue.push(next);
+    }
+  }
+  return visited;
+}
+
 function validateFlow(flow: AgenticFlow): AgenticStep {
   if (!flow.rootStepId || !flow.stepsRecord[flow.rootStepId]) {
     throw new Error(`AgenticFlow "${flow.id}" has an invalid rootStepId "${flow.rootStepId}".`);
@@ -264,6 +284,58 @@ function validateFlow(flow: AgenticFlow): AgenticStep {
     }
     if (!Number.isFinite(loop.maxIterations)) {
       throw new Error(`AgenticFlow "${flow.id}" loop "${loop.id}" has a non-finite maxIterations (${loop.maxIterations}).`);
+    }
+  }
+
+  // Phase sanity checks: unique ids, resolvable stepIds, connected subgraph,
+  // pairwise disjoint, onError restricted to 'halt' — the same defensive
+  // re-validation discipline loops get above, necessary because an
+  // AgenticFlow can reach the executor without ever passing through
+  // compileFlowFromCanvas (hand-built, imported, or SDK-constructed). A flow
+  // that declares no phases skips this loop entirely.
+  const phaseStepIdOwner = new Map<string, string>();
+  const seenPhaseIds = new Set<string>();
+  for (const phase of flow.phases ?? []) {
+    if (seenPhaseIds.has(phase.id)) {
+      throw new Error(`AgenticFlow "${flow.id}" has a duplicate phase id "${phase.id}".`);
+    }
+    seenPhaseIds.add(phase.id);
+
+    if (phase.stepIds.length === 0) {
+      throw new Error(`AgenticFlow "${flow.id}" phase "${phase.id}" has no member steps.`);
+    }
+
+    const uniqueStepIds = [...new Set(phase.stepIds)];
+    for (const stepId of uniqueStepIds) {
+      getStep(flow, stepId); // throws "references missing step" if unresolved
+    }
+
+    const memberSet = new Set(uniqueStepIds);
+    const undirectedAdjacency = new Map<string, string[]>();
+    for (const stepId of uniqueStepIds) {
+      const step = flow.stepsRecord[stepId];
+      undirectedAdjacency.set(stepId, [...step.nextStepIds, ...step.prevStepIds].filter((id) => memberSet.has(id)));
+    }
+    const reached = reachableSetUndirected(uniqueStepIds[0], undirectedAdjacency);
+    const unreached = uniqueStepIds.filter((id) => !reached.has(id));
+    if (unreached.length > 0) {
+      throw new Error(
+        `AgenticFlow "${flow.id}" phase "${phase.id}" is not a connected subgraph: {${[...reached].sort().join(', ')}} is disconnected from {${unreached.sort().join(', ')}}.`,
+      );
+    }
+
+    for (const stepId of uniqueStepIds) {
+      const ownerId = phaseStepIdOwner.get(stepId);
+      if (ownerId && ownerId !== phase.id) {
+        throw new Error(
+          `AgenticFlow "${flow.id}" phases "${ownerId}" and "${phase.id}" both claim step "${stepId}" — a step may belong to at most one phase.`,
+        );
+      }
+      phaseStepIdOwner.set(stepId, phase.id);
+    }
+
+    if (phase.onError !== undefined && phase.onError !== 'halt') {
+      throw new Error(`AgenticFlow "${flow.id}" phase "${phase.id}" declares onError "${phase.onError}" — only "halt" is supported in v1.`);
     }
   }
 

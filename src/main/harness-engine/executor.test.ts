@@ -81,6 +81,72 @@ describe('harness event bus', () => {
   });
 });
 
+describe('validateFlow — phase sanity checks (Capa 1)', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  const okRunStep = async () => ({ text: 'ok', usage: null, toolCalls: [], toolResults: [] });
+
+  // Two-step linear flow (a -> b) plus whatever phases the case declares.
+  function flowWithPhases(phases: AgenticFlow['phases']): AgenticFlow {
+    return {
+      ...makeFlow({ a: makeStep('a', [], ['b']), b: makeStep('b', ['a'], []) }, 'a'),
+      ...(phases ? { phases } : {}),
+    };
+  }
+
+  it('throws when a phase references a missing step', async () => {
+    await expect(executeAgenticFlow(flowWithPhases([{ id: 'phase-1', name: 'P', stepIds: ['a', 'ghost'] }]), { runStep: okRunStep }))
+      .rejects.toThrow(/missing step "ghost"/);
+  });
+
+  it('throws when onError is not "halt"', async () => {
+    await expect(executeAgenticFlow(flowWithPhases([{ id: 'phase-1', name: 'P', stepIds: ['a'], onError: 'skip' as never }]), { runStep: okRunStep }))
+      .rejects.toThrow(/only "halt" is supported/);
+  });
+
+  it('throws when two phases claim the same step', async () => {
+    await expect(executeAgenticFlow(flowWithPhases([
+      { id: 'p1', name: 'P1', stepIds: ['a'] },
+      { id: 'p2', name: 'P2', stepIds: ['a'] },
+    ]), { runStep: okRunStep })).rejects.toThrow(/both claim step "a"/);
+  });
+
+  it('throws when a phase declares no member steps', async () => {
+    await expect(executeAgenticFlow(flowWithPhases([{ id: 'p1', name: 'P1', stepIds: [] }]), { runStep: okRunStep }))
+      .rejects.toThrow(/has no member steps/);
+  });
+
+  it('throws when a phase\'s members are not a connected subgraph', async () => {
+    const flow: AgenticFlow = {
+      ...makeFlow({
+        a: makeStep('a', [], ['b']),
+        b: makeStep('b', ['a'], ['c']),
+        c: makeStep('c', ['b'], []),
+      }, 'a'),
+      phases: [{ id: 'p1', name: 'Ends', stepIds: ['a', 'c'] }],
+    };
+    await expect(executeAgenticFlow(flow, { runStep: okRunStep })).rejects.toThrow(/is not a connected subgraph/);
+  });
+
+  it('throws on a duplicate phase id', async () => {
+    await expect(executeAgenticFlow(flowWithPhases([
+      { id: 'p1', name: 'P1', stepIds: ['a'] },
+      { id: 'p1', name: 'P2', stepIds: ['b'] },
+    ]), { runStep: okRunStep })).rejects.toThrow(/duplicate phase id "p1"/i);
+  });
+
+  it('accepts a well-formed phase with no exitContract (pure grouping, runs normally)', async () => {
+    await expect(executeAgenticFlow(flowWithPhases([{ id: 'phase-1', name: 'P', stepIds: ['a', 'b'] }]), { runStep: okRunStep }))
+      .resolves.toBeUndefined();
+  });
+
+  it('leaves a flow with no phases completely untouched', async () => {
+    await expect(executeAgenticFlow(flowWithPhases(undefined), { runStep: okRunStep })).resolves.toBeUndefined();
+  });
+});
+
 describe('executeAgenticFlow', () => {
   afterEach(() => {
     harnessEventBus.removeAllListeners();
