@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { CanvasGraphNode, FrameGraphNode, MentalGraphEdge, MentalGraphNode, StepGraphNode } from '@/types/desktop';
-import { collectDownstreamStepIds, compileFlowFromCanvas, findOwningFrame, wouldCreateStepCycle } from '../lib/harness-compiler';
+import type { CanvasGraphNode, FrameGraphNode, MentalGraphEdge, MentalGraphNode, PhaseGraphNode, StepGraphNode } from '@/types/desktop';
+import { collectDownstreamStepIds, compileFlowFromCanvas, findOwningFrame, findOwningPhase, wouldCreateStepCycle } from '../lib/harness-compiler';
 
 function stepNode(id: string, title: string, data: Partial<StepGraphNode['data']> = {}): StepGraphNode {
   return {
@@ -59,6 +59,26 @@ function frameNode(id: string, title: string, data: Partial<FrameGraphNode['data
     data: {
       title,
       childIds: [],
+      ...data,
+    },
+    createdAt: 1,
+  };
+}
+
+function phaseNode(id: string, title: string, childIds: string[], parentId = 'frame-1', data: Partial<PhaseGraphNode['data']> = {}): PhaseGraphNode {
+  return {
+    id,
+    type: 'phase',
+    parentId,
+    position: { x: 0, y: 0 },
+    width: 360,
+    height: 220,
+    text: title,
+    color: '#7C3AED',
+    shape: 'square',
+    data: {
+      title,
+      childIds,
       ...data,
     },
     createdAt: 1,
@@ -327,6 +347,115 @@ describe('compileFlowFromCanvas — loop-back edges', () => {
   });
 });
 
+describe('compileFlowFromCanvas — phases (Capa 1)', () => {
+  it('compiles a phase into flow.phases as a passive field (stepsRecord/rootStepId/edges unchanged)', () => {
+    const nodes = [stepNode('root', 'Root'), stepNode('a', 'A'), stepNode('b', 'B'), phaseNode('phase-1', 'Setup', ['root', 'a'])];
+    const edges = [edge('e-root-a', 'root', 'a'), edge('e-a-b', 'a', 'b')];
+
+    const flow = compileFlowFromCanvas(nodes, edges);
+
+    expect(flow.phases).toEqual([{ id: 'phase-1', name: 'Setup', stepIds: ['root', 'a'] }]);
+    expect(flow.stepsRecord.root.nextStepIds).toEqual(['a']);
+    expect(flow.rootStepId).toBe('root');
+  });
+
+  it('omits the phases key entirely when the canvas has no phase nodes (byte-identical to today)', () => {
+    const nodes = [stepNode('root', 'Root'), stepNode('a', 'A')];
+    const edges = [edge('e-root-a', 'root', 'a')];
+
+    expect(compileFlowFromCanvas(nodes, edges).phases).toBeUndefined();
+  });
+
+  it('carries exitContract and onError through verbatim', () => {
+    const nodes = [stepNode('root', 'Root'), stepNode('a', 'A'), phaseNode('phase-1', 'Setup', ['root', 'a'], 'frame-1', {
+      exitContract: { mustWriteFiles: true },
+      onError: 'halt',
+    })];
+    const edges = [edge('e-root-a', 'root', 'a')];
+
+    const flow = compileFlowFromCanvas(nodes, edges);
+
+    expect(flow.phases?.[0].exitContract).toEqual({ mustWriteFiles: true });
+    expect(flow.phases?.[0].onError).toBe('halt');
+  });
+
+  it('rejects a phase referencing an unknown step id', () => {
+    const nodes = [stepNode('root', 'Root'), phaseNode('phase-1', 'Setup', ['root', 'ghost'])];
+    const edges: MentalGraphEdge[] = [];
+
+    expect(() => compileFlowFromCanvas(nodes, edges)).toThrow(/references unknown step "ghost"/);
+  });
+
+  it('rejects a phase whose declared members are not a connected subgraph, naming both halves', () => {
+    const nodes = ['root', 'a', 'b', 'c', 'd'].map((id) => stepNode(id, id.toUpperCase()));
+    const edges = [
+      edge('e-root-a', 'root', 'a'),
+      edge('e-a-b', 'a', 'b'),
+      edge('e-b-c', 'b', 'c'),
+      edge('e-c-d', 'c', 'd'),
+    ];
+    // 'a' and 'd' are both real, but disconnected from each other without b/c.
+    const withPhase = [...nodes, phaseNode('phase-1', 'Ends', ['a', 'd'])];
+
+    expect(() => compileFlowFromCanvas(withPhase, edges)).toThrow(/is not a connected subgraph/);
+  });
+
+  it('rejects two phases that both claim the same step, naming both phase names', () => {
+    const nodes = [stepNode('root', 'Root'), stepNode('a', 'A'),
+      phaseNode('phase-1', 'First', ['root', 'a']),
+      phaseNode('phase-2', 'Second', ['a'])];
+    const edges = [edge('e-root-a', 'root', 'a')];
+
+    expect(() => compileFlowFromCanvas(nodes, edges)).toThrow(/"First".*"Second".*both claim step "a"/);
+  });
+
+  it('rejects a duplicate phase id', () => {
+    const nodes = [stepNode('root', 'Root'), stepNode('a', 'A'), stepNode('b', 'B'),
+      phaseNode('phase-1', 'First', ['root']),
+      phaseNode('phase-1', 'Second', ['a'])];
+    const edges = [edge('e-root-a', 'root', 'a'), edge('e-a-b', 'a', 'b')];
+
+    expect(() => compileFlowFromCanvas(nodes, edges)).toThrow(/Duplicate phase id "phase-1"/);
+  });
+
+  it('rejects a phase with no member steps', () => {
+    const nodes = [stepNode('root', 'Root'), phaseNode('phase-1', 'Empty', [])];
+    const edges: MentalGraphEdge[] = [];
+
+    expect(() => compileFlowFromCanvas(nodes, edges)).toThrow(/has no member steps/);
+  });
+
+  it('rejects onError values other than "halt"', () => {
+    const nodes = [stepNode('root', 'Root'), phaseNode('phase-1', 'Setup', ['root'], 'frame-1', { onError: 'skip' as never })];
+    const edges: MentalGraphEdge[] = [];
+
+    expect(() => compileFlowFromCanvas(nodes, edges)).toThrow(/only "halt" is supported/);
+  });
+
+  it('deduplicates repeated stepIds within the same phase rather than erroring', () => {
+    const nodes = [stepNode('root', 'Root'), phaseNode('phase-1', 'Setup', ['root', 'root'])];
+    const edges: MentalGraphEdge[] = [];
+
+    expect(compileFlowFromCanvas(nodes, edges).phases?.[0].stepIds).toEqual(['root']);
+  });
+
+  it('silently omits a phase from a scoped (includeIds) compile when one member is excluded', () => {
+    const nodes = [stepNode('root', 'Root'), stepNode('a', 'A'), stepNode('b', 'B'), phaseNode('phase-1', 'Setup', ['a', 'b'])];
+    const edges = [edge('e-root-a', 'root', 'a'), edge('e-a-b', 'a', 'b')];
+
+    const flow = compileFlowFromCanvas(nodes, edges, { includeIds: new Set(['root', 'a']) });
+
+    expect(flow.phases).toBeUndefined();
+  });
+
+  it('still throws for a phase referencing a truly unknown step id even under includeIds', () => {
+    const nodes = [stepNode('root', 'Root'), stepNode('a', 'A'), phaseNode('phase-1', 'Setup', ['root', 'ghost'])];
+    const edges = [edge('e-root-a', 'root', 'a')];
+
+    expect(() => compileFlowFromCanvas(nodes, edges, { includeIds: new Set(['root']) })).toThrow(/references unknown step "ghost"/);
+  });
+});
+
 describe('collectDownstreamStepIds — loop edges', () => {
   it('does not traverse a loop-back edge', () => {
     const nodes = [stepNode('root', 'Root'), stepNode('a', 'A'), stepNode('b', 'B')];
@@ -556,5 +685,24 @@ describe('findOwningFrame (Task U — shared by compileFlowFromCanvas and StepRu
   it('returns undefined for an unknown stepId', () => {
     const frame = frameNode('frame-1', 'Frame', { childIds: ['s1'] });
     expect(findOwningFrame('does-not-exist', [frame])).toBeUndefined();
+  });
+});
+
+describe('findOwningPhase', () => {
+  it("finds the phase that lists the step's parentId", () => {
+    // NOTE: parentId is a top-level StepGraphNode field, not part of `data` —
+    // set it by spreading over stepNode's result, the same pattern this file
+    // already uses elsewhere for a step with a non-default parentId.
+    const nodes = [{ ...stepNode('a', 'A'), parentId: 'phase-1' }, phaseNode('phase-1', 'Phase One', ['a'])];
+    expect(findOwningPhase('a', nodes)?.id).toBe('phase-1');
+  });
+
+  it('returns undefined when the step is not parented to any phase', () => {
+    const nodes = [stepNode('a', 'A'), phaseNode('phase-1', 'Phase One', ['b'])];
+    expect(findOwningPhase('a', nodes)).toBeUndefined();
+  });
+
+  it('returns undefined for an unknown stepId', () => {
+    expect(findOwningPhase('ghost', [phaseNode('phase-1', 'Phase One', [])])).toBeUndefined();
   });
 });
