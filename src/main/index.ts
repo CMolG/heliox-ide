@@ -12,7 +12,7 @@
  * Those responsibilities live behind IPC handlers in `src/main/ipc-handlers.ts`.
  *
  * Startup Order:
- *  Phase -1 — Crash reporter (audit 1.8a) — synchronous, before the app is ready
+ *  Phase -1 — Crash reporter (audit 1.8a) + JS fatal handlers — synchronous, before the app is ready
  *  Phase 0 — Initialize storage (SQLite migrations → electron-store → fs roots → storage IPC)
  *  Phase 1 — Restore window geometry from settings store
  *  Phase 2 — Load renderer entrypoint
@@ -21,6 +21,8 @@
 import { app, BrowserWindow, Menu, nativeImage, session, crashReporter } from 'electron';
 import path from 'path';
 import { updateElectronApp } from 'update-electron-app';
+import { installFatalHandlers } from './fatal-log';
+import { log } from './logger';
 import { registerIpcHandlers } from './ipc-handlers';
 import { registerContextMapIpcHandlers } from './context-map';
 import { registerDevServerIpcHandlers } from './browser/dev-server-watcher';
@@ -46,6 +48,12 @@ crashReporter.start({
   productName: 'Fluxor IDE',
   ignoreSystemCrashHandler: false,
 });
+
+// The above only catches NATIVE crashes. installFatalHandlers covers the
+// JS-level deaths that leave Crashpad empty — uncaught exceptions, unhandled
+// rejections, and renderer/child-process kills — appending them to
+// <userData>/fluxor.log without changing any crash semantics. See fatal-log.ts.
+installFatalHandlers();
 
 interface WindowState {
   x?: number;
@@ -226,6 +234,9 @@ app.whenReady().then(() => {
   // Crash dumps directory is only meaningful once the app is ready on every
   // platform; log it once so a user/support thread can be pointed at it.
   console.log(`[crash-reporter] local dumps: ${app.getPath('crashDumps')}`);
+  // Same rationale, for the JS-side sink: a support thread (or the next
+  // session's post-mortem) needs one path, printed once, at a predictable spot.
+  console.log(`[crash-reporter] fatal log:   ${log.filePath ?? '(unavailable)'}`);
 
   // Packaged only — see registerPackagedContentSecurityPolicy for rationale.
   // Vite's dev server (HMR eval + ws) would break under this policy.
