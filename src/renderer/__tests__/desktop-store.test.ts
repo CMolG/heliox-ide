@@ -1488,6 +1488,104 @@ describe('updateFrameData', () => {
   });
 });
 
+// ─── Phase grouping (Capa 1 spike) ─────────────────────────────────
+
+describe('Phase grouping (Capa 1 spike)', () => {
+  it('addPhaseNode creates a PhaseGraphNode owned by the given frame', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId,
+      position: { x: 20, y: 20 },
+      width: 360,
+      height: 220,
+      title: 'Setup',
+      childIds: [stepId],
+    });
+
+    const nodes = useDesktopStore.getState().mentalNodes;
+    const phase = nodes.find((n) => n.id === phaseId);
+    expect(phase?.type).toBe('phase');
+    expect((phase as never as { parentId: string }).parentId).toBe(frameId);
+    expect((phase as never as { data: { childIds: string[] } }).data.childIds).toEqual([stepId]);
+  });
+
+  it('addPhaseNode re-parents its named child steps from the frame to the new phase', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup', childIds: [stepId],
+    });
+
+    const step = useDesktopStore.getState().mentalNodes.find((n) => n.id === stepId);
+    expect((step as never as { parentId: string }).parentId).toBe(phaseId);
+  });
+
+  it('updatePhaseData patches title/description on the phase node only', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const phaseId = store.addPhaseNode({ parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup' });
+
+    useDesktopStore.getState().updatePhaseData(phaseId, { title: 'Renamed Phase' });
+
+    const phase = useDesktopStore.getState().mentalNodes.find((n) => n.id === phaseId);
+    expect((phase as never as { data: { title: string } }).data.title).toBe('Renamed Phase');
+  });
+
+  it('removeMentalNode on a phase re-parents its children to the owning frame instead of deleting them', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup', childIds: [stepId],
+    });
+
+    useDesktopStore.getState().removeMentalNode(phaseId);
+
+    const nodes = useDesktopStore.getState().mentalNodes;
+    expect(nodes.find((n) => n.id === phaseId)).toBeUndefined();
+    const step = nodes.find((n) => n.id === stepId);
+    expect(step).toBeDefined();
+    expect((step as never as { parentId: string }).parentId).toBe(frameId);
+  });
+
+  it('removeMentalNode on a frame cascade-deletes transitively through a phase, leaving no dangling parentId', () => {
+    // The frame cascade walks `parentId`, and addStepNode never registers the
+    // step in the frame's own childIds — so once addPhaseNode re-parents a
+    // step (frame > phase > step), a single-level scan would delete the phase
+    // and strand its steps pointing at a node that no longer exists.
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup', childIds: [stepId],
+    });
+
+    useDesktopStore.getState().removeMentalNode(frameId);
+
+    const nodes = useDesktopStore.getState().mentalNodes;
+    expect(nodes.find((n) => n.id === frameId)).toBeUndefined();
+    expect(nodes.find((n) => n.id === phaseId)).toBeUndefined();
+    expect(nodes.find((n) => n.id === stepId)).toBeUndefined();
+  });
+
+  it('removeMentalNode on a frame still cascade-deletes its children (regression: Frame behavior unchanged)', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+
+    useDesktopStore.getState().removeMentalNode(frameId);
+
+    const nodes = useDesktopStore.getState().mentalNodes;
+    expect(nodes.find((n) => n.id === frameId)).toBeUndefined();
+    expect(nodes.find((n) => n.id === stepId)).toBeUndefined();
+  });
+});
+
 // ─── Loop-back edges (bounded refinement) ──────────────────────────
 
 describe('Loop-back edges (bounded refinement)', () => {

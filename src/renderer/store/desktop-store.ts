@@ -21,6 +21,7 @@ import type {
   DockItem, Plugin, PluginCategory, SnapGuide, CliProvider, ConnectionPort, CanvasPan,
   DesktopAttachable, AttachableType, DesktopGrid, MentalMode, MentalShape,
   MentalTool, MentalGraphNode, MentalGraphEdge, StepGraphNode, CanvasGraphNode, FrameGraphNode,
+  PhaseGraphNode, PhaseNodeData,
   StepNodeData, FrameNodeData, Board, BoardSnapshot,
 } from '@/types/desktop';
 import type { MarketInventory, MarketMod, MarketRole, BacklogCard } from '@/types/market';
@@ -222,6 +223,18 @@ interface AddFrameNodeInput {
   description?: string;
   childIds?: string[];
   missingCapabilitiesRequested?: string[];
+}
+
+interface AddPhaseNodeInput {
+  id?: string;
+  /** Owning Frame id — a phase never floats (spec §3.2). */
+  parentId: string;
+  position: WindowPosition;
+  width: number;
+  height: number;
+  title: string;
+  description?: string;
+  childIds?: string[];
 }
 
 interface InsertPipelineAssemblyInput {
@@ -475,6 +488,15 @@ interface DesktopStore {
   addMentalNode: (node: Omit<MentalGraphNode, 'id' | 'createdAt'> & { id?: string }) => string;
   updateMentalNode: (nodeId: string, patch: Partial<Pick<MentalGraphNode, 'position' | 'width' | 'height' | 'text' | 'color'>>) => void;
   addFrameNode: (node: AddFrameNodeInput) => string;
+  /**
+   * Create a Phase node — a named sub-grouping INSIDE a Frame (the second
+   * nesting level, frame > phase > step; spec
+   * docs/superpowers/specs/2026-07-21-agentic-phase-model.md §3.2). Every id
+   * in `childIds` is re-parented from the frame to the new phase, so the
+   * canvas hierarchy and the compiled `AgenticPhase.stepIds` agree from the
+   * moment of creation.
+   */
+  addPhaseNode: (node: AddPhaseNodeInput) => string;
   addStepNode: (node?: AddStepNodeInput) => string;
   insertPipelineAssembly: (input: InsertPipelineAssemblyInput) => InsertPipelineAssemblyResult;
   addModToStep: (stepId: string, modData: MarketMod) => boolean;
@@ -499,6 +521,15 @@ interface DesktopStore {
    * `frameId` doesn't name a Frame node.
    */
   updateFrameData: (frameId: string, patch: Partial<FrameNodeData>) => void;
+  /**
+   * Patch arbitrary fields on a Phase node's `data` (e.g. `title`,
+   * `description`, `childIds`). Mirrors `updateFrameData` one nesting level
+   * deeper — `compileFlowFromCanvas` reads `data.childIds`/`data.title`
+   * directly when assembling `flow.phases`, so edits here feed the compiled
+   * AgenticPhase on the next compile. No-ops if `phaseId` doesn't name a
+   * Phase node.
+   */
+  updatePhaseData: (phaseId: string, patch: Partial<PhaseNodeData>) => void;
   removeMentalNode: (nodeId: string) => void;
   addMentalEdge: (sourceId: string, targetId: string, edgeType?: MentalGraphEdge['type'], sourceHandle?: string, targetHandle?: string, maxIterations?: number) => string | null;
   removeMentalEdge: (edgeId: string) => void;
@@ -678,6 +709,10 @@ function getViewportCenteredSpawnPosition(pan: CanvasPan, zoom: number): WindowP
 
 function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
   return node.type === 'step';
+}
+
+function isPhaseGraphNode(node: CanvasGraphNode): node is PhaseGraphNode {
+  return node.type === 'phase';
 }
 
 function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
@@ -1851,6 +1886,41 @@ export const useDesktopStore = create<DesktopStore>()(
         return id;
       },
 
+      addPhaseNode: (input) => {
+        const id = input.id ?? `phase-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const node: PhaseGraphNode = {
+          id,
+          type: 'phase',
+          parentId: input.parentId,
+          position: input.position,
+          width: input.width,
+          height: input.height,
+          text: input.title,
+          color: '#7C3AED',
+          shape: 'square',
+          data: {
+            title: input.title,
+            description: input.description,
+            childIds: [...(input.childIds ?? [])],
+          },
+          createdAt: Date.now(),
+        };
+        set((s) => {
+          // Re-parent every named child step from the frame to this new
+          // phase node (parentId: input.parentId -> id) — mirrors how
+          // insertPipelineAssembly assigns parentId: frameId at creation
+          // time, one level deeper (spec §3.2's second nesting level).
+          const childSet = new Set(input.childIds ?? []);
+          return {
+            mentalNodes: [
+              ...s.mentalNodes.map((n) => (childSet.has(n.id) && n.type === 'step' ? { ...n, parentId: id } : n)),
+              node,
+            ],
+          };
+        });
+        return id;
+      },
+
       addStepNode: (input = {}) => {
         const state = get();
         const id = input.id ?? `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -2125,20 +2195,52 @@ export const useDesktopStore = create<DesktopStore>()(
         }),
       })),
 
+      updatePhaseData: (phaseId, patch) => set((s) => ({
+        mentalNodes: s.mentalNodes.map((n) => {
+          if (n.id !== phaseId || n.type !== 'phase') return n;
+          return { ...n, data: { ...n.data, ...patch } };
+        }),
+      })),
+
       removeMentalNode: (nodeId) => set((s) => {
         const target = s.mentalNodes.find((n) => n.id === nodeId);
         const idsToRemove = new Set<string>([nodeId]);
         if (target && isFrameGraphNode(target)) {
           for (const childId of target.data.childIds) idsToRemove.add(childId);
-          for (const node of s.mentalNodes) {
-            if ('parentId' in node && node.parentId === nodeId) idsToRemove.add(node.id);
+          // Descend to a fixpoint rather than one level. A Frame may now own
+          // Phase nodes, which in turn own Steps (frame > phase > step), and
+          // addStepNode never registers a step in the frame's own childIds —
+          // so a single `parentId === nodeId` pass would delete the phase and
+          // strand its steps pointing at a node that no longer exists. With no
+          // phases on the canvas this converges after the first pass, giving
+          // byte-identical behavior to the single-level scan it replaces.
+          let grew = true;
+          while (grew) {
+            grew = false;
+            for (const node of s.mentalNodes) {
+              if (idsToRemove.has(node.id)) continue;
+              if ('parentId' in node && node.parentId && idsToRemove.has(node.parentId)) {
+                idsToRemove.add(node.id);
+                grew = true;
+              }
+            }
           }
         }
+        // Phase nodes dissolve rather than cascade-delete (spec §1.1: a
+        // phase is pure grouping — deleting the label must never delete the
+        // work inside it). Re-parent every step whose parentId === nodeId up
+        // to the phase's OWN parentId (the owning Frame) instead of adding
+        // them to idsToRemove, so no step is left pointing at a parentId
+        // that is about to stop existing.
+        const reparentToFrameId = target && isPhaseGraphNode(target) ? target.parentId : undefined;
 
         return {
           mentalNodes: s.mentalNodes
             .filter((n) => !idsToRemove.has(n.id))
             .map((n) => {
+              if (reparentToFrameId && 'parentId' in n && (n as StepGraphNode).parentId === nodeId) {
+                return { ...n, parentId: reparentToFrameId };
+              }
               if (!isFrameGraphNode(n)) return n;
               const nextChildIds = n.data.childIds.filter((childId) => !idsToRemove.has(childId));
               return nextChildIds.length === n.data.childIds.length
