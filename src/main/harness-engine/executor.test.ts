@@ -2,7 +2,7 @@ import { mkdtemp, readFile as nodeReadFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgenticFlow, AgenticStep } from '@/types/harness';
+import type { AgenticFlow, AgenticStep, StepContract } from '@/types/harness';
 import type { HarnessEventPayload } from '@/types/ipc-events';
 import type { McpFileSystem } from './mcp-adapter';
 import {
@@ -1312,5 +1312,176 @@ describe('executeAgenticFlow — contextMode: feedback — checkpoint contextFil
 
     const checkpoints = listCheckpoints(runId);
     expect('contextFileSnapshot' in checkpoints[0]).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phases — Capa 1 exit gate + checkpoint boundary marker
+// (spec docs/superpowers/specs/2026-07-21-agentic-phase-model.md §5.1-5.3)
+// ---------------------------------------------------------------------------
+
+/** Three-step chain a -> b -> c, with one phase over `phaseStepIds`. */
+function chainFlow(phaseStepIds: string[], exitContract?: StepContract): AgenticFlow {
+  return {
+    id: 'flow-phase-gate',
+    name: 'Phase Gate Flow',
+    rootStepId: 'a',
+    stepsRecord: {
+      a: makeStep('a', [], ['b']),
+      b: makeStep('b', ['a'], ['c']),
+      c: makeStep('c', ['b'], []),
+    },
+    phases: [{ id: 'phase-1', name: 'Middle', stepIds: phaseStepIds, ...(exitContract ? { exitContract } : {}) } as never],
+  };
+}
+
+describe('executeAgenticFlow — phases (Capa 1 exit gate)', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  it('a flow with no phases takes zero extra snapshotWorkspace calls', async () => {
+    const fileSystem = makeInMemoryFileSystem();
+    let readdirCalls = 0;
+    const wrapped: McpFileSystem = {
+      ...fileSystem,
+      readdir: async (path: string) => { readdirCalls++; return fileSystem.readdir(path); },
+    };
+    const flow = makeFlow({ a: makeStep('a', [], []) }, 'a');
+
+    await executeAgenticFlow(flow, {
+      fileSystem: wrapped,
+      runStep: async () => ({ text: 'ok', usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    expect(readdirCalls).toBe(0);
+  });
+
+  it('a phase with no exitContract also takes zero snapshots (pure grouping is free)', async () => {
+    const fileSystem = makeInMemoryFileSystem();
+    let readdirCalls = 0;
+    const wrapped: McpFileSystem = {
+      ...fileSystem,
+      readdir: async (path: string) => { readdirCalls++; return fileSystem.readdir(path); },
+    };
+
+    await executeAgenticFlow(chainFlow(['a', 'b']), {
+      fileSystem: wrapped,
+      runStep: async ({ step }: { step: AgenticStep }) => ({ text: `${step.id} ok`, usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    expect(readdirCalls).toBe(0);
+  });
+
+  it('passes silently when the exit contract is satisfied', async () => {
+    const fileSystem = makeInMemoryFileSystem();
+
+    await expect(executeAgenticFlow(chainFlow(['a', 'b'], { mustWriteFiles: true }), {
+      fileSystem,
+      rootDir: '/workspace',
+      runStep: async ({ step }: { step: AgenticStep }) => {
+        await fileSystem.writeFile(`/workspace/out-${step.id}.md`, `${step.id} wrote this`, 'utf-8');
+        return { text: `${step.id} ok`, usage: null, toolCalls: [], toolResults: [] };
+      },
+    })).resolves.toBeUndefined();
+  });
+
+  it('throws naming the phase when the contract is breached, and never persists a checkpoint for the breaching instance', async () => {
+    const fileSystem = makeInMemoryFileSystem();
+    const runId = 'run-phase-breach';
+
+    await expect(executeAgenticFlow(chainFlow(['a', 'b'], { mustWriteFiles: true }), {
+      runId,
+      fileSystem,
+      rootDir: '/workspace',
+      // Never writes — mustWriteFiles can never be satisfied.
+      runStep: async ({ step }: { step: AgenticStep }) => ({ text: `${step.id} ok`, usage: null, toolCalls: [], toolResults: [] }),
+    })).rejects.toThrow(/Phase "Middle" breached its exit contract/);
+
+    // 'b' is the breaching instance: its checkpoint is never written, because
+    // the gate throws before saveCheckpoint is reached in that same iteration.
+    expect(listCheckpoints(runId).map((c) => c.stepId)).toEqual(['a']);
+  });
+
+  it('ignores exitContract.maxAttempts silently — never retries the gate', async () => {
+    const fileSystem = makeInMemoryFileSystem();
+    let stepBRunCount = 0;
+
+    await expect(executeAgenticFlow(chainFlow(['a', 'b'], { mustWriteFiles: true, maxAttempts: 5 }), {
+      fileSystem,
+      rootDir: '/workspace',
+      runStep: async ({ step }: { step: AgenticStep }) => {
+        if (step.id === 'b') stepBRunCount++;
+        return { text: `${step.id} ok`, usage: null, toolCalls: [], toolResults: [] };
+      },
+    })).rejects.toThrow(/breached its exit contract/);
+
+    expect(stepBRunCount).toBe(1);
+  });
+
+  it('is inert without a fileSystem (same limitation as a per-step contract)', async () => {
+    await expect(executeAgenticFlow(chainFlow(['a', 'b'], { mustWriteFiles: true }), {
+      // No fileSystem at all -> gateFileSystem undefined -> the gate is skipped
+      // rather than run against an empty {} pair, which would false-positive.
+      runStep: async ({ step }: { step: AgenticStep }) => ({ text: `${step.id} ok`, usage: null, toolCalls: [], toolResults: [] }),
+    })).resolves.toBeUndefined();
+  });
+});
+
+describe('executeAgenticFlow — phase-boundary checkpoint marker', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  it('attaches boundaries: ["start"] then ["end"] across a multi-step phase\'s checkpoints', async () => {
+    const flow: AgenticFlow = {
+      ...makeFlow({ a: makeStep('a', [], ['b']), b: makeStep('b', ['a'], []) }, 'a'),
+      phases: [{ id: 'phase-1', name: 'Setup', stepIds: ['a', 'b'] }],
+    };
+    const runId = 'run-boundary-1';
+    await executeAgenticFlow(flow, { runId, runStep: async ({ step }: { step: AgenticStep }) => ({ text: `${step.id} ok`, usage: null, toolCalls: [], toolResults: [] }) });
+
+    const checkpoints = listCheckpoints(runId);
+    expect(checkpoints.find((c) => c.stepId === 'a')?.phaseBoundary).toEqual({ phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['start'] });
+    expect(checkpoints.find((c) => c.stepId === 'b')?.phaseBoundary).toEqual({ phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['end'] });
+  });
+
+  it('attaches boundaries: ["start","end"] for a single-instance phase', async () => {
+    const flow: AgenticFlow = {
+      ...makeFlow({ a: makeStep('a', [], []) }, 'a'),
+      phases: [{ id: 'phase-1', name: 'Solo', stepIds: ['a'] }],
+    };
+    const runId = 'run-boundary-2';
+    await executeAgenticFlow(flow, { runId, runStep: async () => ({ text: 'ok', usage: null, toolCalls: [], toolResults: [] }) });
+
+    expect(listCheckpoints(runId)[0]?.phaseBoundary).toEqual({ phaseId: 'phase-1', phaseName: 'Solo', boundaries: ['start', 'end'] });
+  });
+
+  it('omits phaseBoundary entirely for a step outside any phase', async () => {
+    const runId = 'run-boundary-3';
+    await executeAgenticFlow(makeFlow({ a: makeStep('a', [], []) }, 'a'), {
+      runId,
+      runStep: async () => ({ text: 'ok', usage: null, toolCalls: [], toolResults: [] }),
+    });
+
+    expect('phaseBoundary' in listCheckpoints(runId)[0]).toBe(false);
+  });
+
+  it('a phase spanning a loop body marks its end after the loop\'s FINAL iteration', async () => {
+    const flow: AgenticFlow = {
+      ...makeFlow(
+        { a: makeStep('a', [], ['b']), b: makeStep('b', ['a'], []) },
+        'a',
+        [{ id: 'loop-1', sourceStepId: 'b', targetStepId: 'a', maxIterations: 3 }],
+      ),
+      phases: [{ id: 'phase-1', name: 'Looped', stepIds: ['a', 'b'] }],
+    };
+    const runId = 'run-boundary-loop';
+    await executeAgenticFlow(flow, { runId, runStep: async ({ step }: { step: AgenticStep }) => ({ text: `${step.id} ok`, usage: null, toolCalls: [], toolResults: [] }) });
+
+    const endMarked = listCheckpoints(runId).filter((c) => c.phaseBoundary?.boundaries.includes('end'));
+    expect(endMarked).toHaveLength(1);
+    expect(endMarked[0].stepId).toBe('b');
+    expect(endMarked[0].iteration).toBe(3); // the loop's LAST pass, not the first
   });
 });
