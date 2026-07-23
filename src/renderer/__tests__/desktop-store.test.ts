@@ -1525,6 +1525,23 @@ describe('Phase grouping (Capa 1 spike)', () => {
     expect((step as never as { parentId: string }).parentId).toBe(phaseId);
   });
 
+  it('splices the phase after its frame but before its child steps (React Flow parent-ordering invariant)', () => {
+    // React Flow resolves `parentId` positionally: a parent must precede its
+    // children in the nodes array. Appending the phase would place it after
+    // the very steps it now parents, and they would render detached.
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup', childIds: [stepId],
+    });
+
+    const ids = useDesktopStore.getState().mentalNodes.map((n) => n.id);
+    expect(ids.indexOf(frameId)).toBeLessThan(ids.indexOf(phaseId));
+    expect(ids.indexOf(phaseId)).toBeLessThan(ids.indexOf(stepId));
+  });
+
   it('updatePhaseData patches title/description on the phase node only', () => {
     const store = useDesktopStore.getState();
     const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });

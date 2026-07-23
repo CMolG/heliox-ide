@@ -1911,12 +1911,17 @@ export const useDesktopStore = create<DesktopStore>()(
           // insertPipelineAssembly assigns parentId: frameId at creation
           // time, one level deeper (spec §3.2's second nesting level).
           const childSet = new Set(input.childIds ?? []);
-          return {
-            mentalNodes: [
-              ...s.mentalNodes.map((n) => (childSet.has(n.id) && n.type === 'step' ? { ...n, parentId: id } : n)),
-              node,
-            ],
-          };
+          const reparented = s.mentalNodes.map((n) => (childSet.has(n.id) && n.type === 'step' ? { ...n, parentId: id } : n));
+
+          // Splice the phase in directly AFTER its owning frame rather than
+          // appending. React Flow resolves `parentId` positionally and
+          // requires a parent to precede its children in the nodes array —
+          // the same invariant insertPipelineAssembly already honors by
+          // emitting [frame, ...steps]. Appending would put the phase after
+          // the very steps it now parents, so they would render detached.
+          const frameIndex = reparented.findIndex((n) => n.id === input.parentId);
+          if (frameIndex === -1) return { mentalNodes: [...reparented, node] };
+          return { mentalNodes: [...reparented.slice(0, frameIndex + 1), node, ...reparented.slice(frameIndex + 1)] };
         });
         return id;
       },

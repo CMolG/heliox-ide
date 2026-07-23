@@ -45,12 +45,13 @@ import { MentalEdge } from './MentalEdge';
 import { FlowEdge } from '../nodes/FlowEdge';
 import { LoopEdge } from '../nodes/LoopEdge';
 import { FrameNode } from '../nodes/FrameNode';
-import type { CanvasGraphNode, FrameGraphNode, MentalGraphEdge, StepGraphNode } from '@/types/desktop';
+import { PhaseNode } from '../nodes/PhaseNode';
+import type { CanvasGraphNode, FrameGraphNode, MentalGraphEdge, PhaseGraphNode, StepGraphNode } from '@/types/desktop';
 import { LOOP_DEFAULT_MAX_ITERATIONS } from '@/types/harness';
 
 // ─── Custom node/edge type registrations ─────────────────────────
 
-const nodeTypes = { mental: MentalNode, step: StepNode, frame: FrameNode };
+const nodeTypes = { mental: MentalNode, step: StepNode, frame: FrameNode, phase: PhaseNode };
 const edgeTypes = { mental: MentalEdge, flow: FlowEdge, loop: LoopEdge };
 
 // ─── Declarative handle positions ────────────────────────────────
@@ -84,6 +85,10 @@ function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
 
 function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
   return node.type === 'frame';
+}
+
+function isPhaseGraphNode(node: CanvasGraphNode): node is PhaseGraphNode {
+  return node.type === 'phase';
 }
 
 /**
@@ -229,6 +234,27 @@ function MentalGraphCanvasInner({ viewportChildren }: MentalGraphCanvasInnerProp
           style: { width: n.width, height: n.height },
           dragHandle: '.pipeline-frame-node',
           zIndex: mentalZ[n.id] ?? 0,
+          selected: isSelected,
+          selectable: true,
+        };
+      }
+
+      if (isPhaseGraphNode(n)) {
+        // The middle nesting level: parented to its frame like a step is, and
+        // z-stacked between the two (frame 0 < phase 1 < step 2) so it reads
+        // as a surface the steps sit on rather than a peer of either.
+        return {
+          id: n.id,
+          type: 'phase',
+          parentId: n.parentId,
+          extent: 'parent' as const,
+          position: n.position,
+          data: n.data,
+          width: n.width,
+          height: n.height,
+          style: { width: n.width, height: n.height },
+          dragHandle: '.pipeline-phase-node',
+          zIndex: mentalZ[n.id] ?? 1,
           selected: isSelected,
           selectable: true,
         };
