@@ -7,7 +7,7 @@
  */
 // src/types/desktop.ts — Types for the seamless desktop window system
 import type { MarketMod, MarketRole } from './market';
-import type { AgenticStepType } from './harness';
+import type { AgenticStepType, StepContract } from './harness';
 
 // ─── OpenCode Provider Theming ───────────────────────────────────
 //
@@ -310,7 +310,41 @@ export interface FrameGraphNode {
   createdAt: number;
 }
 
-export type CanvasGraphNode = MentalGraphNode | StepGraphNode | FrameGraphNode;
+/**
+ * Canvas data for a Phase node — the second nesting level, frame > phase >
+ * step (spec docs/superpowers/specs/2026-07-21-agentic-phase-model.md §3.2).
+ * `exitContract`/`onError` mirror AgenticPhase 1:1 but have no dedicated
+ * visual editor yet in this spike (F2) — same status quo as AgenticStep's
+ * own `contract` field, which also has no canvas UI today; both are
+ * authorable via import/programmatic construction and simply travel through
+ * this shape once set.
+ */
+export interface PhaseNodeData {
+  title: string;
+  description?: string;
+  exitContract?: StepContract;
+  onError?: 'halt';
+  /** Member step ids — mirrors FrameNodeData.childIds; the authoritative membership list the compiler reads (Task 4), not derived from scanning every step's parentId. */
+  childIds: string[];
+  [key: string]: unknown;
+}
+
+export interface PhaseGraphNode {
+  id: string;
+  type: 'phase';
+  /** The owning Frame — SIEMPRE presente, a phase never floats (spec §3.2). */
+  parentId: string;
+  position: { x: number; y: number };
+  width: number;
+  height: number;
+  text: string;
+  color: string;
+  shape: MentalShape;
+  data: PhaseNodeData;
+  createdAt: number;
+}
+
+export type CanvasGraphNode = MentalGraphNode | StepGraphNode | FrameGraphNode | PhaseGraphNode;
 
 export interface MentalGraphEdge {
   id: string;
