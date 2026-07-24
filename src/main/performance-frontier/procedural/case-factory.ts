@@ -411,8 +411,9 @@ export function createProgressionCase({ seed }: { seed: number }): PFCase {
 /**
  * The "from-scratch" suite: a single complex DAG that builds an advanced project
  * end-to-end, exercising the full atom catalog the marketplace just gained —
- * 6 steps, 5 roles, and every web mod (one design system, since `ds-*` mods are
- * mutually exclusive) wired across the pipeline.
+ * 9 steps, 5 roles, and every web mod (one design system, since `ds-*` mods are
+ * mutually exclusive; SEO and i18n completeness each get their own focused
+ * sub-step) wired across the pipeline.
  */
 function makeFromScratchSteps(): Record<string, AgenticStep> {
   const fileTools = [
@@ -430,6 +431,7 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     '- Auth schema: src/lib/auth-schema.ts exports loginSchema, signupSchema, resetSchema (zod) and the inferred types LoginValues, SignupValues, ResetValues. Forms AND tests import these EXACT names from "@/lib/auth-schema".',
     '- Auth client: src/lib/auth-client.ts exports authClient (signIn/signUp/resetPassword).',
     '- Route guard: src/components/ProtectedRoute.tsx exports ProtectedRoute, wired into the route table in src/App.tsx.',
+    '- Route topology (PUBLIC vs PROTECTED): `/` is the PUBLIC marketing landing, and `/login` `/signup` `/reset` are PUBLIC auth pages — NEVER guarded. Authenticated app routes live under `/app/*` (e.g. `/app` dashboard). ProtectedRoute wraps ONLY `/app/*` — never `/` or the auth pages.',
     '- UI: shadcn primitives in src/components/ui/*; pages in src/pages/{Landing,Login,Signup,Reset}.tsx.',
     'If a canonical file already exists, READ and EXTEND it — never create a second version, and import the EXACT names above.',
   ].join('\n');
@@ -453,6 +455,8 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     type: 'llm_call',
     contract: {
       mustWriteFiles: true,
+      haltOnBreach: true,
+      maxAttempts: 4,
       requiredArtifacts: [
         { description: 'package.json (React 19 + Vite + Tailwind + Vitest)', pathPattern: 'package\\.json$', mustContain: ['react', 'vite', 'tailwind', 'vitest'] },
         { description: 'app entry with routing', pathPattern: 'src/App\\.(tsx|jsx)$', mustContain: ['Route|Router|Routes|createBrowserRouter'] },
@@ -466,13 +470,14 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       ],
     },
     prompt: [
-      'STEP 1/6 — scaffold-structure: lay the project skeleton (NO page logic yet).',
+      'STEP 1/9 — scaffold-structure: lay the project skeleton (NO page logic yet).',
       'Build, from scratch, a production-grade web-app skeleton for the product below.',
       'Mandatory stack: React 19 + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui.',
-      'Create: package.json (scripts dev/build/test with vitest), vite.config.ts, tsconfig.json (with the "@/*" path alias to src), a Tailwind config exposing design tokens, src/main.tsx, src/App.tsx routing to /, /login, /signup, /reset, a ThemeProvider (light/dark/system via CSS variables) + a ThemeToggle, and clearly-stubbed pages (Landing, Login, Signup, Reset) marked TODO.',
+      'Create: package.json (scripts dev/build/test with vitest), vite.config.ts, tsconfig.json (with the "@/*" path alias to src), a Tailwind config exposing design tokens, src/main.tsx, src/App.tsx, a ThemeProvider (light/dark/system via CSS variables) + a ThemeToggle, and clearly-stubbed pages (Landing, Login, Signup, Reset, Dashboard) marked TODO.',
+      'Route topology in src/App.tsx: `/` -> Landing (PUBLIC), `/login` `/signup` `/reset` -> auth pages (PUBLIC), and `/app` -> a stubbed authenticated Dashboard. This `/app` route is the ONLY route later steps place behind ProtectedRoute — the public landing at `/` must never be guarded.',
       'Establish the canonical shared modules so later steps extend (never fork) them:',
-      '  - src/i18n/index.ts (export t + setLocale), src/i18n/en.ts and src/i18n/es.ts containing ALL keys later steps need — including the auth keys (auth.login.*, auth.signup.*, auth.reset.*) and validation error keys (auth.errors.*). This is the ONLY i18n module.',
-      '  - src/lib/auth-schema.ts: export loginSchema, signupSchema, resetSchema (zod) and the inferred types LoginValues, SignupValues, ResetValues. A minimal-but-valid stub is fine here; step 5 fills the real rules. The exports MUST exist so forms and tests can import them.',
+      '  - src/i18n/index.ts (export t + setLocale), src/i18n/en.ts and src/i18n/es.ts containing ALL keys later steps need — including the landing keys (landing.*), the auth keys (auth.login.*, auth.signup.*, auth.reset.*) and validation error keys (auth.errors.*). This is the ONLY i18n module. Catalogs are FLAT objects mapping dotted string keys to strings (e.g. { \'auth.login.cta\': \'Log in\' }) — never nested; the t() resolver performs a flat dotted-key lookup.',
+      '  - src/lib/auth-schema.ts: export loginSchema, signupSchema, resetSchema (zod) and the inferred types LoginValues, SignupValues, ResetValues. A minimal-but-valid stub is fine here; step 8 fills the real rules. The exports MUST exist so forms and tests can import them.',
       'Create the shadcn/ui primitives later steps reuse: src/components/ui/button.tsx (Button), src/components/ui/input.tsx (Input) and src/components/ui/label.tsx (Label), on a tokenized, mobile-first foundation.',
       'In src/App.tsx (the app shell): a "Skip to main content" link as the FIRST focusable element (href="#main"), and wrap the routed content in <main id="main">. Do NOT implement page bodies — leave obvious stubs for later steps.',
       '',
@@ -498,29 +503,61 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     type: 'llm_call',
     contract: {
       forbidStubMarkers: true,
-      requiredArtifacts: [
-        { description: 'SEO document head (title/meta/OG/Twitter)', pathPattern: '(Landing|Seo|SEO|Head|Meta|Helmet)\\.(tsx|jsx|ts)$', mustContain: ['og:|twitter:|<meta|<title|[Hh]elmet'] },
-        { description: 'Schema.org JSON-LD structured data', pathPattern: '(Landing|Seo|SEO|Head|Meta|Jsonld|JsonLd|structured)\\.(tsx|jsx|ts)$', mustContain: ['application/ld\\+json|@context|schema\\.org'] },
-      ],
+      maxAttempts: 4,
     },
     prompt: [
-      'STEP 2/6 — landing-page: build the conversion-focused marketing page as one artifact.',
+      'STEP 2/9 — landing-page: build the conversion-focused marketing page as one artifact.',
       'First read the scaffold (package.json, src/App.tsx, the Tailwind tokens, src/i18n) to match conventions and reuse shadcn components + design tokens.',
       'Implement src/pages/Landing.tsx (plus small section components if useful) with: a hero (headline, subheadline, primary CTA "Download Alpha", secondary CTA "View Source on GitHub"), value-prop sections covering Steps/Flows/Roles & Mods, the Autonomous Orchestrator (Text-to-Pipeline), Performance Frontier + Cognitive Trace, and no vendor lock-in; social proof; a final CTA and footer.',
-      'Apply the active mods strictly: a complete SEO document head (unique title + meta description + canonical + Open Graph + Twitter cards via a Head/helmet component), valid Schema.org JSON-LD (SoftwareApplication + Organization + BreadcrumbList) reflecting the visible copy, a Core Web Vitals budget (explicit width/height or aspect-ratio on media, lazy-load offscreen assets, no layout-shifting injections), and WCAG semantics (landmarks, exactly one h1, logical headings, accessible names).',
+      'Apply the active mods strictly: a Core Web Vitals budget (explicit width/height or aspect-ratio on media, lazy-load offscreen assets, no layout-shifting injections) and WCAG semantics (landmarks, exactly one h1, logical headings, accessible names).',
+      'INTERNATIONALIZE the landing (i18n-ready is active): every user-facing string MUST come from the canonical i18n catalogs — add the landing keys (landing.hero.*, landing.features.*, landing.cta.*, footer.*) to BOTH src/i18n/en.ts AND src/i18n/es.ts and render them via t(). NO hardcoded copy anywhere in Landing.tsx — the `es` locale must render a fully translated page.',
+      'LANDMARKS: the app shell (src/App.tsx) already renders the outer <header> and the <main id="main"> landmark — compose the landing as <section> elements INSIDE that main. Do NOT add a second <main> or a duplicate top-level <header>; keep exactly one <h1> on the page.',
+      'ASSETS (text-only environment): you can only write TEXT files — you CANNOT create binary images. Do NOT reference .webp/.png/.jpg files you will not produce (a broken hero image is an LCP failure). Use INLINE SVG (which you can author) or CSS gradients for all imagery, keeping explicit width/height or aspect-ratio on the container for CLS.',
       'Use the exact product context for the copy — do not invent a different product.',
       '',
       FLUXOR_IDE_PRODUCT_CONTEXT,
     ].join('\n'),
     tools: fileTools,
     prevStepIds: ['scaffold-structure'],
+    nextStepIds: ['seo-head'],
+    mods: [
+      AntiVerificationInterceptor,
+      getMarketMod('web-vitals'),
+      getMarketMod('i18n-ready'),
+      getMarketMod('a11y-enforcer'),
+    ],
+    roles: [getMarketRole('frontend-engineer')],
+    mentalContext: [],
+  };
+
+  const seoHead: AgenticStep = {
+    id: 'seo-head',
+    type: 'llm_call',
+    contract: {
+      forbidStubMarkers: true,
+      maxAttempts: 4,
+      requiredArtifacts: [
+        { description: 'SEO document head (title/meta/OG/Twitter)', pathPattern: '(Landing|Seo|SEO|Head|Meta|Helmet)\\.(tsx|jsx|ts)$', mustContain: ['og:|twitter:|<meta|<title|[Hh]elmet'] },
+        { description: 'Schema.org JSON-LD structured data', pathPattern: '(Landing|Seo|SEO|Head|Meta|Jsonld|JsonLd|structured)\\.(tsx|jsx|ts)$', mustContain: ['application/ld\\+json|@context|schema\\.org'] },
+      ],
+    },
+    prompt: [
+      'STEP 3/9 — seo-head: build ONLY the document-head SEO surface for the landing page. Do NOT redesign the page.',
+      'read_file src/pages/Landing.tsx first — reuse its EXACT visible copy; the SEO surface must reflect what the page actually says, never invented content.',
+      'Create a Head/Seo component (e.g. src/components/Head.tsx) that upserts: a unique <title>, <meta name="description">, a canonical <link>, complete Open Graph tags (og:title, og:description, og:url, og:image), and Twitter Card tags (twitter:card, twitter:title, twitter:description, twitter:image).',
+      'In the SAME component, inject valid Schema.org JSON-LD (a <script type="application/ld+json"> block) covering SoftwareApplication, Organization, and BreadcrumbList — every property sourced from the ACTUAL visible copy, never a placeholder.',
+      'Wire the component into the Landing render (src/pages/Landing.tsx or its route) so it actually renders — a Head/Seo component nobody imports satisfies nothing.',
+      'Do NOT change the visual design, copy, or structure of the landing page itself — this step is document-head-only.',
+      '',
+      EXECUTION_DISCIPLINE,
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: ['landing-page'],
     nextStepIds: ['auth-pages'],
     mods: [
       AntiVerificationInterceptor,
       getMarketMod('seo-meta'),
       getMarketMod('structured-data'),
-      getMarketMod('web-vitals'),
-      getMarketMod('a11y-enforcer'),
     ],
     roles: [getMarketRole('frontend-engineer')],
     mentalContext: [],
@@ -531,6 +568,7 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     type: 'llm_call',
     contract: {
       forbidStubMarkers: true,
+      maxAttempts: 4,
       requiredArtifacts: [
         { description: 'default-deny ProtectedRoute / route guard', pathPattern: 'src/components/ProtectedRoute\\.(tsx|ts)$', mustContain: ['Navigate|redirect|isAuthenticated|requireAuth'] },
         { description: 'ProtectedRoute wired into the App.tsx route table', pathPattern: 'src/App\\.(tsx|jsx)$', mustContain: ['ProtectedRoute'] },
@@ -543,15 +581,15 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       requireDeclaredDependencies: true,
     },
     prompt: [
-      'STEP 3/6 — auth-pages: build the FULL authentication UI surface (login, signup, password-reset). No stubs.',
+      'STEP 4/9 — auth-pages: build the FULL authentication UI surface (login, signup, password-reset). No stubs.',
       'Reuse the scaffold: shadcn form primitives (Input, Label, Button), the design tokens, and the canonical i18n catalogs (src/i18n). Do NOT create a second i18n system — add any missing keys to src/i18n/en.ts and es.ts.',
-      'IMPORT the form schemas from the canonical "@/lib/auth-schema" (loginSchema, signupSchema, resetSchema + the types) — do NOT redefine or fork the schema here; step 5 fills its logic.',
+      'IMPORT the form schemas from the canonical "@/lib/auth-schema" (loginSchema, signupSchema, resetSchema + the types) — do NOT redefine or fork the schema here; step 8 fills its logic.',
       'Every external package you import (e.g. react-hook-form, @hookform/resolvers) MUST be added to package.json "dependencies" — otherwise the project will not install or build.',
       'Create or fully replace these files — completely implemented, ZERO TODO/placeholder:',
       '  - src/lib/auth-client.ts: a typed, provider-agnostic authClient with signIn/signUp/resetPassword (no real secrets).',
       '  - src/components/ProtectedRoute.tsx: a default-deny guard that redirects unauthenticated users (use <Navigate>).',
       '  - src/pages/Login.tsx, Signup.tsx, Reset.tsx: real, accessible forms BUILT FROM the shadcn primitives — import { Button } from "@/components/ui/button" and { Input } from "@/components/ui/input" (and Label); NEVER use raw <input>/<button>. Each field has a <label>; errors via aria-describedby + aria-invalid (never color alone). Forms import the canonical schemas + authClient. REPLACE any existing TODO stub entirely.',
-      '  - src/App.tsx: import ProtectedRoute and wrap the protected routes with it so they are actually guarded.',
+      '  - src/App.tsx: import ProtectedRoute and wrap ONLY the authenticated app routes (`/app/*`, e.g. the Dashboard) with it. The public marketing landing `/` and the auth pages (`/login`, `/signup`, `/reset`) MUST stay public — NEVER wrap `/` in ProtectedRoute (that bounces anonymous visitors and search crawlers to /login). Guard the `/app` route, not the landing.',
       'Every user-facing string MUST come from the canonical i18n catalogs (ICU, no hardcoded copy). Never store tokens/secrets in client-accessible storage.',
       '',
       EXECUTION_DISCIPLINE,
@@ -559,13 +597,67 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       'DONE WHEN: auth-schema.ts (zod) + auth-client.ts + ProtectedRoute.tsx exist; Login/Signup/Reset contain NO TODO markers and use the shared schema; App.tsx references ProtectedRoute.',
     ].join('\n'),
     tools: fileTools,
-    prevStepIds: ['landing-page'],
-    nextStepIds: ['write-failing-tests'],
+    prevStepIds: ['seo-head'],
+    nextStepIds: ['i18n-source-en'],
     mods: [
       AntiVerificationInterceptor,
       getMarketMod('auth-guarded'),
       getMarketMod('form-validation'),
       getMarketMod('i18n-ready'),
+    ],
+    roles: [getMarketRole('frontend-engineer')],
+    mentalContext: [],
+  };
+
+  const i18nSourceEn: AgenticStep = {
+    id: 'i18n-source-en',
+    type: 'llm_call',
+    contract: {
+      forbidStubMarkers: true,
+      maxAttempts: 4,
+    },
+    prompt: [
+      'STEP 5/9 — i18n-source-en: make src/i18n/en.ts the COMPLETE, authoritative source catalog.',
+      'Scan every t(\'key\') call site across the whole app built so far — landing, the SEO/Head component, the auth pages, and the app shell — and ensure src/i18n/en.ts defines EVERY key used, with a real, shippable English string for each.',
+      'src/i18n/en.ts MUST be a FLAT object of dotted string keys (e.g. { \'auth.login.cta\': \'Log in\' }) — no nested namespaces, no missing keys, no TODO/placeholder stubs. A key used anywhere via t() and absent here is a defect.',
+      'Do not remove or rename existing keys other steps already rely on; only add what is missing and fill any stub with a real value.',
+      '',
+      EXECUTION_DISCIPLINE,
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: ['auth-pages'],
+    nextStepIds: ['i18n-translate-es'],
+    mods: [
+      AntiVerificationInterceptor,
+      getMarketMod('i18n-ready'),
+      getMarketMod('locale-en'),
+    ],
+    roles: [getMarketRole('frontend-engineer')],
+    mentalContext: [],
+  };
+
+  const i18nTranslateEs: AgenticStep = {
+    id: 'i18n-translate-es',
+    type: 'llm_call',
+    contract: {
+      forbidStubMarkers: true,
+      maxAttempts: 4,
+    },
+    prompt: [
+      'STEP 6/9 — i18n-translate-es: translate the ENTIRE English catalog into src/i18n/es.ts.',
+      'read_file src/i18n/en.ts first — it is now the complete, final source catalog from the previous step.',
+      'Every key defined in en.ts MUST exist in src/i18n/es.ts with a REAL Spanish translation — never the English string left verbatim, never an empty string, never a stub.',
+      'Preserve ICU placeholders exactly as they appear (e.g. {name}, {count, plural, one {# item} other {# items}}) — translate only the surrounding literal text, never the placeholder syntax itself.',
+      'src/i18n/es.ts uses the SAME flat dotted keys as en.ts — identical shape, only the values differ.',
+      '',
+      EXECUTION_DISCIPLINE,
+    ].join('\n'),
+    tools: fileTools,
+    prevStepIds: ['i18n-source-en'],
+    nextStepIds: ['write-failing-tests'],
+    mods: [
+      AntiVerificationInterceptor,
+      getMarketMod('locale-es'),
     ],
     roles: [getMarketRole('frontend-engineer')],
     mentalContext: [],
@@ -581,7 +673,7 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       ],
     },
     prompt: [
-      'STEP 4/6 — write-failing-tests (TDD red): create failing unit tests. Do NOT implement the logic.',
+      'STEP 7/9 — write-failing-tests (TDD red): create failing unit tests. Do NOT implement the logic.',
       'The auth schema (src/lib/auth-schema.ts) and the i18n resolver (src/i18n/index.ts, exporting t()) already exist from earlier steps — test against their real exports.',
       'In the test files use RELATIVE imports (./auth-schema, ./index) — NOT the @/ alias — so the runner resolves them without alias config.',
       'Create EXACTLY these two test files, fully written (not described in prose):',
@@ -595,7 +687,7 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       'DONE WHEN: src/lib/auth-schema.test.ts and src/i18n/index.test.ts both exist, each containing describe/it/expect with real assertions.',
     ].join('\n'),
     tools: fileTools,
-    prevStepIds: ['auth-pages'],
+    prevStepIds: ['i18n-translate-es'],
     nextStepIds: ['implement-to-green'],
     mods: [getMarketMod('test-driven')],
     roles: [getMarketRole('qa-engineer')],
@@ -607,13 +699,14 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
     type: 'llm_call',
     contract: {
       forbidStubMarkers: true,
+      maxAttempts: 4,
       requiredArtifacts: [
         { description: 'implemented auth schema with real validation logic', pathPattern: 'auth-schema\\.(ts|tsx)$', mustContain: ['z\\.object|safeParse|\\.parse|refine'] },
       ],
     },
     prompt: [
-      'STEP 5/6 — implement-to-green (TDD green): write the real logic so the step-4 tests pass.',
-      'read_file the two test files from step 4 (src/lib/auth-schema.test.ts, src/i18n/index.test.ts) to see the exact expected behavior, then implement against them.',
+      'STEP 8/9 — implement-to-green (TDD green): write the real logic so the step-7 tests pass.',
+      'read_file the two test files from step 7 (src/lib/auth-schema.test.ts, src/i18n/index.test.ts) to see the exact expected behavior, then implement against them.',
       'Create or fully replace, completely implemented (zero TODO/placeholder):',
       '  - src/lib/auth-schema.ts: real Zod schema logic (email format, password rules, confirm-password refine) covering every asserted edge case (nulls, boundaries, invalid types, missing fields).',
       '  - src/i18n/index.ts: the t() resolver — key lookup, missing-key fallback, ICU interpolation. General, correct logic; NEVER hardcode answers to satisfy specific assertions.',
@@ -642,12 +735,12 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
       ],
     },
     prompt: [
-      'STEP 6/6 — review-diff: produce a written code review of the assembled project. Report only; do NOT rewrite code.',
+      'STEP 9/9 — review-diff: produce a written code review of the assembled project. Report only; do NOT rewrite code.',
       'Your SINGLE deliverable is the file REVIEW.md. A review written in your reply is ignored and the step FAILS — you MUST call write_file to create REVIEW.md.',
-      'read_file a handful of key files (Landing, a Seo/Head component, auth-schema, ProtectedRoute, App.tsx, one auth page) AND BOTH test files (src/lib/auth-schema.test.ts, src/i18n/index.test.ts) so your coverage claim is FACTUAL, then immediately write REVIEW.md with this structure:',
+      'read_file a handful of key files (Landing, the Head/Seo component, auth-schema, ProtectedRoute, App.tsx, one auth page) AND BOTH i18n catalogs (src/i18n/en.ts, src/i18n/es.ts) AND BOTH test files (src/lib/auth-schema.test.ts, src/i18n/index.test.ts) so your coverage claim is FACTUAL, then immediately write REVIEW.md with this structure:',
       'CRITICAL: state the real number of test files you found. NEVER claim "no tests" or "zero coverage" — the project HAS a Vitest suite; verify every assertion against the files you actually read.',
-      '  ## Cross-step cohesion — did landing/auth reuse the scaffold tokens, shadcn components and i18n catalogs?',
-      '  ## Mod adherence — one bullet each: design-system, responsive+dark, SEO head + JSON-LD, Core Web Vitals, accessibility, auth default-deny, form validation, i18n externalization, test coverage.',
+      '  ## Cross-step cohesion — did landing/seo-head/auth reuse the scaffold tokens, shadcn components and i18n catalogs?',
+      '  ## Mod adherence — one bullet each: design-system, responsive+dark, SEO head + JSON-LD, Core Web Vitals, accessibility, auth default-deny, form validation, i18n completeness (en source + es translation), test coverage.',
       '  ## Concrete defects & risks — file-referenced (path:line where possible).',
       'Be specific and critical; cite real files. Do not modify any source file other than creating REVIEW.md.',
       '',
@@ -666,7 +759,10 @@ function makeFromScratchSteps(): Record<string, AgenticStep> {
   return {
     [scaffold.id]: scaffold,
     [landing.id]: landing,
+    [seoHead.id]: seoHead,
     [auth.id]: auth,
+    [i18nSourceEn.id]: i18nSourceEn,
+    [i18nTranslateEs.id]: i18nTranslateEs,
     [writeTests.id]: writeTests,
     [implement.id]: implement,
     [review.id]: review,
@@ -699,7 +795,7 @@ export function createFromScratchCase({ seed }: { seed: number }): PFCase {
       product: 'Fluxor IDE',
       stack: 'React 19 + Vite + TypeScript + Tailwind CSS v4 + shadcn/ui',
       locales: 'en,es',
-      steps: 6,
+      steps: 9,
     },
     flow,
   };
