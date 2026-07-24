@@ -73,8 +73,9 @@ const SUITE_STEP_TIMEOUT_MS: Partial<Record<PFSuite, number>> = {
   'team-work': 480_000,
   design: 600_000,
   progression: 300_000,
-  // from-scratch chains 6 file-writing steps (scaffold → landing → auth → tests
-  // → impl → review); each assembles multiple files, so it needs the wide budget.
+  // from-scratch chains 9 file-writing steps (scaffold → landing → seo-head →
+  // auth → i18n-source-en → i18n-translate-es → tests → impl → review); each
+  // assembles multiple files, so it needs the wide budget.
   'from-scratch': 480_000,
 };
 
@@ -470,7 +471,7 @@ export async function runPerformanceFrontier(
       }
     }
 
-    if (suite === 'design') {
+    if (suite === 'design' || suite === 'team-work') {
       const runVerify = options.verifyDesign ?? verifyDesign;
       try {
         const verifyResult = await runVerify(vfsSnapshot);

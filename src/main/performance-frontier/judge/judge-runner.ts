@@ -105,6 +105,25 @@ export function resolveJudgeModel(): LanguageModel {
   return resolveMimoJudgeModel();
 }
 
+/**
+ * Resolves the judge ensemble. If FLUXOR_JUDGE_MODELS is set (comma-separated
+ * model ids, e.g. "anthropic/claude-opus-4,openai/gpt-5"), each id is routed
+ * through resolveHarnessModel and the judge runs against every one of them,
+ * aggregating the results (see aggregateSemanticResults). Otherwise falls
+ * back to the single resolveJudgeModel() — fully backward-compatible when
+ * the env var is unset.
+ */
+export function resolveJudgeModels(): LanguageModel[] {
+  const envModels = readBrandEnv('FLUXOR_JUDGE_MODELS');
+  if (envModels) {
+    const ids = envModels.split(',').map((id) => id.trim()).filter((id) => id.length > 0);
+    if (ids.length >= 1) {
+      return ids.map((id) => resolveHarnessModel(id));
+    }
+  }
+  return [resolveJudgeModel()];
+}
+
 function extractJsonObject(text: string): string | null {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -300,12 +319,136 @@ async function attemptSemanticEvaluation(
   }
 }
 
+/**
+ * Runs attemptSemanticEvaluation with retries (same try/attempt/continue
+ * logic as the original inline loop). Returns the semantic result on
+ * success, or null once maxAttempts is exhausted — never throws. onError,
+ * when provided, is invoked with each attempt's failure so callers can
+ * preserve the last error for diagnostics (e.g. runJudge's degraded-result
+ * message).
+ */
+async function runSemanticWithRetry(
+  model: LanguageModel,
+  prompts: { system: string; prompt: string },
+  semanticSchema: { parse: (v: unknown) => SemanticJudgeResult },
+  suite: PFSuite,
+  generateObject: GenerateObjectLike,
+  generateText: GenerateTextLike,
+  maxAttempts: number,
+  onError?: (error: unknown) => void,
+): Promise<SemanticJudgeResult | null> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await attemptSemanticEvaluation(
+        model,
+        prompts,
+        semanticSchema,
+        suite,
+        generateObject,
+        generateText,
+      );
+    } catch (error) {
+      onError?.(error);
+    }
+  }
+  return null;
+}
+
+/** Evaluation dimension keys considered by aggregateSemanticResults. */
+const AGGREGATE_DIMENSION_KEYS = [
+  'searchEfficiency',
+  'toolMastery',
+  'errorRecovery',
+  'pipelineCohesion',
+  'outputQuality',
+  'dagValidity',
+  'componentSelection',
+  'instructionQuality',
+  'algorithmicAccuracy',
+  'domainLogicAdherence',
+  'uxUiFidelity',
+  'accessibilityScore',
+  'regressionScore',
+] as const;
+
+type AggregateDimension = { score: number; [key: string]: unknown };
+
+function medianScore(scores: number[]): number {
+  const sorted = [...scores].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+function majorityVerdict(verdicts: SemanticJudgeResult['verdict'][]): SemanticJudgeResult['verdict'] {
+  const counts = new Map<SemanticJudgeResult['verdict'], number>();
+  for (const verdict of verdicts) counts.set(verdict, (counts.get(verdict) ?? 0) + 1);
+  const maxCount = Math.max(...counts.values());
+  const tied = [...counts.keys()].filter((verdict) => counts.get(verdict) === maxCount);
+  if (tied.length === 1) return tied[0];
+  if (tied.includes('partial')) return 'partial';
+  return [...tied].sort()[0];
+}
+
+/**
+ * Aggregates one SemanticJudgeResult per ensemble judge model into a single
+ * result: per dimension, takes the FULL dimension object from whichever
+ * result's score is closest to the cross-model MEDIAN (ties keep the
+ * earliest index); verdict is the majority across results (ties prefer
+ * 'partial', else the lexicographically-first tied verdict);
+ * criticalFailures is an order-preserving dedup union; finalJudgeScore is
+ * the sum of the chosen dimension scores.
+ */
+export function aggregateSemanticResults(results: SemanticJudgeResult[]): SemanticJudgeResult {
+  const evaluations = { ...results[0].evaluations } as Record<string, AggregateDimension | undefined>;
+
+  for (const key of AGGREGATE_DIMENSION_KEYS) {
+    const entries = results
+      .map((result, index) => ({
+        index,
+        dimension: (result.evaluations as Record<string, AggregateDimension | undefined>)[key],
+      }))
+      .filter((entry): entry is { index: number; dimension: AggregateDimension } => entry.dimension != null);
+    if (entries.length === 0) continue;
+
+    const median = medianScore(entries.map((entry) => entry.dimension.score));
+    let chosen = entries[0];
+    let bestDistance = Math.abs(chosen.dimension.score - median);
+    for (const entry of entries.slice(1)) {
+      const distance = Math.abs(entry.dimension.score - median);
+      if (distance < bestDistance) {
+        chosen = entry;
+        bestDistance = distance;
+      }
+    }
+    evaluations[key] = chosen.dimension;
+  }
+
+  const finalJudgeScore = AGGREGATE_DIMENSION_KEYS.reduce(
+    (sum, key) => sum + (evaluations[key]?.score ?? 0),
+    0,
+  );
+
+  const criticalFailures: string[] = [];
+  for (const result of results) {
+    for (const failure of result.criticalFailures) {
+      if (!criticalFailures.includes(failure)) criticalFailures.push(failure);
+    }
+  }
+
+  return {
+    runId: results[0].runId,
+    evaluations,
+    finalJudgeScore,
+    verdict: majorityVerdict(results.map((result) => result.verdict)),
+    criticalFailures,
+  } as unknown as SemanticJudgeResult;
+}
+
 export async function runJudge(options: RunJudgeOptions): Promise<PFJudgeResult> {
   const prompts = buildJudgePrompts(options);
   const semanticSchema = resolveSemanticSchema(options.suite);
   const generateObject = options.generateObject ?? aiGenerateObject as unknown as GenerateObjectLike;
   const generateText = options.generateText ?? aiGenerateText as unknown as GenerateTextLike;
-  const model = options.model ?? resolveJudgeModel();
 
   const envJudgeMaxAttemptsRaw = readBrandEnv('FLUXOR_JUDGE_MAX_ATTEMPTS');
   const envMaxAttempts = envJudgeMaxAttemptsRaw
@@ -313,22 +456,26 @@ export async function runJudge(options: RunJudgeOptions): Promise<PFJudgeResult>
     : undefined;
   const maxAttempts = options.judgeMaxAttempts ?? (envMaxAttempts && envMaxAttempts > 0 ? envMaxAttempts : 3);
 
-  let semantic: SemanticJudgeResult | null = null;
   let lastError: unknown;
+  const onError = (error: unknown): void => {
+    lastError = error;
+  };
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      semantic = await attemptSemanticEvaluation(
-        model,
-        prompts,
-        semanticSchema,
-        options.suite,
-        generateObject,
-        generateText,
-      );
-      break; // success — exit retry loop
-    } catch (error) {
-      lastError = error;
+  const providedModel = options.model;
+  let semantic: SemanticJudgeResult | null;
+  if (providedModel) {
+    semantic = await runSemanticWithRetry(providedModel, prompts, semanticSchema, options.suite, generateObject, generateText, maxAttempts, onError);
+  } else {
+    const judges = resolveJudgeModels();
+    if (judges.length <= 1) {
+      semantic = await runSemanticWithRetry(judges[0], prompts, semanticSchema, options.suite, generateObject, generateText, maxAttempts, onError);
+    } else {
+      const perModel: SemanticJudgeResult[] = [];
+      for (const j of judges) {
+        const r = await runSemanticWithRetry(j, prompts, semanticSchema, options.suite, generateObject, generateText, maxAttempts, onError);
+        if (r) perModel.push(r);
+      }
+      semantic = perModel.length > 0 ? aggregateSemanticResults(perModel) : null;
     }
   }
 

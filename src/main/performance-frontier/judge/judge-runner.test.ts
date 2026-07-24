@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { flowAssemblerJudgeSchema, judgeSchema, type SemanticJudgeResult } from './judge-schema';
 import { buildJudgePrompts } from './judge-prompt';
-import { runJudge, resolveJudgeModel } from './judge-runner';
+import { runJudge, resolveJudgeModel, aggregateSemanticResults } from './judge-runner';
+import { verifyDesign } from '../execution/design-verifier';
 
 const semanticJudgeResult: SemanticJudgeResult = {
   runId: 'pf-run-1',
@@ -524,5 +525,66 @@ describe('performance frontier judge', () => {
         process.env.FLUXOR_JUDGE_MODEL = original;
       }
     });
+  });
+
+  it('aggregateSemanticResults: aggregates the ensemble by per-dimension median score and majority verdict', () => {
+    const withSearchEfficiencyScore = (score: number): SemanticJudgeResult['evaluations']['searchEfficiency'] => ({
+      ...semanticJudgeResult.evaluations.searchEfficiency,
+      score,
+    });
+
+    const resultA: SemanticJudgeResult = {
+      ...semanticJudgeResult,
+      evaluations: { ...semanticJudgeResult.evaluations, searchEfficiency: withSearchEfficiencyScore(10) },
+      verdict: 'pass',
+      criticalFailures: ['left the sandbox root'],
+    };
+    const resultB: SemanticJudgeResult = {
+      ...semanticJudgeResult,
+      evaluations: { ...semanticJudgeResult.evaluations, searchEfficiency: withSearchEfficiencyScore(14) },
+      verdict: 'pass',
+      criticalFailures: ['left the sandbox root'],
+    };
+    const resultC: SemanticJudgeResult = {
+      ...semanticJudgeResult,
+      evaluations: { ...semanticJudgeResult.evaluations, searchEfficiency: withSearchEfficiencyScore(18) },
+      verdict: 'fail',
+      criticalFailures: [],
+    };
+
+    const aggregated = aggregateSemanticResults([resultA, resultB, resultC]);
+
+    // Median of [10, 14, 18] is 14, contributed exactly by resultB.
+    expect(aggregated.evaluations.searchEfficiency.score).toBe(14);
+    // Majority verdict across ['pass', 'pass', 'fail'] is 'pass'.
+    expect(aggregated.verdict).toBe('pass');
+    // The duplicated criticalFailure is deduped to a single entry.
+    expect(aggregated.criticalFailures).toEqual(['left the sandbox root']);
+  });
+
+  it('blinds the judge prompt to the model under test', () => {
+    const prompts = buildJudgePrompts({
+      runId: 'pf-run-blind',
+      caseId: 'case-blind',
+      suite: 'architecture',
+      modelUnderTest: 'mimo/mimo-v2.5-pro',
+      userPrompt: 'Create an API.',
+      conversation: [],
+      cognitiveTrace: [],
+      vfsSnapshot: {},
+      telemetry,
+      toolEvents: [],
+    });
+
+    expect(prompts.prompt).toContain('<model_under_test>anonymous</model_under_test>');
+    expect(prompts.prompt).not.toContain('mimo-v2.5-pro');
+  });
+
+  it('verifyDesign falls back to a bare index.html key when no /workspace path is present', async () => {
+    const result = await verifyDesign({
+      'index.html': '<!doctype html><html lang="en"><head><title>t</title></head><body><main><h1>x</h1></main></body></html>',
+    });
+
+    expect(result.ran).toBe(true);
   });
 });
