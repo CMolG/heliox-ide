@@ -1249,7 +1249,10 @@ describe('executeAgenticFlow — contextMode: feedback — guardrail enforces pr
     const stepEvents = events.filter(
       (e): e is Extract<HarnessEventPayload, { type: 'StepStatusChanged' }> => e.type === 'StepStatusChanged',
     );
-    expect(stepEvents.some((e) => e.stepId === 'root' && e.logs?.includes('breached contract'))).toBe(true);
+    // The guardrail no longer surrenders early on a stall — it escalates and
+    // keeps retrying until the attempt budget is truly exhausted, so the
+    // terminal breach log now reads "BREACHED contract after N attempts".
+    expect(stepEvents.some((e) => e.stepId === 'root' && e.logs?.includes('BREACHED contract'))).toBe(true);
   });
 
   it('a terminal step with no writesTo never activates the guardrail (no contract at all)', async () => {
@@ -1270,6 +1273,36 @@ describe('executeAgenticFlow — contextMode: feedback — guardrail enforces pr
       (e): e is Extract<HarnessEventPayload, { type: 'StepStatusChanged' }> => e.type === 'StepStatusChanged',
     );
     expect(stepEvents.some((e) => e.logs?.includes('guardrail'))).toBe(false);
+  });
+});
+
+describe('executeAgenticFlow — guardrail haltOnBreach (fail-closed on a hard invariant)', () => {
+  afterEach(() => {
+    harnessEventBus.removeAllListeners();
+  });
+
+  it('rejects the flow instead of continuing when a haltOnBreach contract is never satisfied', async () => {
+    const fs = makeInMemoryFileSystem();
+    const step: AgenticStep = {
+      ...makeStep('root', [], []),
+      contract: { mustWriteFiles: true, haltOnBreach: true, maxAttempts: 2 },
+    };
+    const flow: AgenticFlow = {
+      id: 'flow-halt-on-breach',
+      name: 'Halt On Breach',
+      rootStepId: 'root',
+      stepsRecord: { root: step },
+    };
+
+    // runStep never writes anything, so `mustWriteFiles` can never be satisfied —
+    // the guardrail must exhaust both attempts and then HALT (throw) rather than
+    // logging the breach and letting the flow "complete" on a broken foundation.
+    await expect(executeAgenticFlow(flow, {
+      rootDir: '/workspace',
+      fileSystem: fs,
+      runId: 'run-halt-on-breach',
+      runStep: async ({ step: s }) => ({ text: `output:${s.id}`, usage: null, toolCalls: [], toolResults: [] }),
+    })).rejects.toThrow(/breached a hard invariant/);
   });
 });
 

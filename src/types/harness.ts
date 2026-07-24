@@ -77,6 +77,25 @@ export interface StepContract {
   requireDeclaredDependencies?: boolean;
   /** Override the default verify-and-retry attempt budget for this step. */
   maxAttempts?: number;
+  /**
+   * When true, a contract breach after all attempts HALTS the flow (throws)
+   * instead of logging and continuing to the next step.
+   */
+  haltOnBreach?: boolean;
+  /**
+   * Assert an i18n catalog file defines EVERY key used via t('...') across the
+   * workspace (and, when requireTranslated, that its values differ from the
+   * source catalog — i.e. actually translated). Model-agnostic invariant.
+   */
+  localeCoverage?: Array<{
+    description: string;
+    /** RegExp string matching the catalog file to check (e.g. 'src/i18n/es\\.ts$'). */
+    catalogPathPattern: string;
+    /** RegExp string matching the source catalog to compare against (for requireTranslated). */
+    sourcePathPattern?: string;
+    /** When true, flag keys whose catalog value equals the source value (untranslated). */
+    requireTranslated?: boolean;
+  }>;
 }
 
 export interface AgenticStep {

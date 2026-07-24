@@ -670,20 +670,25 @@ async function executeStep(
       const stalled = signature === prevFindingSignature; // identical gaps as last attempt → no progress
       prevFindingSignature = signature;
 
-      if (attempt < maxAttempts && !stalled) {
-        corrective = buildCorrectivePrompt(findings);
-        emit('running', `[guardrail] attempt ${attempt}/${maxAttempts} breached contract (${summary}); retrying with corrective feedback.`);
+      // Never surrender early on a stall: escalate the corrective feedback and
+      // keep retrying — a weaker model gets a blunter instruction instead of the
+      // loop giving up with attempts still on the table. Only true exhaustion
+      // (attempt === maxAttempts) ends the loop.
+      if (attempt < maxAttempts) {
+        corrective = buildCorrectivePrompt(findings, { escalate: stalled });
+        emit('running', `[guardrail] step "${step.id}" attempt ${attempt}/${maxAttempts} unmet (${summary})${stalled ? ' — escalating' : ''}; retrying.`);
         console.warn(`[guardrail] step "${step.id}" attempt ${attempt}/${maxAttempts} unmet: ${summary}`);
         continue;
       }
 
-      // Stop retrying: budget spent, or the model made zero progress versus the
-      // previous attempt (re-running would only burn tokens). Surface the breach.
-      const reason = stalled && attempt < maxAttempts
-        ? `no progress after attempt ${attempt}/${maxAttempts}`
-        : `after ${maxAttempts} attempts`;
-      emit('running', `[guardrail] step "${step.id}" breached contract ${reason} (${summary}).`);
-      console.warn(`[guardrail] step "${step.id}" BREACHED contract ${reason}: ${findings.map((finding) => finding.detail).join(' | ')}`);
+      // attempt === maxAttempts → truly exhausted. Surface the breach and, for
+      // a hard invariant (haltOnBreach), halt the flow instead of continuing
+      // to build on a broken foundation.
+      emit('running', `[guardrail] step "${step.id}" BREACHED contract after ${maxAttempts} attempts (${summary}).`);
+      console.warn(`[guardrail] step "${step.id}" BREACHED contract after ${maxAttempts} attempts: ${findings.map((finding) => finding.detail).join(' | ')}`);
+      if (contract!.haltOnBreach) {
+        throw new Error(`Step "${step.id}" breached a hard invariant after ${maxAttempts} attempts: ${findings.map((finding) => finding.detail).join(' | ')}`);
+      }
       break;
     }
 
