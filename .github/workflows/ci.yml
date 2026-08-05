@@ -219,7 +219,14 @@ jobs:
         # dock-fixed-on-pan.spec.ts use, which are more prone to flaking under
         # a virtual display — good candidates for a *later* smoke addition
         # once this job has proven itself.
-        run: xvfb-run --auto-servernum npx playwright test e2e/bridge.spec.ts e2e/context-map.spec.ts
+        #
+        # packaged-app.spec.ts is a different kind of check and is included on
+        # purpose: every other spec launches the DEV bundle from the repo root,
+        # where node_modules is right there, so none of them can see a defect
+        # that only exists in the packaged app. It reuses the `electron-forge
+        # package` output produced two steps above, and it self-skips if that
+        # output is missing, so it costs nothing but a few seconds here.
+        run: xvfb-run --auto-servernum npx playwright test e2e/bridge.spec.ts e2e/context-map.spec.ts e2e/packaged-app.spec.ts
 
       - name: Upload Playwright report
         if: failure()
