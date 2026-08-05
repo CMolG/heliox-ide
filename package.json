@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npx playwright test",
+    "test:e2e:packaged": "npm run package && npx playwright test packaged-app",
     "lint": "eslint src",
     "pf:run": "tsx src/main/performance-frontier/cli.ts",
     "pf:bench": "tsx src/main/performance-frontier/bench/cli.ts",
