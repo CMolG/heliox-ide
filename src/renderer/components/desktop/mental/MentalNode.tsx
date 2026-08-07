@@ -17,7 +17,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
-import { useHoveredItem } from '@javadaba/daba-engine';
+import { useHoveredItem } from '@cmolg/daba-engine';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { DockPopover } from '../DockPopover';
 import { getHueFromHex, getMentalTextContrastColor, mentalHueToHex } from '../../../logic/mental-colors';

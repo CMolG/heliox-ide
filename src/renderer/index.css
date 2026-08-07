@@ -31,7 +31,7 @@
   --font-lexend: 'Atkinson Hyperlegible', 'Inter', 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
 }
 
-/* ─── @javadaba/daba-engine tokens — Fluxor's palette (adoption plan #20) ───
+/* ─── @cmolg/daba-engine tokens — Fluxor's palette (adoption plan #20) ───
    The motor's chrome (ContextMenu today; Dock/HUD/etc as later Tasks adopt
    them) is styled entirely through these --daba-* custom properties —
    tokens.css ships neutral defaults, this block maps them onto Fluxor's

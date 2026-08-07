@@ -22,7 +22,7 @@ import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
 import { AttachmentInfoModal } from './AttachmentInfoModal';
 import type { AttachmentModalInfo } from './AttachmentInfoModal';
-// Window context menu adopted onto @javadaba/daba-engine's unified ContextMenu
+// Window context menu adopted onto @cmolg/daba-engine's unified ContextMenu
 // (adoption plan #20, javadaba-web Core, Task 10 — this used to be its own
 // WindowContextMenu.tsx, deleted). `labelColor` (engine addition, same Task)
 // preserves the per-action semantic colors (orange/blue/purple for role/mod/
@@ -30,7 +30,7 @@ import type { AttachmentModalInfo } from './AttachmentInfoModal';
 import {
   ContextMenu, useContextMenuState, resolveSnap,
   type ContextMenuEntry, type ContextMenuProviders, type GridSpec,
-} from '@javadaba/daba-engine';
+} from '@cmolg/daba-engine';
 import { engineStore } from '../../store/engine-bridge';
 import type { WindowPosition, WindowSize, AttachableType } from '@/types/desktop';
 import { TYPE_META } from './DesktopAttachable';

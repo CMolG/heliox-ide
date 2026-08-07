@@ -32,7 +32,7 @@ import type {
   Connection,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { resolveSnap, type GridSpec } from '@javadaba/daba-engine';
+import { resolveSnap, type GridSpec } from '@cmolg/daba-engine';
 import { engineStore } from '../../../store/engine-bridge';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { useHarnessStore } from '../../../store/harness-store';

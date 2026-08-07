@@ -47,7 +47,7 @@
 // CONSTRUCTED store object after both modules have finished loading —
 // indistinguishable, from any caller's perspective, from those actions
 // having been written this way inline in desktop-store.ts itself.
-import { createEngineStore, type EngineStore, type EngineItem, type GridSpec } from '@javadaba/daba-engine';
+import { createEngineStore, type EngineStore, type EngineItem, type GridSpec } from '@cmolg/daba-engine';
 import { useDesktopStore } from './desktop-store';
 import type { StepGraphNode, FrameGraphNode, MentalGraphNode } from '@/types/desktop';
 import { kebabToTitle } from '../components/desktop/attachable-helpers';

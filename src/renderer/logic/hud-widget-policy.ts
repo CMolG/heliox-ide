@@ -1,6 +1,6 @@
 /**
  * hud-widget-policy.ts — Fluxor's own HUD widget sizing/placement policy,
- * layered on top of @javadaba/daba-engine's generic HUD grid math.
+ * layered on top of @cmolg/daba-engine's generic HUD grid math.
  *
  * Architecture note:
  * This used to be `logic/hud-grid.ts` (188 LOC): a self-contained, generic
@@ -28,7 +28,7 @@ import {
   resolveHudWidgetPlacement as engineResolveHudWidgetPlacement,
   snapToHudGrid as engineSnapToHudGrid,
   type Rect,
-} from '@javadaba/daba-engine';
+} from '@cmolg/daba-engine';
 
 export type HudRect = Rect;
 

@@ -30,13 +30,13 @@ import '@fontsource/atkinson-hyperlegible/700.css';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import '@fontsource-variable/space-grotesk';
-// @javadaba/daba-engine's chrome CSS (adoption plan #20, javadaba-web Core):
+// @cmolg/daba-engine's chrome CSS (adoption plan #20, javadaba-web Core):
 // class rules for ContextMenu/Dock/HUD/etc, driven by --daba-* custom
 // properties. Imported BEFORE index.css so this app's own :root override
 // block in index.css (Fluxor's actual dark palette) wins by source order —
 // the engine's tokens.css values are neutral light-mode defaults otherwise.
-import '@javadaba/daba-engine/dist/theme/tokens.css';
-import '@javadaba/daba-engine/dist/theme/engine.css';
+import '@cmolg/daba-engine/dist/theme/tokens.css';
+import '@cmolg/daba-engine/dist/theme/engine.css';
 import './index.css';
 
 const root = createRoot(document.getElementById('root')!);

@@ -2,7 +2,7 @@
  * TutorialEngine.tsx — Scenario-driven tutorial overlay with brutalist styling.
  *
  * Responsibility:
- * - Thin wrapper composing @javadaba/daba-engine's `TutorialEngine` (the
+ * - Thin wrapper composing @cmolg/daba-engine's `TutorialEngine` (the
  *   state machine: current step, rAF target tracking, missing-target skip,
  *   next/prev/skip/complete transitions — adoption plan #20, javadaba-web
  *   Core, Task 10) with Fluxor's own visuals: the "sketchbook" backdrop with
@@ -44,7 +44,7 @@ import {
   TutorialEngine as MotorTutorialEngine,
   type TutorialControls,
   type TutorialStep,
-} from '@javadaba/daba-engine';
+} from '@cmolg/daba-engine';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { BrutalistTutorialCard } from './BrutalistTutorialCard';
 import { getTutorialScenario } from './TutorialScenarios';

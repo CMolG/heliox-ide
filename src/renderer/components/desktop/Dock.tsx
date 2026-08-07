@@ -3,7 +3,7 @@
  *
  * Responsibility:
  * - Renders the Dock surface in the renderer layer as a composition over
- *   @javadaba/daba-engine's <Dock>: Fluxor supplies the item specs (icons,
+ *   @cmolg/daba-engine's <Dock>: Fluxor supplies the item specs (icons,
  *   labels, click / drag-out behavior, the mental-mode popover content) via
  *   `DockItemSpec[]`, plus the attachables strip and Settings button as
  *   `children`. The engine owns the item button chrome, drag-out gesture
@@ -19,7 +19,7 @@
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
 import React, { useCallback, useRef, useState, useMemo } from 'react';
-import { Dock as DabaDock, type DockItemSpec, type DockPopoverControls } from '@javadaba/daba-engine';
+import { Dock as DabaDock, type DockItemSpec, type DockPopoverControls } from '@cmolg/daba-engine';
 import { useDesktopStore } from '../../store/desktop-store';
 import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';

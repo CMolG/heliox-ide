@@ -39,7 +39,7 @@ import { HudWidgetLayer } from './hud/HudWidgetLayer';
 import { DesktopCanvasBg } from './DesktopCanvasBg';
 import { BacklogCardModal } from '../atoms/widgets/backlog/BacklogCardModal';
 import { LucideIcon } from './LucideIcon';
-// Canvas context menu adopted onto @javadaba/daba-engine's unified ContextMenu
+// Canvas context menu adopted onto @cmolg/daba-engine's unified ContextMenu
 // (adoption plan #20, javadaba-web Core, Task 10 — this used to be its own
 // CanvasContextMenu.tsx, deleted; the entries below are that file's
 // CANVAS_ACTIONS ported verbatim as a declarative provider).
@@ -69,7 +69,7 @@ import {
   type ContextMenuEntry,
   type ContextMenuProviders,
   type Point,
-} from '@javadaba/daba-engine';
+} from '@cmolg/daba-engine';
 import type { MarketMod, MarketRole } from '@/types/market';
 
 /** Canvas container dimensions — consumed by DesktopWindow for maximized viewport calc */
@@ -225,7 +225,7 @@ export function SeamlessCanvas() {
   const selectRafRef = useRef(0);
 
   // Context menu state for right-click on empty canvas — owned by the motor
-  // (@javadaba/daba-engine's useContextMenuState), a single provider keyed by
+  // (@cmolg/daba-engine's useContextMenuState), a single provider keyed by
   // BACKGROUND_TARGET_KIND replaces the old CanvasContextMenu.tsx component.
   const { state: canvasContextMenuState, open: openCanvasContextMenu, close: closeCanvasContextMenu } = useContextMenuState();
 

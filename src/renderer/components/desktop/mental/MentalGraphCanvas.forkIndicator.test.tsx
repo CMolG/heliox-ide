@@ -19,7 +19,7 @@
 import React from 'react';
 import { render as rtlRender, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EngineProvider, createEngineStore } from '@javadaba/daba-engine';
+import { EngineProvider, createEngineStore } from '@cmolg/daba-engine';
 
 // Task 13 (adoption plan #20), Fase 2: StepNode now reads
 // `engine.hoveredItemId` (unified highlight — see StepNode.tsx's own

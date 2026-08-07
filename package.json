@@ -90,7 +90,7 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource-variable/space-grotesk": "^5.2.10",
     "@fontsource/atkinson-hyperlegible": "^5.2.8",
-    "@javadaba/daba-engine": "^0.1.0",
+    "@cmolg/daba-engine": "0.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@monaco-editor/react": "^4.7.0",
     "@playwright/test": "^1",

@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import type { NodeProps } from '@xyflow/react';
-import { useHoveredItem } from '@javadaba/daba-engine';
+import { useHoveredItem } from '@cmolg/daba-engine';
 import type { FrameNodeData, StepGraphNode } from '@/types/desktop';
 import type { AgenticExecutionStatus } from '@/types/harness';
 import type { ModelPolicy, SelectionStrategy } from '@/types/ipc-events';

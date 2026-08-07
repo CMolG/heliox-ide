@@ -15,7 +15,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { Handle, Position } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
-import { useHoveredItem } from '@javadaba/daba-engine';
+import { useHoveredItem } from '@cmolg/daba-engine';
 import type { MarketMod, MarketRole } from '@/types/market';
 import type { StepNodeData } from '@/types/desktop';
 import { useDesktopStore } from '../../../store/desktop-store';

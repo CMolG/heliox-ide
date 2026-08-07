@@ -35,7 +35,7 @@
  */
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { SideToolbar, EngineProvider } from '@javadaba/daba-engine';
+import { SideToolbar, EngineProvider } from '@cmolg/daba-engine';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { StepInspector } from './StepInspector';
 import { FlowInspector } from './FlowInspector';

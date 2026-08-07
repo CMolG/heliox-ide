@@ -274,7 +274,7 @@ const config: ForgeConfig = {
       for (const moduleName of modules) {
         await cp(join('node_modules', moduleName), join(destination, moduleName), {
           recursive: true,
-          // `dereference`: @javadaba/daba-engine comes in through `npm link`
+          // `dereference`: @cmolg/daba-engine comes in through `npm link`
           // while the private registry has no token, and a symlink inside a
           // .app does not survive the copy. Harmless for the others.
           dereference: true,

@@ -33,7 +33,7 @@ import {
   DndContext, DragOverlay, PointerSensor, pointerWithin, useSensor, useSensors,
 } from '@dnd-kit/core';
 import type { DragEndEvent, CollisionDetection } from '@dnd-kit/core';
-import { EngineProvider, createEngineStore } from '@javadaba/daba-engine';
+import { EngineProvider, createEngineStore } from '@cmolg/daba-engine';
 
 // Task 13 (adoption plan #20), Fase 2: StepNode now reads
 // `engine.hoveredItemId` (unified highlight) via the motor's

@@ -13,7 +13,7 @@ import path from 'path';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    // See vitest.config.ts for why: @javadaba/daba-engine is linked (`npm link`) from
+    // See vitest.config.ts for why: @cmolg/daba-engine is linked (`npm link`) from
     // outside this project during local dev, which without dedupe would resolve a
     // second React copy from the engine's own devDependency tree.
     dedupe: ['react', 'react-dom'],

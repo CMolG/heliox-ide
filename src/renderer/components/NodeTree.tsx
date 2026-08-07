@@ -14,7 +14,7 @@
  *
  * Task 13 (adoption plan #20), Fase 2: this file used to own its OWN shell
  * (group headers, row markup, hover/locate/rename wiring) duplicating what
- * `@javadaba/daba-engine`'s `ComponentsPanel` now provides generically. This
+ * `@cmolg/daba-engine`'s `ComponentsPanel` now provides generically. This
  * file keeps ONLY domain data + decoration: it computes `ComponentsPanelGroup[]`
  * from desktop-store (grouping/labels — 1:1 with the groups that existed
  * before this task, task13-decisiones.md Q8), and supplies `renderRow` to
@@ -42,7 +42,7 @@ import { useHarnessStore } from '@/renderer/store/harness-store';
 import { engineStore, parseBridgeId, namespacedId, type BridgeItemKind } from '@/renderer/store/engine-bridge';
 import { LucideIcon } from './desktop/LucideIcon';
 import { theme } from '@/renderer/logic/theme';
-// NodeTree's inline right-click menu adopted onto @javadaba/daba-engine's
+// NodeTree's inline right-click menu adopted onto @cmolg/daba-engine's
 // unified ContextMenu (adoption plan #20, javadaba-web Core, Task 10) — one
 // provider per CtxTarget.kind ('window' | 'mental' | 'grid' | 'step'; 'flow'
 // and 'attachable' items get NO context menu, matching today — see the
@@ -51,7 +51,7 @@ import {
   ContextMenu, useContextMenuState, ComponentsPanel, EngineProvider, centerOn,
   type ContextMenuContext, type ContextMenuEntry, type ContextMenuProviders,
   type ComponentsPanelGroup, type EngineItem,
-} from '@javadaba/daba-engine';
+} from '@cmolg/daba-engine';
 import type { AttachableType, DesktopWindow, FrameGraphNode, MentalGraphNode, StepGraphNode } from '@/types/desktop';
 import type { AgenticExecutionStatus } from '@/types/harness';
 
