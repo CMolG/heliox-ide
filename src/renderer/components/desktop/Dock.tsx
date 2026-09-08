@@ -27,6 +27,7 @@ import { theme } from '../../logic/theme';
 import type { AttachableType, AgentVendorId, MentalMode, MentalShape, MentalTool } from '@/types/desktop';
 import { openAgentSession } from '../../lib/agent-sessions';
 import type { VendorAvailability } from '@/main/pty/vendors';
+import type { LiveSessionEntry } from '@/main/pty/ipc-pty';
 
 const ATTACHABLE_TYPE_COLORS: Record<string, string> = {
   flows: '#A78BFA',
@@ -63,6 +64,14 @@ const AGENT_MENU: Record<string, React.CSSProperties> = {
   },
   itemDisabled: { color: theme.textFaint, cursor: 'not-allowed' },
   itemNote: { color: theme.textDim, fontSize: 10, whiteSpace: 'nowrap' },
+  modes: { display: 'flex', gap: 4, padding: '0 6px 6px' },
+  mode: {
+    flex: 1, padding: '3px 6px', borderRadius: 4, cursor: 'pointer',
+    background: 'transparent', border: `1px solid ${theme.border}`,
+    color: theme.textMuted, fontSize: 11, fontFamily: theme.fontMono,
+  },
+  modeOn: { borderColor: theme.accentBlue, color: theme.accentBlue },
+  modeOff: { color: theme.textFaint, cursor: 'not-allowed' },
 };
 
 export function Dock() {
@@ -94,6 +103,13 @@ export function Dock() {
    * frame, that nothing is installed.
    */
   const [vendors, setVendors] = useState<VendorAvailability[] | null>(null);
+  /**
+   * Worktree by default (Cockpit decision 3): a session that gets its own tree
+   * can never collide with another one, and attached is the exception you ask
+   * for. `null` live list = not probed yet.
+   */
+  const [sessionMode, setSessionMode] = useState<'worktree' | 'attached'>('worktree');
+  const [liveSessions, setLiveSessions] = useState<LiveSessionEntry[] | null>(null);
   const [attachableOffset, setAttachableOffset] = useState(0);
   const [attachDragItem, setAttachDragItem] = useState<{ id: string; category: string; name: string } | null>(null);
   const [attachDragPos, setAttachDragPos] = useState({ x: 0, y: 0 });
@@ -155,11 +171,26 @@ export function Dock() {
     return () => { cancelled = true; };
   }, []);
 
+  /**
+   * Refreshed every time the picker opens, not polled: the answer only matters
+   * in the second between opening the menu and clicking a vendor.
+   */
+  const refreshLiveSessions = useCallback(() => {
+    void window.fluxorAPI?.ptyLiveSessions?.()
+      .then(setLiveSessions)
+      .catch(() => setLiveSessions([]));
+  }, []);
+
   const launchAgentSession = useCallback((vendor: AgentVendorId) => {
     if (!projectPath) return;
-    const winId = openAgentSession({ vendor, cwd: projectPath, mode: 'attached' });
+    const winId = openAgentSession({
+      vendor,
+      cwd: projectPath,
+      projectRoot: projectPath,
+      mode: sessionMode,
+    });
     requestAnimationFrame(() => navigateToWindow(winId));
-  }, [navigateToWindow, projectPath]);
+  }, [navigateToWindow, projectPath, sessionMode]);
 
   // ─── Item select (click) — unchanged 1:1 from the pre-engine handleClick,
   // just invoked via each item's `onSelect` instead of a DOM onClick. ─────
@@ -205,7 +236,9 @@ export function Dock() {
         case 'new-agent-session': {
           // The item's own popover (see `isAgentSession` below) is the picker:
           // a vendor has to be chosen before anything can be launched, so the
-          // click opens it rather than guessing one.
+          // click opens it rather than guessing one. What the click DOES do is
+          // re-read who is live, so the attached option is right when shown.
+          refreshLiveSessions();
           break;
         }
         case 'mental-draw-toggle': {
@@ -355,9 +388,56 @@ export function Dock() {
       spec.popoverOpenOn = 'click';
       spec.popoverClassName = 'dock-agent-menu';
       spec.popoverAriaLabel = 'Agent vendors';
+      // Display hint only. The AUTHORITY on this is `canOpenAttached` in
+      // src/main/pty/ipc-pty.ts, which refuses the spawn regardless of what
+      // the picker showed — same split as the vendor list (`detectVendors`
+      // paints it, `whichBin` enforces it a second before the spawn).
+      const attachedHolder = projectPath
+        ? liveSessions?.find((sn) => sn.mode === 'attached' && sn.projectRoot === projectPath)
+        : undefined;
+
       spec.popover = (controls: DockPopoverControls) => (
         <div style={AGENT_MENU.root} role="none">
           <div style={AGENT_MENU.title}>New agent session</div>
+
+          {/* Where it runs, decided before which CLI runs it — the choice that
+              cannot be changed once the agent is working. */}
+          <div style={AGENT_MENU.modes} role="none">
+            <button
+              type="button"
+              data-testid="agent-mode-worktree"
+              aria-pressed={sessionMode === 'worktree'}
+              style={{ ...AGENT_MENU.mode, ...(sessionMode === 'worktree' ? AGENT_MENU.modeOn : null) }}
+              title="Its own git worktree and branch, off a fresh default branch"
+              onClick={() => setSessionMode('worktree')}
+            >
+              worktree
+            </button>
+            <button
+              type="button"
+              data-testid="agent-mode-attached"
+              aria-pressed={sessionMode === 'attached'}
+              disabled={!!attachedHolder}
+              style={{
+                ...AGENT_MENU.mode,
+                ...(sessionMode === 'attached' ? AGENT_MENU.modeOn : null),
+                ...(attachedHolder ? AGENT_MENU.modeOff : null),
+              }}
+              title={attachedHolder
+                ? 'One session already runs in this project\u2019s own working tree — two would share a git index with no warning'
+                : 'Runs in the project\u2019s own working tree'}
+              onClick={() => { if (!attachedHolder) setSessionMode('attached'); }}
+            >
+              attached
+            </button>
+          </div>
+          {attachedHolder && (
+            // The reason is spelled out, not left to a greyed-out fill.
+            <div style={AGENT_MENU.reason} data-testid="agent-mode-attached-reason">
+              A session is already attached to this project. The next one gets its own worktree.
+            </div>
+          )}
+
           {!projectPath ? (
             // A control that cannot work says WHY, in place. The alternative —
             // a button that silently does nothing — reads as broken, not as

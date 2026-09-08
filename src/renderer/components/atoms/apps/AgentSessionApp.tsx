@@ -5,17 +5,25 @@
  * - Hosts one vendor CLI (`claude`/`codex`/`opencode`/`gemini`) in a real
  *   terminal: xterm.js here, a PTY in the main process, one `sessionId`
  *   correlating the two.
- * - Owns the four states a session can be in — starting, running, ended, and
- *   "that CLI is not installed" — and makes each one say what it is IN WORDS.
+ * - Drives the whole life of a session in order — worktree, bootstrap, PTY,
+ *   end, and the offer to reclaim the worktree — and makes every one of those
+ *   states say what it is IN WORDS.
  *
  * Boundaries:
- * - Owns: the terminal, its geometry, the spawn-once guard, the header strip.
- * - Does NOT own: which binary runs (main's vendor registry), worktrees (F2),
- *   backlog cards (F3), or attention signals from CLI hooks (F4).
+ * - Owns: the terminal, its geometry, the spawn-once and prepare-once guards,
+ *   the header strip, and every control's enabled/disabled reason.
+ * - Does NOT own: which binary runs (main's vendor registry), git argv
+ *   (src/main/worktrees/*), backlog cards (F3), attention signals (F4).
  *
  * Architectural role:
  * - UI boundary module in the renderer. Everything privileged happens over
  *   `window.fluxorAPI`; this file never touches a process.
+ *
+ * Why the bootstrap streams into the SAME terminal: an install is the first
+ * thing a session does and the first thing that can go wrong, and a second
+ * panel for it would mean the window has two logs — one of which is empty
+ * most of the time and neither of which is the whole story. The terminal is
+ * the log surface, from `git worktree add` to the agent's last line.
  *
  * Wrapper Principle (widgets/AGENTS.md): the header degrades to icons alone
  * below ~440px so a session docked into a narrow strip stays usable — the
@@ -28,14 +36,26 @@ import '@xterm/xterm/css/xterm.css';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { theme } from '../../../logic/theme';
 import { LucideIcon } from '../../desktop/LucideIcon';
-import { basenameOf, describeAttention, planPromptTyping } from '../../../lib/agent-sessions';
-import type { PtySpawnSuccess, VendorNotFoundError } from '@/main/pty/ipc-pty';
+import {
+  basenameOf,
+  defaultWorktreeBranch,
+  defaultWorktreeName,
+  describeAttention,
+  describeWorktreeVerdict,
+  isGitFailed,
+  planPromptTyping,
+  removalReason,
+} from '../../../lib/agent-sessions';
+import type {
+  AttachedSessionExistsError, CwdNotFoundError, PtySpawnSuccess, VendorNotFoundError,
+} from '@/main/pty/ipc-pty';
+import type { SpentVerdict } from '@/main/worktrees/worktree-manager';
 
 // ─── Constants ───────────────────────────────────────────────────
 
 /** Below this width the header keeps its icons and drops its words. */
 const NARROW_HEADER_PX = 440;
-/** How long "Confirm end?" stays armed before reverting to "End session". */
+/** How long a two-step control stays armed before reverting. */
 const CONFIRM_END_MS = 4000;
 
 /**
@@ -48,6 +68,13 @@ const CONFIRM_END_MS = 4000;
  * (a remount, or an HMR reload that resets this module).
  */
 const spawnRequested = new Set<string>();
+
+/**
+ * The same guard for the worktree step, and it protects something more
+ * expensive: `git worktree add` twice on one session leaves a second checkout
+ * on disk that nothing will ever clean up.
+ */
+const prepareRequested = new Set<string>();
 
 // ─── Terminal theme — the tokens, not hand-picked hexes ──────────
 
@@ -66,9 +93,12 @@ interface AgentSessionAppProps {
 }
 
 interface SpawnFailure {
-  kind: 'vendor_not_found' | 'spawn_failed';
+  kind: 'vendor_not_found' | 'spawn_failed' | 'attached_session_exists' | 'cwd_not_found' | 'worktree_failed';
   bin?: string;
   message?: string;
+  cwd?: string;
+  /** `attached_session_exists` only — the session already holding the main tree. */
+  otherSessionId?: string;
 }
 
 // ─── Component ───────────────────────────────────────────────────
@@ -83,6 +113,9 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
   /** Read by effects that must not re-run when the session id changes. */
   const sessionIdRef = useRef<string | undefined>(meta?.sessionId);
   sessionIdRef.current = meta?.sessionId;
+  /** Same reason, for the callbacks that act on the CURRENT session metadata. */
+  const metaRef = useRef(meta);
+  metaRef.current = meta;
 
   // Typing the first prompt into a `'type'` vendor needs two facts that arrive
   // over IPC in an order nobody controls: the spawn response (which vendors
@@ -109,7 +142,17 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
 
   const [failure, setFailure] = useState<SpawnFailure | null>(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [narrow, setNarrow] = useState(false);
+  /** The spent verdict, fetched once the session ends. `null` while unknown. */
+  const [verdict, setVerdict] = useState<SpentVerdict | null>(null);
+  const [removed, setRemoved] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  /** A dim, prefixed line — the Cockpit talking, never the agent. */
+  const writeOwnLine = useCallback((text: string) => {
+    termRef.current?.writeln(`\x1b[2m${text}\x1b[0m`);
+  }, []);
 
   // ── Terminal lifecycle: create, fit, keep the PTY's geometry in sync ──
   useEffect(() => {
@@ -188,12 +231,95 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
       updateAgentSession(windowId, { attention: 'ended', exitCode });
     });
 
+    // The bootstrap's own output, filtered by worktree: two sessions installing
+    // at once are two streams, and neither may land in the other's terminal.
+    const offProgress = api.onWorktreeProgress?.(({ worktreePath, line }) => {
+      if (worktreePath !== metaRef.current?.worktreePath) return;
+      termRef.current?.writeln(line);
+    }) ?? (() => { /* an older preload has no progress channel */ });
+
     return () => {
       if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
       offData();
       offExit();
+      offProgress();
     };
   }, [windowId, updateAgentSession, armPromptTyping]);
+
+  // ── Bootstrap, as its own step so "Retry" can re-run just this half ──
+  const runBootstrapStep = useCallback(async (worktreePath: string) => {
+    const api = window.fluxorAPI;
+    const m = metaRef.current;
+    if (!api || !m) return;
+
+    setFailure(null);
+    updateAgentSession(windowId, { attention: 'bootstrapping', bootstrapExitCode: null });
+
+    const result = await api.bootstrapRun(worktreePath, m.projectRoot);
+    if (isGitFailed(result)) {
+      setFailure({ kind: 'worktree_failed', message: result.stderr || result.message });
+      updateAgentSession(windowId, { attention: 'ended', exitCode: null });
+      return;
+    }
+
+    if (result.exitCode === 0) {
+      // durationMs 0 means there was no command to run — a project with no
+      // lockfile needs no install, and saying "done in 0.0s" would be noise.
+      if (result.durationMs > 0) {
+        writeOwnLine(`— bootstrap finished in ${(result.durationMs / 1000).toFixed(1)}s`);
+      }
+      updateAgentSession(windowId, {
+        worktreeReady: true, bootstrapExitCode: 0, attention: 'starting',
+      });
+      return;
+    }
+
+    writeOwnLine(`— bootstrap failed · exit ${result.exitCode}`);
+    updateAgentSession(windowId, { attention: 'bootstrapping', bootstrapExitCode: result.exitCode });
+  }, [updateAgentSession, windowId, writeOwnLine]);
+
+  // ── Worktree first, PTY second — the F2 order ──
+  useEffect(() => {
+    const api = window.fluxorAPI;
+    const term = termRef.current;
+    if (!api || !meta || !term) return;
+    if (meta.mode !== 'worktree' || meta.worktreeReady || meta.ptyStarted) return;
+
+    const { sessionId } = meta;
+    if (prepareRequested.has(sessionId)) return;
+    prepareRequested.add(sessionId);
+
+    void (async () => {
+      updateAgentSession(windowId, { attention: 'preparing' });
+
+      const name = meta.worktreeName ?? defaultWorktreeName(sessionId);
+      const branch = meta.branch ?? defaultWorktreeBranch(sessionId);
+      const created = await api.worktreeCreate({ projectRoot: meta.projectRoot, name, branch });
+
+      if (isGitFailed(created)) {
+        // The id stays claimed: this effect re-runs on every `meta` change and
+        // this branch writes to `meta`, so releasing it would retry a failing
+        // git command forever. Recovery is "Start again", which mints a new id.
+        setFailure({ kind: 'worktree_failed', message: created.stderr || created.message });
+        updateAgentSession(windowId, { attention: 'ended', exitCode: null });
+        return;
+      }
+
+      writeOwnLine(
+        `— preparing worktree ${created.path} on ${created.branch ?? branch} (base ${created.baseRef})`
+        + (created.reused ? ' · reused' : ''),
+      );
+      updateAgentSession(windowId, {
+        worktreePath: created.path,
+        cwd: created.path,
+        worktreeName: name,
+        branch: created.branch ?? branch,
+        baseRef: created.baseRef,
+      });
+
+      await runBootstrapStep(created.path);
+    })();
+  }, [windowId, meta, updateAgentSession, runBootstrapStep, writeOwnLine]);
 
   // ── Spawn exactly once per sessionId ──
   useEffect(() => {
@@ -227,6 +353,10 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
       return () => { cancelled = true; };
     }
 
+    // The worktree is not scenery: the agent must open INSIDE it, with its
+    // dependencies present. Until that is settled there is nothing to spawn in.
+    if (meta.mode === 'worktree' && !meta.worktreeReady) return;
+
     if (spawnRequested.has(sessionId)) return;
     spawnRequested.add(sessionId);
 
@@ -235,21 +365,36 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
         sessionId,
         vendor: meta.vendor,
         cwd: meta.cwd,
+        projectRoot: meta.projectRoot,
+        mode: meta.mode,
         prompt: meta.prompt,
         cols: term.cols,
         rows: term.rows,
       })
       .then((result) => {
-        if ((result as VendorNotFoundError).error === 'vendor_not_found') {
-          const nf = result as VendorNotFoundError;
-          // The id stays claimed on purpose. Releasing it would let this
-          // effect — which re-runs on every `meta` change, and this branch
-          // writes to `meta` — retry the spawn forever against a binary that
-          // is not there. Recovery is "Start again", which mints a new id.
-          setFailure({ kind: 'vendor_not_found', bin: nf.bin });
+        // Every one of these is an ANSWER, not an exception — see ipc-pty.ts.
+        // The id stays claimed in all of them for the reason above.
+        const kind = (result as { error?: string }).error;
+
+        if (kind === 'vendor_not_found') {
+          setFailure({ kind: 'vendor_not_found', bin: (result as VendorNotFoundError).bin });
           updateAgentSession(windowId, { attention: 'ended', exitCode: null });
           return;
         }
+        if (kind === 'attached_session_exists') {
+          setFailure({
+            kind: 'attached_session_exists',
+            otherSessionId: (result as AttachedSessionExistsError).sessionId,
+          });
+          updateAgentSession(windowId, { attention: 'ended', exitCode: null });
+          return;
+        }
+        if (kind === 'cwd_not_found') {
+          setFailure({ kind: 'cwd_not_found', cwd: (result as CwdNotFoundError).cwd });
+          updateAgentSession(windowId, { attention: 'ended', exitCode: null });
+          return;
+        }
+
         const ok = result as PtySpawnSuccess;
         setFailure(null);
         promptDeliveryRef.current = ok.promptDelivery;
@@ -257,13 +402,36 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
         armPromptTyping();
       })
       .catch((err: unknown) => {
-        // Claimed for the same reason as the vendor_not_found branch above.
         setFailure({ kind: 'spawn_failed', message: err instanceof Error ? err.message : String(err) });
         updateAgentSession(windowId, { attention: 'ended', exitCode: null });
       });
   }, [windowId, meta, updateAgentSession, armPromptTyping]);
 
+  // ── Once ended, is there anything left in that worktree to lose? ──
+  const endedWorktreePath = meta?.attention === 'ended' && meta.mode === 'worktree'
+    ? meta.worktreePath
+    : undefined;
+
+  useEffect(() => {
+    const api = window.fluxorAPI;
+    if (!api || !endedWorktreePath || removed) return;
+    let cancelled = false;
+    void api.worktreeSpent(endedWorktreePath).then((v) => {
+      if (cancelled || isGitFailed(v)) return;
+      setVerdict(v);
+    });
+    return () => { cancelled = true; };
+  }, [endedWorktreePath, removed]);
+
   // ── Controls ──
+
+  /** Shared by "Start again" and "Open in a worktree instead". */
+  const resetPromptState = useCallback(() => {
+    if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
+    promptDeliveryRef.current = null;
+    sawFirstChunkRef.current = false;
+    promptArmedRef.current = false;
+  }, []);
 
   const handleEnd = useCallback(() => {
     if (!meta) return;
@@ -283,27 +451,90 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
     if (!meta) return;
     termRef.current?.clear();
     setFailure(null);
-    if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
-    promptDeliveryRef.current = null;
-    sawFirstChunkRef.current = false;
-    promptArmedRef.current = false;
+    setVerdict(null);
+    resetPromptState();
     // A fresh id, so the restart writes its own transcript instead of appending
-    // to the previous run's — and so the spawn guard lets it through.
+    // to the previous run's — and so the spawn guard lets it through. The
+    // worktree it already has is REUSED (same name, same branch): re-cutting
+    // one per attempt would leave a checkout behind on every retry.
     updateAgentSession(windowId, {
       sessionId: crypto.randomUUID(),
       ptyStarted: false,
-      attention: 'starting',
+      attention: meta.mode === 'worktree' && !meta.worktreeReady ? 'preparing' : 'starting',
       exitCode: null,
       logPath: undefined,
       // Deliberately NOT re-sent: the agent has already acted on it once, and
       // replaying it would redo whatever it did.
       prompt: undefined,
     });
-  }, [meta, updateAgentSession, windowId]);
+  }, [meta, resetPromptState, updateAgentSession, windowId]);
+
+  /**
+   * The way out of `attached_session_exists`. It does not queue behind the
+   * other session and it does not fail: it turns THIS window into a worktree
+   * session, which is what the one-attached-session rule is asking for.
+   */
+  const handleOpenInWorktree = useCallback(() => {
+    if (!metaRef.current) return;
+    termRef.current?.clear();
+    setFailure(null);
+    resetPromptState();
+    const sessionId = crypto.randomUUID();
+    updateAgentSession(windowId, {
+      sessionId,
+      mode: 'worktree',
+      worktreeName: defaultWorktreeName(sessionId),
+      branch: defaultWorktreeBranch(sessionId),
+      worktreeReady: false,
+      bootstrapExitCode: null,
+      ptyStarted: false,
+      exitCode: null,
+      logPath: undefined,
+      attention: 'preparing',
+      // The prompt is KEPT here, unlike "Start again": nothing ran, so the
+      // agent has not acted on it yet.
+    });
+  }, [resetPromptState, updateAgentSession, windowId]);
+
+  const handleRetryBootstrap = useCallback(() => {
+    const path = metaRef.current?.worktreePath;
+    if (path) void runBootstrapStep(path);
+  }, [runBootstrapStep]);
+
+  /** Spawns in the worktree anyway — useful when the missing deps do not matter. */
+  const handleOpenAnyway = useCallback(() => {
+    updateAgentSession(windowId, { worktreeReady: true, attention: 'starting' });
+  }, [updateAgentSession, windowId]);
+
+  const handleRemoveWorktree = useCallback(() => {
+    const path = metaRef.current?.worktreePath;
+    if (!path) return;
+    if (!confirmRemove) {
+      setConfirmRemove(true);
+      setTimeout(() => setConfirmRemove(false), CONFIRM_END_MS);
+      return;
+    }
+    setConfirmRemove(false);
+    setRemoveError(null);
+    void window.fluxorAPI?.worktreeRemove(path).then((result) => {
+      if (isGitFailed(result)) {
+        setRemoveError(result.stderr || result.message);
+        return;
+      }
+      setRemoved(true);
+    });
+  }, [confirmRemove]);
 
   const handleRevealLog = useCallback(() => {
     if (meta?.logPath) void window.fluxorAPI?.revealPath(meta.logPath);
   }, [meta]);
+
+  // The other session's window, so the refusal can name it rather than
+  // printing an id nobody can place.
+  const otherSessionId = failure?.kind === 'attached_session_exists' ? failure.otherSessionId : undefined;
+  const otherSessionTitle = useDesktopStore((s) => (otherSessionId
+    ? s.windows.find((w) => w.agentSession?.sessionId === otherSessionId)?.title
+    : undefined));
 
   if (!meta) {
     return (
@@ -312,12 +543,19 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
   }
 
   const ended = meta.attention === 'ended';
-  const statusText = describeAttention(meta.attention, meta.exitCode);
+  const bootstrapFailed = meta.attention === 'bootstrapping'
+    && typeof meta.bootstrapExitCode === 'number'
+    && meta.bootstrapExitCode !== 0
+    && !meta.worktreeReady;
+  const statusText = describeAttention(meta.attention, meta.exitCode, meta.bootstrapExitCode);
   const statusTone =
-    ended && meta.exitCode === 0 ? theme.success
+    bootstrapFailed ? theme.warning
+      : ended && meta.exitCode === 0 ? theme.success
       : ended ? theme.danger
       : meta.attention === 'running' ? theme.accentBlue
       : theme.textMuted;
+
+  const removeBlockedBy = verdict ? removalReason(verdict) : 'checking the worktree…';
 
   return (
     <div style={S.root}>
@@ -355,7 +593,7 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
             type="button"
             onClick={handleRestart}
             style={{ ...S.btn, color: theme.accentBlue, borderColor: theme.accentBlueBorder }}
-            title="Start another session with the same vendor and directory (without the original prompt)"
+            title="Start another session with the same vendor and worktree (without the original prompt)"
             data-testid="agent-session-restart"
           >
             <LucideIcon name="RefreshCw" size={12} />
@@ -379,21 +617,86 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
         )}
       </div>
 
+      {/* ── Bootstrap failure — two ways forward, both of them real ── */}
+      {bootstrapFailed && (
+        <div style={S.failure} data-testid="agent-session-bootstrap-error">
+          <div style={S.failureTitle}>
+            <LucideIcon name="TriangleAlert" size={13} style={{ color: theme.warning }} />
+            Bootstrap failed · exit {meta.bootstrapExitCode}
+          </div>
+          <div style={S.failureBody}>
+            The worktree exists at <code style={S.code}>{meta.worktreePath}</code>, but installing its
+            dependencies did not finish. The output above is the whole log.
+          </div>
+          <div style={S.actions}>
+            <button
+              type="button"
+              onClick={handleRetryBootstrap}
+              style={{ ...S.btn, color: theme.accentBlue, borderColor: theme.accentBlueBorder }}
+              title="Run the bootstrap command again in this worktree"
+              data-testid="agent-session-bootstrap-retry"
+            >
+              <LucideIcon name="RefreshCw" size={12} />
+              <span>Retry</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenAnyway}
+              style={S.btn}
+              title="Start the agent in this worktree without its dependencies installed"
+              data-testid="agent-session-bootstrap-open-anyway"
+            >
+              <LucideIcon name="Play" size={12} />
+              <span>Open anyway</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Failure state — the terminal has nothing to show, so it says why ── */}
       {failure && (
         <div style={S.failure} data-testid="agent-session-error">
           <div style={S.failureTitle}>
             <LucideIcon name="TriangleAlert" size={13} style={{ color: theme.warning }} />
-            {failure.kind === 'vendor_not_found'
-              ? `${meta.vendor} is not installed`
+            {failure.kind === 'vendor_not_found' ? `${meta.vendor} is not installed`
+              : failure.kind === 'attached_session_exists' ? 'Another session already holds this project'
+              : failure.kind === 'cwd_not_found' ? 'That directory is not there'
+              : failure.kind === 'worktree_failed' ? 'The worktree could not be prepared'
               : 'The session could not start'}
           </div>
+
           {failure.kind === 'vendor_not_found' ? (
             <div style={S.failureBody}>
               <code style={S.code}>{failure.bin}</code> was not found on your PATH. Install that CLI,
               or point Fluxor at an existing binary with{' '}
               <code style={S.code}>FLUXOR_AGENT_BIN_{meta.vendor.toUpperCase()}=/path/to/{failure.bin}</code>
               {' '}and reopen the session.
+            </div>
+          ) : failure.kind === 'attached_session_exists' ? (
+            <>
+              <div style={S.failureBody}>
+                <code style={S.code}>{otherSessionTitle ?? failure.otherSessionId}</code> is already
+                running in this project&apos;s own working tree. Two agents writing there at once share
+                one git index and one build cache, and neither of them is told — so the second session
+                gets its own worktree instead.
+              </div>
+              <div style={S.actions}>
+                <button
+                  type="button"
+                  onClick={handleOpenInWorktree}
+                  style={{ ...S.btn, color: theme.accentBlue, borderColor: theme.accentBlueBorder }}
+                  title="Create a dedicated git worktree and branch for this session"
+                  data-testid="agent-session-open-in-worktree"
+                >
+                  <LucideIcon name="GitBranch" size={12} />
+                  <span>Open in a worktree instead</span>
+                </button>
+              </div>
+            </>
+          ) : failure.kind === 'cwd_not_found' ? (
+            <div style={S.failureBody}>
+              <code style={S.code}>{failure.cwd}</code> does not exist. If it was a worktree, it has
+              been removed since — &ldquo;Start again&rdquo; will build it back.
             </div>
           ) : (
             <div style={S.failureBody}>{failure.message}</div>
@@ -404,13 +707,55 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
       {/* ── The terminal itself ── */}
       <div ref={containerRef} style={S.term} data-testid="agent-session-terminal" />
 
-      {/* ── Ended footer — the exit code and where the transcript is ── */}
+      {/* ── Ended footer — the exit code, the worktree, and where the transcript is ── */}
       {ended && !failure && (
         <div style={S.footer} data-testid="agent-session-ended">
           <span style={{ color: meta.exitCode === 0 ? theme.success : theme.danger }}>
             Session ended{typeof meta.exitCode === 'number' ? ` · exit ${meta.exitCode}` : ''}
           </span>
           {meta.logPath && <span style={S.footerPath} title={meta.logPath}>{meta.logPath}</span>}
+        </div>
+      )}
+
+      {/* ── The worktree this session leaves behind, and whether it is safe to drop ── */}
+      {ended && meta.mode === 'worktree' && meta.worktreePath && (
+        <div style={S.footer} data-testid="agent-session-worktree">
+          {removed ? (
+            <span style={{ color: theme.textMuted }}>
+              worktree removed · branch {meta.branch} kept
+            </span>
+          ) : (
+            <>
+              <span style={{ color: theme.textMuted }}>
+                {verdict ? describeWorktreeVerdict(verdict) : `worktree ${meta.branch ?? ''} · checking…`}
+              </span>
+              <div style={S.spacer} />
+              {removeError && <span style={{ color: theme.danger }}>{removeError}</span>}
+              <button
+                type="button"
+                onClick={handleRemoveWorktree}
+                disabled={!!removeBlockedBy}
+                style={{
+                  ...S.btn,
+                  ...(removeBlockedBy ? S.btnDisabled : null),
+                  color: confirmRemove ? theme.danger : removeBlockedBy ? theme.textFaint : theme.textMuted,
+                  borderColor: confirmRemove ? theme.dangerBorder : theme.border,
+                }}
+                // A disabled control that does not say why reads as broken.
+                title={removeBlockedBy
+                  ? `Cannot remove: this worktree ${removeBlockedBy}`
+                  : 'Delete the worktree directory (the branch is kept)'}
+                data-testid="agent-session-remove-worktree"
+              >
+                <LucideIcon name="Trash2" size={12} />
+                <span>
+                  {confirmRemove ? 'Confirm remove?'
+                    : removeBlockedBy ? `Remove worktree — ${removeBlockedBy}`
+                    : 'Remove worktree'}
+                </span>
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -446,6 +791,8 @@ const S: Record<string, React.CSSProperties> = {
     background: 'transparent', border: `1px solid ${theme.border}`,
     color: theme.textMuted, fontSize: 10, fontFamily: theme.fontMono,
   },
+  btnDisabled: { cursor: 'not-allowed' },
+  actions: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   term: { flex: 1, minHeight: 0, padding: '4px 0 0 6px', overflow: 'hidden' },
   failure: {
     flexShrink: 0, padding: '10px 12px', borderBottom: `1px solid ${theme.border}`,

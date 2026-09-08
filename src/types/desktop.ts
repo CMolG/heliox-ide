@@ -144,25 +144,49 @@ export type AgentVendorId = 'claude' | 'codex' | 'opencode' | 'gemini';
  * colour alone — a badge whose only channel is hue says nothing to a colour
  * blind reader and nothing at all in a screenshot.
  *
- *  - 'starting' — spawned, no output yet
- *  - 'running'  — producing output
- *  - 'waiting'  — declared here for F4's attention signal (Stop/Notification
- *                 hooks); nothing in F1 sets it yet
- *  - 'ended'    — the process exited; `exitCode` says how
+ *  - 'preparing'    — F2: creating the git worktree and its branch
+ *  - 'bootstrapping'— F2: installing dependencies inside that worktree
+ *  - 'starting'     — spawned, no output yet
+ *  - 'running'      — producing output
+ *  - 'waiting'      — declared here for F4's attention signal (Stop/Notification
+ *                     hooks); nothing sets it yet
+ *  - 'ended'        — the process exited; `exitCode` says how
  */
-export type AgentSessionAttention = 'starting' | 'running' | 'waiting' | 'ended';
+export type AgentSessionAttention =
+  | 'preparing' | 'bootstrapping' | 'starting' | 'running' | 'waiting' | 'ended';
 
 export interface AgentSessionMeta {
   /** Correlates the window with its PTY in the main process, and names its log file. */
   sessionId: string;
   vendor: AgentVendorId;
-  /** Working directory the CLI was spawned in. */
+  /**
+   * Working directory the CLI is spawned in. For an attached session this is
+   * `projectRoot`; for a worktree session it becomes the worktree's path once
+   * the worktree exists.
+   */
   cwd: string;
+  /**
+   * The PROJECT this session belongs to, whatever directory it ends up running
+   * in. Required: the "one attached session per project" rule is counted per
+   * project, and a session that cannot say which project it is in cannot be
+   * counted. Windows persisted by F1 get `projectRoot = cwd` in the v21 → v22
+   * migration, which is exactly right for them — F1 only opened attached
+   * sessions.
+   */
+  projectRoot: string;
   /** 'attached' = the main tree; 'worktree' = a dedicated git worktree (F2). */
   mode: 'attached' | 'worktree';
   // ── F2 (worktrees) fills these ──
   worktreePath?: string;
+  /** Directory name under `.claude/worktrees/`, kept so a retry rebuilds the same one. */
+  worktreeName?: string;
   branch?: string;
+  /** The ref the branch was actually cut from — `origin/main`, or a local fallback. */
+  baseRef?: string;
+  /** True once the worktree exists AND its bootstrap is settled: the gate the PTY waits on. */
+  worktreeReady?: boolean;
+  /** `0` clean, non-zero failed, `null`/absent not run. Not the AGENT's exit code. */
+  bootstrapExitCode?: number | null;
   // ── F3 (card → session) fills these ──
   cardId?: string;
   backlogDir?: string;

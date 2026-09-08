@@ -69,7 +69,16 @@ const IGNORED_DIRS = new Set([
 
 const MARKET_PROMPT_CATEGORIES = new Set(['flows', 'roles', 'mods', 'steps']);
 
-function getProjectConfigDir(projectPath: string): string {
+/**
+ * Where a project's Fluxor-owned config lives — in userData, keyed by a hash of
+ * its path, never inside the project itself.
+ *
+ * Exported since Cockpit F2: `ipc-worktrees.ts` reads and writes `cockpit.json`
+ * (the per-project bootstrap override) through the same directory the
+ * `read-project-config`/`write-project-config` handlers below use, so the two
+ * cannot end up pointing at two different places.
+ */
+export function getProjectConfigDir(projectPath: string): string {
   const hash = createHash('md5').update(projectPath).digest('hex').slice(0, 12);
   const safeName = basename(projectPath);
   return join(app.getPath('userData'), 'projects', `${safeName}-${hash}`);

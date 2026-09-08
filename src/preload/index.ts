@@ -24,9 +24,14 @@ import type {
 } from '../types/ipc-events';
 import type { BrowserAction } from '../types/browser';
 import type { BacklogCard } from '../types/market';
-import type { PtySpawnPayload, PtySpawnResult } from '../main/pty/ipc-pty';
+import type { PtySpawnPayload, PtySpawnResult, LiveSessionEntry } from '../main/pty/ipc-pty';
 import type { PtyInfo, PtyDataEvent, PtyExitEvent } from '../main/pty/pty-manager';
 import type { VendorAvailability } from '../main/pty/vendors';
+import type {
+  WorktreeListResult, WorktreeCreateResult, WorktreeSpentResult,
+  WorktreeRemoveResult, BootstrapRunIpcResult, WorktreeProgressEvent,
+} from '../main/worktrees/ipc-worktrees';
+import type { BootstrapResolution } from '../main/worktrees/bootstrap';
 
 const fluxorAPI: FluxorAPI = {
   initBaselines: (flows: Flow[]) =>
@@ -246,6 +251,9 @@ const fluxorAPI: FluxorAPI = {
   ptyList: (): Promise<PtyInfo[]> =>
     ipcRenderer.invoke('fluxor:pty-list'),
 
+  ptyLiveSessions: (): Promise<LiveSessionEntry[]> =>
+    ipcRenderer.invoke('fluxor:pty-live-sessions'),
+
   detectAgents: (): Promise<VendorAvailability[]> =>
     ipcRenderer.invoke('fluxor:agents-detect'),
 
@@ -262,6 +270,36 @@ const fluxorAPI: FluxorAPI = {
     const handler = (_event: IpcRendererEvent, data: PtyExitEvent) => callback(data);
     ipcRenderer.on('fluxor:pty-exit', handler);
     return () => { ipcRenderer.removeListener('fluxor:pty-exit', handler); };
+  },
+
+  // ── Session worktrees + bootstrap (Cockpit F2) ────────────────
+  worktreeList: (projectRoot: string): Promise<WorktreeListResult> =>
+    ipcRenderer.invoke('fluxor:worktree-list', projectRoot),
+
+  worktreeCreate: (req: { projectRoot: string; name: string; branch: string }): Promise<WorktreeCreateResult> =>
+    ipcRenderer.invoke('fluxor:worktree-create', req),
+
+  worktreeSpent: (worktreePath: string): Promise<WorktreeSpentResult> =>
+    ipcRenderer.invoke('fluxor:worktree-spent', worktreePath),
+
+  worktreeRemove: (worktreePath: string, force?: boolean): Promise<WorktreeRemoveResult> =>
+    ipcRenderer.invoke('fluxor:worktree-remove', worktreePath, force),
+
+  bootstrapDetect: (projectRoot: string): Promise<BootstrapResolution> =>
+    ipcRenderer.invoke('fluxor:bootstrap-detect', projectRoot),
+
+  bootstrapSet: (projectRoot: string, command: string | null): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('fluxor:bootstrap-set', projectRoot, command),
+
+  bootstrapRun: (worktreePath: string, projectRoot: string): Promise<BootstrapRunIpcResult> =>
+    ipcRenderer.invoke('fluxor:bootstrap-run', worktreePath, projectRoot),
+
+  // Same unsubscribe contract as onPtyData/onPtyExit — a session window that
+  // closes mid-install must not keep writing into a terminal that is gone.
+  onWorktreeProgress: (callback: (payload: WorktreeProgressEvent) => void) => {
+    const handler = (_event: IpcRendererEvent, data: WorktreeProgressEvent) => callback(data);
+    ipcRenderer.on('fluxor:worktree-progress', handler);
+    return () => { ipcRenderer.removeListener('fluxor:worktree-progress', handler); };
   },
 
   revealPath: (targetPath: string): Promise<boolean> =>

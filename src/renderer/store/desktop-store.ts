@@ -2606,7 +2606,7 @@ export const useDesktopStore = create<DesktopStore>()(
     }),
     {
       name: 'fluxor-desktop',
-      version: 21,
+      version: 22,
       // Debounce localStorage writes: `partialize` below now includes
       // `boards[]` (the full mental graph of EVERY board, not just the one
       // on screen), so persist's default synchronous stringify-and-write on
@@ -3023,6 +3023,19 @@ export const useDesktopStore = create<DesktopStore>()(
               persisted.dockItems.splice(insertAt, 0, { ...defaultItem });
             }
           }
+        }
+
+        // v21 → v22: `AgentSessionMeta.projectRoot` became required (Cockpit F2
+        // counts the "one attached session per project" rule per project, so a
+        // session with no project cannot be counted). Every window F1 persisted
+        // ran ATTACHED, where the project root and the working directory are
+        // the same path — so `cwd` is not a guess here, it is the right answer.
+        if (version < 22 && persisted && Array.isArray(persisted.windows)) {
+          persisted.windows = persisted.windows.map((w: { agentSession?: { cwd?: string; projectRoot?: string } }) =>
+            w?.agentSession && !w.agentSession.projectRoot
+              ? { ...w, agentSession: { ...w.agentSession, projectRoot: w.agentSession.cwd ?? '' } }
+              : w,
+          );
         }
 
         return persisted ?? {};

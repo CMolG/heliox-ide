@@ -1,15 +1,18 @@
 /**
- * agent-sessions.ts — Opening and driving agent-session windows (Cockpit F1)
+ * agent-sessions.ts — Opening and driving agent-session windows (Cockpit F1/F2)
  *
  * Responsibility:
- * - `openAgentSession` — the one way a session window comes into existence.
+ * - `openAgentSession` — the one way a session window comes into existence,
+ *   including the worktree name and branch a `'worktree'` session defaults to.
  * - The pure rules the session component needs but should not decide inline:
- *   how a `'type'` vendor's prompt gets delivered, and how a status reads.
+ *   how a `'type'` vendor's prompt gets delivered, how a status reads, and
+ *   whether a spent worktree may be removed — and if not, WHY not.
  *
  * Boundaries:
- * - Owns: window creation for `'agent-session'`, prompt-delivery policy.
+ * - Owns: window creation for `'agent-session'`, prompt-delivery policy, the
+ *   wording of every state and every refusal.
  * - Does NOT own: the terminal itself (AgentSessionApp.tsx), the PTY
- *   (src/main/pty/*), or anything about backlog cards (that is F3).
+ *   (src/main/pty/*), git (src/main/worktrees/*), or backlog cards (F3).
  *
  * Architectural role:
  * - Renderer-side module with no React and no DOM, so its decisions are unit
@@ -17,6 +20,8 @@
  */
 import { useDesktopStore } from '../store/desktop-store';
 import type { AgentSessionAttention, AgentSessionMeta, AgentVendorId } from '@/types/desktop';
+import type { SpentVerdict } from '@/main/worktrees/worktree-manager';
+import type { GitFailed } from '@/main/worktrees/ipc-worktrees';
 
 /**
  * How long to wait AFTER the first output chunk before typing the prompt into
@@ -64,12 +69,83 @@ export function planPromptTyping(
  * The status line the header badge shows. Words, never colour alone — a badge
  * that only changes hue says nothing in greyscale, in a screenshot, or to a
  * colour blind reader (and it is what the e2e suite asserts on).
+ *
+ * `bootstrapExitCode` is separate from `exitCode` on purpose: a failed install
+ * and a failed AGENT are different events with different ways out, and one
+ * number carrying both would make the window unable to tell them apart.
  */
-export function describeAttention(attention: AgentSessionAttention, exitCode?: number | null): string {
+export function describeAttention(
+  attention: AgentSessionAttention,
+  exitCode?: number | null,
+  bootstrapExitCode?: number | null,
+): string {
+  if (attention === 'preparing') return 'preparing worktree';
+  if (attention === 'bootstrapping') {
+    return typeof bootstrapExitCode === 'number' && bootstrapExitCode !== 0
+      ? `bootstrap failed · exit ${bootstrapExitCode}`
+      : 'bootstrapping';
+  }
   if (attention === 'ended') {
     return typeof exitCode === 'number' ? `ended · exit ${exitCode}` : 'ended';
   }
   return attention;
+}
+
+// ─── Worktrees (F2) ──────────────────────────────────────────────
+
+/**
+ * Did that worktree call fail?
+ *
+ * The guard lives HERE, not beside its type in `ipc-worktrees.ts`, because the
+ * renderer cannot import that module at runtime — it reaches `electron` and
+ * the whole main process behind it. The type crosses as `import type`, which
+ * is erased; the two-line predicate is written on this side.
+ */
+export function isGitFailed(result: unknown): result is GitFailed {
+  return !!result && typeof result === 'object'
+    && (result as GitFailed).error === 'git_failed';
+}
+
+/**
+ * Default directory name for a session with no card behind it yet — F3 will
+ * hand the card id instead. Eight hex characters of the session's own uuid:
+ * short enough to read in a path, unique enough that two dock launches in the
+ * same second do not collide.
+ */
+export function defaultWorktreeName(sessionId: string): string {
+  return `session-${sessionId.slice(0, 8)}`;
+}
+
+/** Namespaced, so a Cockpit branch is recognisable in `git branch` at a glance. */
+export function defaultWorktreeBranch(sessionId: string): string {
+  return `cockpit/${defaultWorktreeName(sessionId)}`;
+}
+
+/**
+ * Why this worktree may NOT be removed — or `null` when it may.
+ *
+ * A disabled control that does not say why reads as broken, not as guarded
+ * (interface-psychology rule, point 1), and this is the one control in the
+ * window that can destroy work.
+ */
+export function removalReason(verdict: SpentVerdict): string | null {
+  if (verdict.removable) return null;
+  if (!verdict.clean) return 'has uncommitted changes';
+  // Content differs from the base AND there are commits: real work that no PR
+  // has carried anywhere. Ancestry alone would not prove this — after a squash
+  // merge `ahead` stays positive forever — which is why `same` is the other half.
+  if (!verdict.same && verdict.ahead > 0) return 'has commits no PR carried';
+  return 'not spent yet';
+}
+
+/** `worktree <branch> · spent · clean` — the ended footer's one extra line. */
+export function describeWorktreeVerdict(verdict: SpentVerdict): string {
+  const branch = verdict.branch ?? 'detached HEAD';
+  const spent = verdict.spent ? 'spent' : 'not spent';
+  const changes = verdict.clean
+    ? 'clean'
+    : `${verdict.changes} change${verdict.changes === 1 ? '' : 's'}`;
+  return `worktree ${branch} · ${spent} · ${changes}`;
 }
 
 /** Last path segment, trailing separators ignored. `''` for an empty path. */
@@ -81,33 +157,56 @@ export function basenameOf(p: string): string {
 export interface OpenAgentSessionOptions {
   vendor: AgentVendorId;
   cwd: string;
+  /** The project the session belongs to. Required — see `AgentSessionMeta.projectRoot`. */
+  projectRoot: string;
   prompt?: string;
   mode?: AgentSessionMeta['mode'];
   title?: string;
+  /** Worktree mode only. Defaults to `session-<8 hex>` / `cockpit/session-<8 hex>`. */
+  worktreeName?: string;
+  branch?: string;
 }
 
 /**
- * Creates an 'agent-session' window. The PTY is NOT spawned here: the terminal
- * has to be mounted and measured first, because a PTY spawned at the wrong
- * geometry renders a TUI it can never re-lay-out correctly. AgentSessionApp
- * spawns once it knows its own cols/rows, guarded by `ptyStarted`.
+ * Creates an 'agent-session' window. Neither the PTY nor the worktree is
+ * created here: the terminal has to be mounted and measured first, because a
+ * PTY spawned at the wrong geometry renders a TUI it can never re-lay-out
+ * correctly — and the worktree's own progress is written INTO that terminal,
+ * so it cannot start before there is one. AgentSessionApp drives both, guarded
+ * by `worktreeReady` and `ptyStarted`.
  */
 export function openAgentSession(opts: OpenAgentSessionOptions): string {
+  const sessionId = crypto.randomUUID();
+  const mode = opts.mode ?? 'attached';
+  const worktreeName = mode === 'worktree'
+    ? (opts.worktreeName ?? defaultWorktreeName(sessionId))
+    : undefined;
+  const branch = mode === 'worktree'
+    ? (opts.branch ?? defaultWorktreeBranch(sessionId))
+    : undefined;
+
   const agentSession: AgentSessionMeta = {
-    sessionId: crypto.randomUUID(),
+    sessionId,
     vendor: opts.vendor,
     cwd: opts.cwd,
-    mode: opts.mode ?? 'attached',
+    projectRoot: opts.projectRoot,
+    mode,
+    worktreeName,
+    branch,
     prompt: opts.prompt,
     launchedAt: Date.now(),
     ptyStarted: false,
-    attention: 'starting',
+    // A worktree session's first act is creating its worktree, and the badge
+    // has to say that from the very first frame — 'starting' would be a lie
+    // for as long as the fetch takes.
+    attention: mode === 'worktree' ? 'preparing' : 'starting',
   };
 
   return useDesktopStore.getState().addWindow('agent-session', {
     // A desktop of windows all called "Agent session" is a desktop you cannot
-    // navigate; the directory is the thing that tells two sessions apart.
-    title: opts.title ?? `${opts.vendor} · ${basenameOf(opts.cwd) || opts.cwd}`,
+    // navigate. Attached sessions are told apart by their directory; worktree
+    // sessions by their worktree, since they all share one project root.
+    title: opts.title ?? `${opts.vendor} · ${worktreeName ?? (basenameOf(opts.cwd) || opts.cwd)}`,
     iconName: 'Terminal',
     agentSession,
   });

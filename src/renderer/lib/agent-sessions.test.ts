@@ -3,10 +3,14 @@
  *
  * What is pinned here:
  *   1. `openAgentSession` creates an 'agent-session' window whose metadata is
- *      complete and in the pre-spawn state (`ptyStarted:false`, 'starting').
+ *      complete and in the pre-spawn state (`ptyStarted:false`, 'starting'),
+ *      and a worktree session comes out with its name and branch already
+ *      decided — nothing downstream may invent them a second time.
  *   2. The prompt-typing decision: only `'type'` vendors, only a real prompt,
  *      and the payload ends in `\r`.
  *   3. `describeAttention` says the state in WORDS, exit code included.
+ *   4. Why a spent worktree may not be removed, in the words the disabled
+ *      control shows.
  *
  * Mocking strategy: the desktop store is stubbed down to `addWindow`, which is
  * the only thing this module touches — no zustand, no persistence, no React.
@@ -27,10 +31,16 @@ vi.mock('../store/desktop-store', () => ({
 import {
   PROMPT_TYPE_DELAY_MS,
   basenameOf,
+  defaultWorktreeBranch,
+  defaultWorktreeName,
   describeAttention,
+  describeWorktreeVerdict,
+  isGitFailed,
   openAgentSession,
   planPromptTyping,
+  removalReason,
 } from './agent-sessions';
+import type { SpentVerdict } from '@/main/worktrees/worktree-manager';
 
 beforeEach(() => {
   mockStore.addWindow.mockClear();
@@ -39,7 +49,7 @@ beforeEach(() => {
 describe('openAgentSession', () => {
   it('creates an agent-session window with complete, pre-spawn metadata', () => {
     const before = Date.now();
-    const id = openAgentSession({ vendor: 'claude', cwd: '/repo/javadaba-web', prompt: 'JDB-205' });
+    const id = openAgentSession({ vendor: 'claude', cwd: '/repo/javadaba-web', projectRoot: '/repo/javadaba-web', prompt: 'JDB-205' });
 
     expect(id).toBe('win-1');
     const [type, opts] = mockStore.addWindow.mock.calls[0];
@@ -48,6 +58,7 @@ describe('openAgentSession', () => {
     const meta = opts?.agentSession as Record<string, unknown>;
     expect(meta.vendor).toBe('claude');
     expect(meta.cwd).toBe('/repo/javadaba-web');
+    expect(meta.projectRoot).toBe('/repo/javadaba-web');
     expect(meta.prompt).toBe('JDB-205');
     // Attached is the default — a worktree is F2's job, never an implicit one.
     expect(meta.mode).toBe('attached');
@@ -60,8 +71,8 @@ describe('openAgentSession', () => {
   });
 
   it('gives every session its own id', () => {
-    openAgentSession({ vendor: 'codex', cwd: '/a' });
-    openAgentSession({ vendor: 'codex', cwd: '/a' });
+    openAgentSession({ vendor: 'codex', cwd: '/a', projectRoot: '/a' });
+    openAgentSession({ vendor: 'codex', cwd: '/a', projectRoot: '/a' });
     const [first, second] = mockStore.addWindow.mock.calls.map(
       (c) => (c[1]?.agentSession as { sessionId: string }).sessionId,
     );
@@ -69,13 +80,13 @@ describe('openAgentSession', () => {
   });
 
   it('titles the window by directory so two sessions are tellable apart', () => {
-    openAgentSession({ vendor: 'claude', cwd: '/repo/heliox-ide' });
+    openAgentSession({ vendor: 'claude', cwd: '/repo/heliox-ide', projectRoot: '/repo/heliox-ide' });
     expect(mockStore.addWindow.mock.calls[0][1]?.title)
       .toBe('claude · heliox-ide');
   });
 
   it('honours an explicit title and mode', () => {
-    openAgentSession({ vendor: 'opencode', cwd: '/a/b', mode: 'worktree', title: 'JDB-205' });
+    openAgentSession({ vendor: 'opencode', cwd: '/a/b', projectRoot: '/a/b', mode: 'worktree', title: 'JDB-205' });
     const opts = mockStore.addWindow.mock.calls[0][1] as { title: string; agentSession: { mode: string } };
     expect(opts.title).toBe('JDB-205');
     expect(opts.agentSession.mode).toBe('worktree');
@@ -132,5 +143,118 @@ describe('basenameOf', () => {
 
   it('is empty for an empty path rather than throwing', () => {
     expect(basenameOf('')).toBe('');
+  });
+});
+
+describe('worktree defaults', () => {
+  it('names the worktree and the branch from the session id, once, at open time', () => {
+    openAgentSession({ vendor: 'claude', cwd: '/repo/x', projectRoot: '/repo/x', mode: 'worktree' });
+    const meta = mockStore.addWindow.mock.calls[0][1]?.agentSession as Record<string, unknown>;
+
+    const sessionId = meta.sessionId as string;
+    expect(meta.worktreeName).toBe(defaultWorktreeName(sessionId));
+    expect(meta.branch).toBe(defaultWorktreeBranch(sessionId));
+    expect(meta.worktreeName).toMatch(/^session-[0-9a-f]{8}$/);
+    expect(meta.branch).toMatch(/^cockpit\/session-[0-9a-f]{8}$/);
+  });
+
+  it('opens a worktree session in "preparing", never in "starting"', () => {
+    openAgentSession({ vendor: 'claude', cwd: '/repo/x', projectRoot: '/repo/x', mode: 'worktree' });
+    const meta = mockStore.addWindow.mock.calls[0][1]?.agentSession as Record<string, unknown>;
+    // 'starting' would claim the agent is up while a fetch is still running.
+    expect(meta.attention).toBe('preparing');
+    expect(meta.worktreeReady).toBeUndefined();
+  });
+
+  it('lets a caller name the worktree and branch — F3 hands it the card id', () => {
+    openAgentSession({
+      vendor: 'claude', cwd: '/repo/x', projectRoot: '/repo/x', mode: 'worktree',
+      worktreeName: 'jdb-205', branch: 'JDB-205/cockpit',
+    });
+    const meta = mockStore.addWindow.mock.calls[0][1]?.agentSession as Record<string, unknown>;
+    expect(meta.worktreeName).toBe('jdb-205');
+    expect(meta.branch).toBe('JDB-205/cockpit');
+  });
+
+  it('titles a worktree window by its worktree — they all share one directory', () => {
+    openAgentSession({
+      vendor: 'claude', cwd: '/repo/x', projectRoot: '/repo/x', mode: 'worktree', worktreeName: 'jdb-205',
+    });
+    expect(mockStore.addWindow.mock.calls[0][1]?.title).toBe('claude · jdb-205');
+  });
+
+  it('gives an attached session no worktree at all', () => {
+    openAgentSession({ vendor: 'claude', cwd: '/repo/x', projectRoot: '/repo/x' });
+    const meta = mockStore.addWindow.mock.calls[0][1]?.agentSession as Record<string, unknown>;
+    expect(meta.worktreeName).toBeUndefined();
+    expect(meta.branch).toBeUndefined();
+    expect(meta.attention).toBe('starting');
+  });
+});
+
+describe('describeAttention — the F2 states', () => {
+  it('spells out the worktree steps rather than showing a bare verb', () => {
+    expect(describeAttention('preparing')).toBe('preparing worktree');
+    expect(describeAttention('bootstrapping')).toBe('bootstrapping');
+  });
+
+  it('separates a failed INSTALL from a failed agent', () => {
+    expect(describeAttention('bootstrapping', null, 1)).toBe('bootstrap failed · exit 1');
+    expect(describeAttention('bootstrapping', null, 0)).toBe('bootstrapping');
+    expect(describeAttention('ended', 1, 0)).toBe('ended · exit 1');
+  });
+});
+
+// ─── The removal offer ───────────────────────────────────────────
+
+function verdict(over: Partial<SpentVerdict> = {}): SpentVerdict {
+  return {
+    same: true, ahead: 2, clean: true, changes: 0, prMerged: null,
+    spent: true, removable: true, baseRef: 'origin/main', branch: 'cockpit/x',
+    ...over,
+  };
+}
+
+describe('removalReason', () => {
+  it('says nothing when the worktree may go', () => {
+    expect(removalReason(verdict())).toBeNull();
+  });
+
+  it('puts uncommitted work first — it is the only unrecoverable one', () => {
+    expect(removalReason(verdict({ clean: false, changes: 3, removable: false })))
+      .toBe('has uncommitted changes');
+  });
+
+  it('distinguishes work no PR carried from a worktree nothing happened in', () => {
+    expect(removalReason(verdict({ same: false, ahead: 4, spent: false, removable: false })))
+      .toBe('has commits no PR carried');
+    expect(removalReason(verdict({ ahead: 0, spent: false, removable: false })))
+      .toBe('not spent yet');
+  });
+});
+
+describe('describeWorktreeVerdict', () => {
+  it('reads as three plain facts, none of them a colour', () => {
+    expect(describeWorktreeVerdict(verdict())).toBe('worktree cockpit/x · spent · clean');
+    expect(describeWorktreeVerdict(verdict({ spent: false, clean: false, changes: 1 })))
+      .toBe('worktree cockpit/x · not spent · 1 change');
+    expect(describeWorktreeVerdict(verdict({ clean: false, changes: 7 })))
+      .toBe('worktree cockpit/x · spent · 7 changes');
+  });
+
+  it('names a detached HEAD rather than printing nothing', () => {
+    expect(describeWorktreeVerdict(verdict({ branch: null }))).toContain('detached HEAD');
+  });
+});
+
+describe('isGitFailed', () => {
+  it('recognises the failure value the main process sends back', () => {
+    expect(isGitFailed({ error: 'git_failed', message: 'boom', stderr: '' })).toBe(true);
+  });
+
+  it('does not mistake a successful result — or nothing at all — for one', () => {
+    expect(isGitFailed({ path: '/w', branch: 'x' })).toBe(false);
+    expect(isGitFailed(null)).toBe(false);
+    expect(isGitFailed(undefined)).toBe(false);
   });
 });

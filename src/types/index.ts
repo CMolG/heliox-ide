@@ -388,9 +388,30 @@ export interface FluxorAPI {
   ptyKill: (sessionId: string, signal?: string) => Promise<{ success: boolean }>;
   /** The sessions with a LIVE process right now — how a rehydrated window learns it is dead. */
   ptyList: () => Promise<import('../main/pty/pty-manager').PtyInfo[]>;
+  /** Which project each live session belongs to, and whether it holds the main tree. */
+  ptyLiveSessions: () => Promise<import('../main/pty/ipc-pty').LiveSessionEntry[]>;
   detectAgents: () => Promise<import('../main/pty/vendors').VendorAvailability[]>;
   onPtyData: (callback: (payload: import('../main/pty/pty-manager').PtyDataEvent) => void) => () => void;
   onPtyExit: (callback: (payload: import('../main/pty/pty-manager').PtyExitEvent) => void) => () => void;
+
+  // ── Session worktrees + bootstrap (Cockpit F2) ─────────────────
+  /**
+   * Every one of these answers a git failure as a `{ error: 'git_failed' }`
+   * VALUE rather than by rejecting: a branch that exists elsewhere, a missing
+   * network, a worktree deleted by hand — all ordinary, all explainable in the
+   * window, none of them an exception the renderer can do anything with.
+   */
+  worktreeList: (projectRoot: string) => Promise<import('../main/worktrees/ipc-worktrees').WorktreeListResult>;
+  worktreeCreate: (req: { projectRoot: string; name: string; branch: string })
+    => Promise<import('../main/worktrees/ipc-worktrees').WorktreeCreateResult>;
+  worktreeSpent: (worktreePath: string) => Promise<import('../main/worktrees/ipc-worktrees').WorktreeSpentResult>;
+  worktreeRemove: (worktreePath: string, force?: boolean)
+    => Promise<import('../main/worktrees/ipc-worktrees').WorktreeRemoveResult>;
+  bootstrapDetect: (projectRoot: string) => Promise<import('../main/worktrees/bootstrap').BootstrapResolution>;
+  bootstrapSet: (projectRoot: string, command: string | null) => Promise<{ success: boolean }>;
+  bootstrapRun: (worktreePath: string, projectRoot: string)
+    => Promise<import('../main/worktrees/ipc-worktrees').BootstrapRunIpcResult>;
+  onWorktreeProgress: (callback: (payload: import('../main/worktrees/ipc-worktrees').WorktreeProgressEvent) => void) => () => void;
   /** Reveals a path in the OS file manager (a session's PTY log, today). */
   revealPath: (targetPath: string) => Promise<boolean>;
   approveDiff: (diffId: string) => Promise<IpcResult>;
