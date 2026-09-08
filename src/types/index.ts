@@ -374,6 +374,25 @@ export interface FluxorAPI {
   watchBacklogDir: (backlogDir: string, projectRoot: string) => Promise<{ success: boolean; error?: string }>;
   unwatchBacklogDir: (backlogDir: string) => Promise<{ success: boolean; error?: string }>;
   onBacklogChanged: (callback: (payload: { backlogDir: string; cards: import('./market').BacklogCard[] }) => void) => () => void;
+
+  // ── Agent sessions — PTY terminals (Cockpit F1) ────────────────
+  /**
+   * Spawns the vendor CLI for one session. Resolves to the live `PtyInfo`, or
+   * to a `{ error: 'vendor_not_found' }` VALUE when that CLI is not installed —
+   * the expected failure of this feature, so it is answered rather than thrown.
+   */
+  ptySpawn: (payload: import('../main/pty/ipc-pty').PtySpawnPayload)
+    => Promise<import('../main/pty/ipc-pty').PtySpawnResult>;
+  ptyWrite: (sessionId: string, data: string) => Promise<{ success: boolean }>;
+  ptyResize: (sessionId: string, cols: number, rows: number) => Promise<{ success: boolean }>;
+  ptyKill: (sessionId: string, signal?: string) => Promise<{ success: boolean }>;
+  /** The sessions with a LIVE process right now — how a rehydrated window learns it is dead. */
+  ptyList: () => Promise<import('../main/pty/pty-manager').PtyInfo[]>;
+  detectAgents: () => Promise<import('../main/pty/vendors').VendorAvailability[]>;
+  onPtyData: (callback: (payload: import('../main/pty/pty-manager').PtyDataEvent) => void) => () => void;
+  onPtyExit: (callback: (payload: import('../main/pty/pty-manager').PtyExitEvent) => void) => () => void;
+  /** Reveals a path in the OS file manager (a session's PTY log, today). */
+  revealPath: (targetPath: string) => Promise<boolean>;
   approveDiff: (diffId: string) => Promise<IpcResult>;
   rejectDiff: (diffId: string, feedback: string) => Promise<IpcResult>;
   shutdown: () => Promise<IpcResult>;

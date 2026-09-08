@@ -182,7 +182,8 @@ describe('Persisted dock migrations', () => {
     const actions = migrated.dockItems.map((item: { action: string }) => item.action);
 
     // v3→v4 inserts backlog + mental-draw-toggle; v15 removes the grid action;
-    // v16 inserts new-step + new-flow between mental-draw-toggle and marketplace.
+    // v16 inserts new-step + new-flow between mental-draw-toggle and marketplace;
+    // v21 inserts new-agent-session right after new-flow (Cockpit F1).
     expect(actions).toEqual([
       'new-chat',
       'file-explorer',
@@ -190,6 +191,7 @@ describe('Persisted dock migrations', () => {
       'mental-draw-toggle',
       'new-step',
       'new-flow',
+      'new-agent-session',
       'marketplace',
     ]);
     // v15 migration also clears the grids array

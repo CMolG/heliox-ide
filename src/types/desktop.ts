@@ -68,7 +68,7 @@ export interface DesktopWindow {
    * notification) before they ever reach this type, so no live window can
    * have this shape — see the migrate() comment for the full contract.
    */
-  type: 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena';
+  type: 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena' | 'agent-session';
   title: string;
   /** Lucide icon name (e.g. 'MessageSquare', 'Terminal') */
   iconName: string;
@@ -122,6 +122,65 @@ export interface DesktopWindow {
    * at send-time".
    */
   mentalAttachments?: MentalAttachment[];
+  /**
+   * For 'agent-session' windows — everything the Cockpit knows about the
+   * vendor CLI running in this window's terminal. Additive and optional, so a
+   * board persisted before F1 rehydrates untouched (no store migration).
+   *
+   * NOT to be confused with the vestigial `sessionId`/`cliProvider`/
+   * `childProjectPath` above: those are dead fields from the retired 'chat'
+   * type and stay dead — an agent session's identity lives in here.
+   */
+  agentSession?: AgentSessionMeta;
+}
+
+// ─── Agent sessions (Cockpit F1) ─────────────────────────────────
+
+/** The four vendor CLIs an agent session can host. Mirrors `src/main/pty/vendors.ts`. */
+export type AgentVendorId = 'claude' | 'codex' | 'opencode' | 'gemini';
+
+/**
+ * What the session window is doing, in a word. Rendered as TEXT, never as
+ * colour alone — a badge whose only channel is hue says nothing to a colour
+ * blind reader and nothing at all in a screenshot.
+ *
+ *  - 'starting' — spawned, no output yet
+ *  - 'running'  — producing output
+ *  - 'waiting'  — declared here for F4's attention signal (Stop/Notification
+ *                 hooks); nothing in F1 sets it yet
+ *  - 'ended'    — the process exited; `exitCode` says how
+ */
+export type AgentSessionAttention = 'starting' | 'running' | 'waiting' | 'ended';
+
+export interface AgentSessionMeta {
+  /** Correlates the window with its PTY in the main process, and names its log file. */
+  sessionId: string;
+  vendor: AgentVendorId;
+  /** Working directory the CLI was spawned in. */
+  cwd: string;
+  /** 'attached' = the main tree; 'worktree' = a dedicated git worktree (F2). */
+  mode: 'attached' | 'worktree';
+  // ── F2 (worktrees) fills these ──
+  worktreePath?: string;
+  branch?: string;
+  // ── F3 (card → session) fills these ──
+  cardId?: string;
+  backlogDir?: string;
+  cardFilename?: string;
+  /** First prompt handed to the agent (by argv or typed — see the vendor registry). */
+  prompt?: string;
+  launchedAt: number;
+  /**
+   * True once a PTY has been spawned for this window. It is the single guard
+   * against a double spawn under React 19 StrictMode's double mount and under
+   * HMR, and it is also why a REHYDRATED window (persisted, app restarted)
+   * reads `true` with no live PTY: the component reconciles that against
+   * `ptyList()` on mount and renders the ended state.
+   */
+  ptyStarted: boolean;
+  exitCode?: number | null;
+  logPath?: string;
+  attention: AgentSessionAttention;
 }
 
 export interface MentalAttachment {
@@ -171,7 +230,8 @@ export interface DockItem {
     | 'grid'
     | 'arena'
     | 'new-step'
-    | 'new-flow';
+    | 'new-flow'
+    | 'new-agent-session';
   /** For plugin items — the plugin ID to spawn */
   pluginId?: string;
 }

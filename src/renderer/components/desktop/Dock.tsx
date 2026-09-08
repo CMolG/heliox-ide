@@ -18,12 +18,15 @@
  * Architectural role:
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
-import React, { useCallback, useRef, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { Dock as DabaDock, type DockItemSpec, type DockPopoverControls } from '@cmolg/daba-engine';
 import { useDesktopStore } from '../../store/desktop-store';
 import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
-import type { AttachableType, MentalMode, MentalShape, MentalTool } from '@/types/desktop';
+import { theme } from '../../logic/theme';
+import type { AttachableType, AgentVendorId, MentalMode, MentalShape, MentalTool } from '@/types/desktop';
+import { openAgentSession } from '../../lib/agent-sessions';
+import type { VendorAvailability } from '@/main/pty/vendors';
 
 const ATTACHABLE_TYPE_COLORS: Record<string, string> = {
   flows: '#A78BFA',
@@ -43,6 +46,24 @@ const ATTACHABLE_VISIBLE_COUNT = 3;
 function getDockRect(): DOMRect | undefined {
   return document.querySelector('.fluxor-dock')?.getBoundingClientRect();
 }
+
+/** Vendor picker popover — self-contained so it adds no rules to index.css. */
+const AGENT_MENU: Record<string, React.CSSProperties> = {
+  root: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 190, padding: 4 },
+  title: {
+    padding: '2px 6px 4px', color: theme.textMuted, fontSize: 10,
+    letterSpacing: 0.4, textTransform: 'uppercase',
+  },
+  reason: { padding: '4px 6px', color: theme.textMuted, fontSize: 11, lineHeight: 1.5 },
+  item: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    padding: '5px 6px', borderRadius: 4, border: '1px solid transparent',
+    background: 'transparent', color: theme.textPrimary, fontSize: 12,
+    textAlign: 'left', cursor: 'pointer', width: '100%',
+  },
+  itemDisabled: { color: theme.textFaint, cursor: 'not-allowed' },
+  itemNote: { color: theme.textDim, fontSize: 10, whiteSpace: 'nowrap' },
+};
 
 export function Dock() {
   const dockItems = useDesktopStore(s => s.dockItems);
@@ -67,6 +88,12 @@ export function Dock() {
   // derived items no longer need it: the engine tracks its own hover state
   // internally and drives `renderTooltip` from it.
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
+  /**
+   * Which agent CLIs this machine actually has. `null` while the probe is in
+   * flight, so the picker can say "checking…" instead of claiming, for a
+   * frame, that nothing is installed.
+   */
+  const [vendors, setVendors] = useState<VendorAvailability[] | null>(null);
   const [attachableOffset, setAttachableOffset] = useState(0);
   const [attachDragItem, setAttachDragItem] = useState<{ id: string; category: string; name: string } | null>(null);
   const [attachDragPos, setAttachDragPos] = useState({ x: 0, y: 0 });
@@ -116,6 +143,24 @@ export function Dock() {
     requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('fluxor:focus-auto-chat')));
   }, [setHudWidgetVisible]);
 
+  // ─── Agent sessions (Cockpit F1) ─────────────────────────────────────
+  // Probed once on mount rather than per click: `which` x4 is cheap, and a
+  // picker that has to spawn four processes before it can paint is a picker
+  // that feels broken.
+  useEffect(() => {
+    let cancelled = false;
+    void window.fluxorAPI?.detectAgents?.()
+      .then((found) => { if (!cancelled) setVendors(found); })
+      .catch(() => { if (!cancelled) setVendors([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const launchAgentSession = useCallback((vendor: AgentVendorId) => {
+    if (!projectPath) return;
+    const winId = openAgentSession({ vendor, cwd: projectPath, mode: 'attached' });
+    requestAnimationFrame(() => navigateToWindow(winId));
+  }, [navigateToWindow, projectPath]);
+
   // ─── Item select (click) — unchanged 1:1 from the pre-engine handleClick,
   // just invoked via each item's `onSelect` instead of a DOM onClick. ─────
   const handleClick = (item: typeof dockItems[0]) => {
@@ -155,6 +200,12 @@ export function Dock() {
             });
             requestAnimationFrame(() => navigateToWindow(winId));
           }
+          break;
+        }
+        case 'new-agent-session': {
+          // The item's own popover (see `isAgentSession` below) is the picker:
+          // a vendor has to be chosen before anything can be launched, so the
+          // click opens it rather than guessing one.
           break;
         }
         case 'mental-draw-toggle': {
@@ -277,6 +328,7 @@ export function Dock() {
   // ─── Main dock item specs, handed to the engine's <Dock> ─────────────
   const items: DockItemSpec[] = dockItems.map(item => {
     const isMentalToggle = item.type === 'action' && item.action === 'mental-draw-toggle';
+    const isAgentSession = item.type === 'action' && item.action === 'new-agent-session';
     const isPluginOpen = item.type === 'plugin' && windows.some(w => w.pluginId === item.pluginId);
     const isToggleActive = isMentalToggle && mentalMode !== 'off';
     const showDot = isPluginOpen || isToggleActive;
@@ -296,8 +348,50 @@ export function Dock() {
       ariaCurrent: isPluginOpen ? true : undefined,
       // Every item is drag-out-spawnable except the mental toggle (today it
       // isn't draggable at all — see handleDragOut for what each spawns).
-      dragOutSpawn: !isMentalToggle,
+      dragOutSpawn: !isMentalToggle && !isAgentSession,
     };
+
+    if (isAgentSession) {
+      spec.popoverOpenOn = 'click';
+      spec.popoverClassName = 'dock-agent-menu';
+      spec.popoverAriaLabel = 'Agent vendors';
+      spec.popover = (controls: DockPopoverControls) => (
+        <div style={AGENT_MENU.root} role="none">
+          <div style={AGENT_MENU.title}>New agent session</div>
+          {!projectPath ? (
+            // A control that cannot work says WHY, in place. The alternative —
+            // a button that silently does nothing — reads as broken, not as
+            // "pending" (interface-psychology rule, point 1).
+            <div style={AGENT_MENU.reason} data-testid="agent-picker-no-project">
+              Open a project first — a session runs in the project&apos;s directory.
+            </div>
+          ) : vendors === null ? (
+            <div style={AGENT_MENU.reason}>Checking which agent CLIs are installed…</div>
+          ) : (
+            vendors.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                role="menuitem"
+                disabled={!v.available}
+                data-testid={`agent-vendor-${v.id}`}
+                title={v.available ? v.path : `${v.id} is not on your PATH`}
+                style={{ ...AGENT_MENU.item, ...(v.available ? null : AGENT_MENU.itemDisabled) }}
+                onClick={() => {
+                  if (!v.available) return;
+                  launchAgentSession(v.id);
+                  controls.close();
+                }}
+              >
+                <span>{v.label}</span>
+                {/* The reason is spelled out, not encoded in a greyed-out fill. */}
+                {!v.available && <span style={AGENT_MENU.itemNote}>not installed</span>}
+              </button>
+            ))
+          )}
+        </div>
+      );
+    }
 
     if (isMentalToggle) {
       // Sole source of aria-pressed, exactly as before.

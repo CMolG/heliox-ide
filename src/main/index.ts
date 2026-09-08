@@ -28,6 +28,7 @@ import { registerContextMapIpcHandlers } from './context-map';
 import { registerDevServerIpcHandlers } from './browser/dev-server-watcher';
 import { registerBacklogWatcherIpcHandlers } from './backlog/watcher';
 import { registerBrowserIpcHandlers } from './browser/browser-ipc';
+import { registerPtyIpcHandlers, disposePtySessions } from './pty/ipc-pty';
 import { initializeStorage, shutdownStorage } from './storage';
 import { settingsGet, settingsSet } from './storage/settings-store';
 import { browserController } from './browser/browser-controller';
@@ -188,6 +189,8 @@ function createWindow(): BrowserWindow {
   registerBacklogWatcherIpcHandlers(mainWindow);
   // M2 — native CDP browser control (no mainWindow needed — no push events)
   registerBrowserIpcHandlers();
+  // Cockpit F1 — agent-session terminals (node-pty), pushes pty-data/pty-exit
+  registerPtyIpcHandlers(mainWindow);
 
   return mainWindow;
 }
@@ -380,5 +383,8 @@ app.on('window-all-closed', () => {
 // the headless agent window so no orphaned Chrome processes linger.
 app.on('will-quit', () => {
   browserController.disposeAll();
+  // An agent CLI is a long-lived child process: without this, quitting the IDE
+  // leaves one `claude`/`codex` per open session running against the repo.
+  disposePtySessions();
   shutdownStorage();
 });

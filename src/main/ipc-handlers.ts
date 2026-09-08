@@ -10,7 +10,7 @@
  *  - Side effects remain in main process; renderer receives normalized events
  *  - Event names are mapped through `EVENT_TYPE_MAP` to keep UI contracts stable
  */
-import { ipcMain, BrowserWindow, dialog, app, Notification } from 'electron';
+import { ipcMain, BrowserWindow, dialog, app, Notification, shell } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 import { AgentManager } from './agent-manager';
 import { Flow, FileEntry, CliStatus, RunAgentParams, errMsg } from '../types';
@@ -842,6 +842,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('fluxor:rename-path', async (_event, oldPath: string, newPath: string): Promise<boolean> => {
     try {
       await rename(oldPath, newPath);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  // Reveal a file or directory in the OS file manager. Introduced by the
+  // agent-session window's "Log" control (Cockpit F1) — a session's PTY
+  // transcript lives outside the tree, under userData/sessions/, so a path
+  // string alone is useless to the user. Generic on purpose: it lives here
+  // with the other shell/fs handlers rather than in the pty module, because
+  // nothing about it is specific to terminals.
+  ipcMain.handle('fluxor:reveal-path', async (_event, targetPath: string): Promise<boolean> => {
+    try {
+      shell.showItemInFolder(targetPath);
       return true;
     } catch {
       return false;

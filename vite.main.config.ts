@@ -20,6 +20,11 @@ export default defineConfig({
         // required from node_modules with correct asset resolution, exactly like
         // the better-sqlite3 native module above.
         'jsdom',
+        // node-pty is the agent-session terminal's native addon (Cockpit F1).
+        // Same reason as better-sqlite3: bundling a `.node` binding is not a
+        // thing rollup can do, and node-pty also shells out to a sibling
+        // `spawn-helper` binary resolved __dirname-relative to its own package.
+        'node-pty',
       ],
     },
   },

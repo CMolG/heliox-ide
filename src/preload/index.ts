@@ -24,6 +24,9 @@ import type {
 } from '../types/ipc-events';
 import type { BrowserAction } from '../types/browser';
 import type { BacklogCard } from '../types/market';
+import type { PtySpawnPayload, PtySpawnResult } from '../main/pty/ipc-pty';
+import type { PtyInfo, PtyDataEvent, PtyExitEvent } from '../main/pty/pty-manager';
+import type { VendorAvailability } from '../main/pty/vendors';
 
 const fluxorAPI: FluxorAPI = {
   initBaselines: (flows: Flow[]) =>
@@ -226,6 +229,43 @@ const fluxorAPI: FluxorAPI = {
 
   readBacklogDir: (backlogDir: string) =>
     ipcRenderer.invoke('fluxor:read-backlog-dir', backlogDir),
+
+  // ── Agent sessions — PTY terminals (Cockpit F1) ───────────────
+  ptySpawn: (payload: PtySpawnPayload): Promise<PtySpawnResult> =>
+    ipcRenderer.invoke('fluxor:pty-spawn', payload),
+
+  ptyWrite: (sessionId: string, data: string) =>
+    ipcRenderer.invoke('fluxor:pty-write', sessionId, data),
+
+  ptyResize: (sessionId: string, cols: number, rows: number) =>
+    ipcRenderer.invoke('fluxor:pty-resize', sessionId, cols, rows),
+
+  ptyKill: (sessionId: string, signal?: string) =>
+    ipcRenderer.invoke('fluxor:pty-kill', sessionId, signal),
+
+  ptyList: (): Promise<PtyInfo[]> =>
+    ipcRenderer.invoke('fluxor:pty-list'),
+
+  detectAgents: (): Promise<VendorAvailability[]> =>
+    ipcRenderer.invoke('fluxor:agents-detect'),
+
+  // Both push channels return their own unsubscribe, same contract as
+  // onBacklogChanged above — a session window mounts and unmounts freely, and
+  // a listener that outlives its window would write into a dead terminal.
+  onPtyData: (callback: (payload: PtyDataEvent) => void) => {
+    const handler = (_event: IpcRendererEvent, data: PtyDataEvent) => callback(data);
+    ipcRenderer.on('fluxor:pty-data', handler);
+    return () => { ipcRenderer.removeListener('fluxor:pty-data', handler); };
+  },
+
+  onPtyExit: (callback: (payload: PtyExitEvent) => void) => {
+    const handler = (_event: IpcRendererEvent, data: PtyExitEvent) => callback(data);
+    ipcRenderer.on('fluxor:pty-exit', handler);
+    return () => { ipcRenderer.removeListener('fluxor:pty-exit', handler); };
+  },
+
+  revealPath: (targetPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('fluxor:reveal-path', targetPath),
 
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('fluxor:write-file', filePath, content),

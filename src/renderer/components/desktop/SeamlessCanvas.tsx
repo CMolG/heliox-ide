@@ -34,6 +34,7 @@ import { BacklogBentoWidget } from '@/renderer/components/atoms/widgets/backlog/
 import { PromptDevZoneApp } from '@/renderer/components/atoms/apps/PromptDevZoneApp';
 import { WebPreviewApp } from '@/renderer/components/atoms/apps/WebPreviewApp';
 import { ArenaDashboardApp } from '@/renderer/components/atoms/apps/ArenaDashboardApp';
+import { AgentSessionApp } from '@/renderer/components/atoms/apps/AgentSessionApp';
 import { WidgetLauncher } from './hud/WidgetLauncher';
 import { HudWidgetLayer } from './hud/HudWidgetLayer';
 import { DesktopCanvasBg } from './DesktopCanvasBg';
@@ -534,6 +535,10 @@ export function SeamlessCanvas() {
     if (win.type === 'web-preview' && win.url) return <WebPreviewApp windowId={win.id} url={win.url} />;
     // Arena leaderboard dashboard
     if (win.type === 'arena') return <ArenaDashboardApp windowId={win.id} />;
+    // Cockpit F1 — a vendor CLI in a real terminal. The window carries its own
+    // `agentSession` metadata; the app renders its "no session attached" state
+    // if it somehow does not.
+    if (win.type === 'agent-session') return <AgentSessionApp windowId={win.id} />;
     return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#525252', fontSize: 13 }}>Empty window</div>;
   };
 

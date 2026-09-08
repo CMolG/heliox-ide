@@ -134,7 +134,7 @@ const appdmgAvailable = existsSync('node_modules/appdmg/package.json');
  * the sources, nor in the E2E suite, which launches the dev bundle from the
  * repo root (see e2e/global-setup.ts) rather than the packaged binary.
  */
-const EXTERNAL_MODULES = ['better-sqlite3', 'jsdom', 'playwright'];
+const EXTERNAL_MODULES = ['better-sqlite3', 'jsdom', 'playwright', 'node-pty'];
 
 /**
  * Dependencies that only exist to compile/download a binary at INSTALL time and
@@ -259,7 +259,15 @@ const config: ForgeConfig = {
     asar: {
       // The native `.node` addon has to stay OUTSIDE the asar: `dlopen` cannot
       // load a shared library from inside an archive.
-      unpack: '**/*.node',
+      //
+      // `spawn-helper` is the same problem wearing no extension: node-pty
+      // `posix_spawn`s that sibling binary for every PTY it opens, and a file
+      // inside an asar has no real path to exec. Left packed, every agent
+      // session would die with `posix_spawnp failed.` in the packaged app only
+      // — invisible in dev and in the e2e suite, both of which run from the
+      // repo root. NOT yet exercised by a packaged run (see the Cockpit F1
+      // task entry).
+      unpack: '{**/*.node,**/node-pty/**/spawn-helper}',
     },
     ...macSigning,
   },

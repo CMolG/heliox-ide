@@ -22,7 +22,7 @@ import type {
   DesktopAttachable, AttachableType, DesktopGrid, MentalMode, MentalShape,
   MentalTool, MentalGraphNode, MentalGraphEdge, StepGraphNode, CanvasGraphNode, FrameGraphNode,
   PhaseGraphNode, PhaseNodeData,
-  StepNodeData, FrameNodeData, Board, BoardSnapshot,
+  StepNodeData, FrameNodeData, Board, BoardSnapshot, AgentSessionMeta,
 } from '@/types/desktop';
 import type { MarketInventory, MarketMod, MarketRole, BacklogCard } from '@/types/market';
 import type { TutorialScenarioId, TutorialProgress } from '@/types/tutorial';
@@ -125,6 +125,9 @@ const DEFAULT_DOCK_ITEMS: DockItem[] = [
   { id: 'dock-mental-draw-toggle', type: 'action', label: 'Enable Mental Authoring', iconName: 'PenTool', action: 'mental-draw-toggle' },
   { id: 'dock-new-step', type: 'action', label: 'New Step', iconName: 'SquarePlus', action: 'new-step' },
   { id: 'dock-new-flow', type: 'action', label: 'New Flow', iconName: 'Workflow', action: 'new-flow' },
+  // Cockpit F1 — opens a vendor picker, then an agent-session window on the
+  // open project. Disabled (with the reason) when no project is open.
+  { id: 'dock-new-agent-session', type: 'action', label: 'Agent Session', iconName: 'Terminal', action: 'new-agent-session' },
   { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
   ...(import.meta.env.DEV ? [
     { id: 'dock-prompt-dev-zone', type: 'action', label: 'Prompt Dev Zone', iconName: 'FlaskConical', action: 'prompt-dev-zone' } satisfies DockItem,
@@ -160,6 +163,10 @@ const BUILTIN_PLUGINS: Plugin[] = [
 // ─── Constants ───────────────────────────────────────────────────
 
 const DEFAULT_WINDOW_SIZE: WindowSize = { width: 480, height: 500 };
+// A terminal needs columns before it needs anything else: at the default 480px
+// an agent CLI's TUI wraps into unreadable ribbons. 720x480 fits ~90 columns at
+// the mono size the session app uses.
+const AGENT_SESSION_WINDOW_SIZE: WindowSize = { width: 720, height: 480 };
 const MIN_WINDOW_SIZE: WindowSize = { width: 320, height: 250 };
 const SNAP_THRESHOLD = 8; // px
 const DEFAULT_MENTAL_WIDTH = 220;
@@ -283,6 +290,12 @@ interface DesktopStore {
   nextZIndex: number;
   _updateWindow: (windowId: string, patch: Partial<DesktopWindow>) => void;
   addWindow: (type: DesktopWindow['type'], opts?: Partial<DesktopWindow>) => string;
+  /**
+   * Merges a patch into an 'agent-session' window's `agentSession` metadata.
+   * A no-op on a window that has none, so a late PTY event arriving after its
+   * window was closed cannot resurrect it as a half-formed session.
+   */
+  updateAgentSession: (windowId: string, patch: Partial<AgentSessionMeta>) => void;
   removeWindow: (windowId: string) => void;
   focusWindow: (windowId: string) => void;
   moveWindow: (windowId: string, position: WindowPosition) => void;
@@ -796,7 +809,7 @@ export const useDesktopStore = create<DesktopStore>()(
         const state = get();
         const id = `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const position = opts?.position ?? getViewportCenteredSpawnPosition(state.canvasPan, state.canvasZoom);
-        const size = opts?.size ?? DEFAULT_WINDOW_SIZE;
+        const size = opts?.size ?? (type === 'agent-session' ? AGENT_SESSION_WINDOW_SIZE : DEFAULT_WINDOW_SIZE);
         const zIndex = globalTopZ(state);
         // 'chat' branch retired alongside DesktopWindow['type'] (F0 decision 2,
         // 2026-07-10) — every remaining type falls through this ternary chain
@@ -809,6 +822,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'prompt-dev-zone' ? 'Prompt Dev Zone'
           : type === 'web-preview' ? (opts?.title ?? 'Preview')
           : type === 'arena' ? 'Fluxor Arena'
+          : type === 'agent-session' ? (opts?.title ?? 'Agent session')
           : 'Plugin';
         const defaultIcon = type === 'file-explorer' ? 'FileText'
           : type === 'backlog' ? 'KanbanSquare'
@@ -817,6 +831,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'prompt-dev-zone' ? 'FlaskConical'
           : type === 'web-preview' ? 'Globe'
           : type === 'arena' ? 'Trophy'
+          : type === 'agent-session' ? 'Terminal'
           : 'Blocks';
         const win: DesktopWindow = {
           id,
@@ -838,6 +853,8 @@ export const useDesktopStore = create<DesktopStore>()(
           url: opts?.url,
           boundPort: opts?.boundPort,
           agentLinked: opts?.agentLinked,
+          // Cockpit F1 — present only on 'agent-session' windows
+          agentSession: opts?.agentSession,
           createdAt: Date.now(),
         };
         set({
@@ -847,6 +864,14 @@ export const useDesktopStore = create<DesktopStore>()(
         });
         return id;
       },
+
+      updateAgentSession: (windowId, patch) => set((s) => ({
+        windows: s.windows.map((w) =>
+          w.id === windowId && w.agentSession
+            ? { ...w, agentSession: { ...w.agentSession, ...patch } }
+            : w,
+        ),
+      })),
 
       removeWindow: (windowId) => set((s) => {
         const conns = s.connections.filter(
@@ -2581,7 +2606,7 @@ export const useDesktopStore = create<DesktopStore>()(
     }),
     {
       name: 'fluxor-desktop',
-      version: 20,
+      version: 21,
       // Debounce localStorage writes: `partialize` below now includes
       // `boards[]` (the full mental graph of EVERY board, not just the one
       // on screen), so persist's default synchronous stringify-and-write on
@@ -2980,6 +3005,24 @@ export const useDesktopStore = create<DesktopStore>()(
           persisted.hudWidgets = persisted.hudWidgets.map((w: any) =>
             w?.type === 'text-to-flow' ? { ...w, type: 'auto-chat' } : w,
           );
+        }
+
+        // v20 → v21: inject the 'new-agent-session' dock action for existing
+        // users. The 'agent-session' WINDOW type needs no migration (a new
+        // type is purely additive and no persisted window can have it), but a
+        // dock item does: `dockItems` is persisted whole, so without this the
+        // Cockpit's only entry point would be invisible to everyone who has
+        // ever opened the app. Same ordered-insert pattern as v3→v4/v15→v16.
+        if (version < 21 && persisted && Array.isArray(persisted.dockItems)) {
+          const hasAgentSession = persisted.dockItems.some((item: { action?: string }) => item?.action === 'new-agent-session');
+          if (!hasAgentSession) {
+            const defaultItem = DEFAULT_DOCK_ITEMS.find((item) => item.action === 'new-agent-session');
+            if (defaultItem) {
+              const flowIdx = persisted.dockItems.findIndex((item: { action?: string }) => item?.action === 'new-flow');
+              const insertAt = flowIdx >= 0 ? flowIdx + 1 : persisted.dockItems.length;
+              persisted.dockItems.splice(insertAt, 0, { ...defaultItem });
+            }
+          }
         }
 
         return persisted ?? {};
