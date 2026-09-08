@@ -66,6 +66,7 @@ import {
   EngineProvider,
   useContextMenuState,
   useDabaCanvasContext,
+  type ContextMenuContext,
   type ContextMenuEntry,
   type ContextMenuProviders,
   type Point,
@@ -617,7 +618,7 @@ export function SeamlessCanvas() {
       testId: `canvas-ctx-${id}`,
       icon: <LucideIcon name={icon} size={14} style={{ opacity: 0.6, flexShrink: 0 }} />,
       dividerAfter,
-      onSelect: (ctx) => runAction(id, ctx.worldPos.x, ctx.worldPos.y),
+      onSelect: (ctx: ContextMenuContext) => runAction(id, ctx.worldPos.x, ctx.worldPos.y),
     });
 
     return {

@@ -43,6 +43,7 @@ const mockDesktop = vi.hoisted(() => ({
     position: { x: number; y: number };
     size?: { width: number; height: number };
   }>,
+  settings: { showInspector: false },
   setHudWidgetVisible: vi.fn(),
   moveHudWidget: vi.fn(),
   resizeHudWidget: vi.fn(),
@@ -70,6 +71,7 @@ vi.mock('../../atoms/widgets/NotificationsWidget', () => ({
 
 // ── Import after mocks ───────────────────────────────────────────────────────
 
+import { useFluxorStore } from '../../../store';
 import { HudWidgetLayer } from './HudWidgetLayer';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,6 +82,8 @@ function setWidgets(widgets: typeof mockDesktop.hudWidgets) {
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  useFluxorStore.setState({ showSidebar: false });
+  mockDesktop.settings = { showInspector: false };
   setWidgets([{ type: 'agent-sessions', visible: true, position: { x: 900, y: 80 } }]);
   mockDesktop.setHudWidgetVisible.mockClear();
   mockDesktop.moveHudWidget.mockClear();

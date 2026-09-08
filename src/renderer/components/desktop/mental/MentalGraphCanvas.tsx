@@ -378,19 +378,41 @@ function MentalGraphCanvasInner({ viewportChildren }: MentalGraphCanvasInnerProp
   // ─── Handle node position/dimension changes ─────────────────
 
   const onNodesChange: OnNodesChange = useCallback((changes: NodeChange[]) => {
+    const currentNodes = useDesktopStore.getState().mentalNodes;
     for (const change of changes) {
       if (change.type === 'position' && change.position) {
         const position = resolveMentalNodeDragPosition(change.position, change.dragging, engineStore.getState().snap.grid);
-        updateMentalNode(change.id, { position });
+        const existingNode = currentNodes.find((n) => n.id === change.id);
+        if (existingNode && (existingNode.position.x !== position.x || existingNode.position.y !== position.y)) {
+          updateMentalNode(change.id, { position });
+        }
       }
       if (change.type === 'dimensions' && change.dimensions) {
-        updateMentalNode(change.id, {
-          width: change.dimensions.width,
-          height: change.dimensions.height,
-        });
+        const existingNode = currentNodes.find((n) => n.id === change.id);
+        if (
+          existingNode &&
+          (Math.abs((existingNode.width ?? 0) - change.dimensions.width) > 0.5 ||
+           Math.abs((existingNode.height ?? 0) - change.dimensions.height) > 0.5)
+        ) {
+          updateMentalNode(change.id, {
+            width: change.dimensions.width,
+            height: change.dimensions.height,
+          });
+        }
       }
     }
   }, [updateMentalNode]);
+
+  const handleSelectionChange = useCallback(({ nodes }: { nodes: Node[] }) => {
+    const nextIds = nodes.map((n) => n.id);
+    const currentIds = useDesktopStore.getState().selectedMentalNodeIds;
+    if (
+      nextIds.length !== currentIds.length ||
+      !nextIds.every((id, idx) => id === currentIds[idx])
+    ) {
+      setSelectedMentalNodeIds(nextIds);
+    }
+  }, [setSelectedMentalNodeIds]);
 
   // ─── Node-to-node connection (drop on existing node) ─────────
 
@@ -485,7 +507,7 @@ function MentalGraphCanvasInner({ viewportChildren }: MentalGraphCanvasInnerProp
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
         onEdgeClick={(_, edge) => bringMentalToFront(edge.source)}
-        onSelectionChange={({ nodes }) => setSelectedMentalNodeIds(nodes.map(n => n.id))}
+        onSelectionChange={handleSelectionChange}
         selectionOnDrag
         multiSelectionKeyCode="Shift"
         connectionMode={ConnectionMode.Loose}

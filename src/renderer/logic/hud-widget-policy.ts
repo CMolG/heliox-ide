@@ -83,18 +83,107 @@ export function rectsOverlap(a: HudRect, b: HudRect): boolean {
  * docblock for why SAFE_ZONE is folded into `others` rather than passed as
  * the motor's `safeZone` option.
  */
+export const CANVAS_PADDING_X = 12;
+export const CANVAS_PADDING_Y = 12;
+export const TOP_BAR_HEIGHT = 48;
+export const BOTTOM_DOCK_RESERVE = 64;
+
+export function getDynamicAvoidanceRects(params: {
+  viewport: { width: number; height: number };
+  showSidebar?: boolean;
+  showInspector?: boolean;
+}): HudRect[] {
+  const { viewport, showSidebar, showInspector } = params;
+  const avoidance: HudRect[] = [];
+
+  // Left sidebar avoidance when expanded
+  if (showSidebar) {
+    avoidance.push({ x: 0, y: 0, width: 280 + CANVAS_PADDING_X, height: viewport.height });
+  }
+
+  // Right inspector panel avoidance when expanded vs collapsed safe-zone
+  if (showInspector) {
+    avoidance.push({
+      x: viewport.width - (300 + CANVAS_PADDING_X),
+      y: 0,
+      width: 300 + CANVAS_PADDING_X,
+      height: viewport.height,
+    });
+  } else {
+    avoidance.push(SAFE_ZONE(viewport));
+  }
+
+  // Bottom dock avoidance
+  avoidance.push({
+    x: 0,
+    y: viewport.height - BOTTOM_DOCK_RESERVE,
+    width: viewport.width,
+    height: BOTTOM_DOCK_RESERVE,
+  });
+
+  return avoidance;
+}
+
+/**
+ * Resolve where a HUD widget should actually land, dodging reserved panel areas,
+ * SAFE_ZONE, top/bottom margins, and every OTHER currently-visible widget.
+ */
 export function resolveHudWidgetPlacement(params: {
   desired: { x: number; y: number };
   size: { width: number; height: number };
   viewport: { width: number; height: number };
   others: HudRect[];
+  showSidebar?: boolean;
+  showInspector?: boolean;
 }): { x: number; y: number } {
-  const { desired, size, viewport, others } = params;
+  const { desired, size, viewport, others, showSidebar, showInspector } = params;
+  const panelAvoidance = getDynamicAvoidanceRects({ viewport, showSidebar, showInspector });
+
+  const allOthers = [...others, ...panelAvoidance];
+
+  // 1. Run motor's spiral search placement dodging safe zone + panels + other widgets
   const resolved = engineResolveHudWidgetPlacement({
     preferred: desired,
     size,
     viewport,
-    others: [...others, SAFE_ZONE(viewport)],
+    others: allOthers,
   });
-  return { x: resolved.x, y: resolved.y };
+
+  // 2. Enforce tight in-canvas boundary guardrails considering panels & top/bottom margins
+  const minX = showSidebar ? 280 + CANVAS_PADDING_X : CANVAS_PADDING_X;
+  const maxX = Math.max(
+    minX,
+    viewport.width - size.width - (showInspector ? 300 + CANVAS_PADDING_X : CANVAS_PADDING_X),
+  );
+  const minY = TOP_BAR_HEIGHT;
+  const maxY = Math.max(minY, viewport.height - size.height - BOTTOM_DOCK_RESERVE);
+
+  const finalX = Math.max(minX, Math.min(resolved.x, maxX));
+  const finalY = Math.max(minY, Math.min(resolved.y, maxY));
+
+  // 3. Fallback anti-overlap guardrail: if resolved position still overlaps any active neighbour,
+  // nudge it by HUD_GRID (24px) offsets until it clears or reaches viewport limit.
+  const candidateRect = { x: finalX, y: finalY, width: size.width, height: size.height };
+  const hasOverlap = allOthers.some((other) => rectsOverlap(candidateRect, other));
+
+  if (hasOverlap) {
+    let offset = HUD_GRID; // 24px step
+    while (offset <= HUD_GRID * 12) {
+      const altCandidates = [
+        { x: Math.max(minX, Math.min(finalX + offset, maxX)), y: Math.max(minY, Math.min(finalY + offset, maxY)) },
+        { x: Math.max(minX, Math.min(finalX - offset, maxX)), y: Math.max(minY, Math.min(finalY + offset, maxY)) },
+        { x: Math.max(minX, Math.min(finalX, maxX)), y: Math.max(minY, Math.min(finalY + offset, maxY)) },
+        { x: Math.max(minX, Math.min(finalX, maxX)), y: Math.max(minY, Math.min(finalY - offset, maxY)) },
+      ];
+      for (const alt of altCandidates) {
+        const testRect = { x: alt.x, y: alt.y, width: size.width, height: size.height };
+        if (!allOthers.some((other) => rectsOverlap(testRect, other))) {
+          return alt;
+        }
+      }
+      offset += HUD_GRID;
+    }
+  }
+
+  return { x: finalX, y: finalY };
 }

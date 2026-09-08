@@ -423,8 +423,8 @@ export function Dock() {
         className="fluxor-dock"
         testId="dock"
         ariaLabel="Application dock"
-        renderTooltip={(item) => <div className="dock-tooltip" role="tooltip">{item.label}</div>}
-        dragOutTrigger={({ clientY, dockRect }) => clientY < dockRect.top - 20}
+        renderTooltip={(item: DockItemSpec) => <div className="dock-tooltip" role="tooltip">{item.label}</div>}
+        dragOutTrigger={({ clientY, dockRect }: { clientY: number; dockRect: DOMRect }) => clientY < dockRect.top - 20}
       >
         {/* Pipe separator + attachable items (macOS-style, infinite scroll) */}
         {attachableItems.length > 0 && (

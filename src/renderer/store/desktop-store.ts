@@ -269,9 +269,9 @@ export interface HudWidget {
 
 // Default positions (fixed px, not window-relative so they work before mount)
 const DEFAULT_HUD_WIDGETS: HudWidget[] = [
-  { type: 'agent-sessions',   visible: false, position: { x: 900, y: 80 } },
-  { type: 'auto-chat',    visible: true,  position: { x: 360, y: 140 } },
-  { type: 'notifications',    visible: false, position: { x: 900, y: 360 } },
+  { type: 'auto-chat',        visible: true,  position: { x: 24, y: 72 } },
+  { type: 'agent-sessions',   visible: false, position: { x: 368, y: 72 } },
+  { type: 'notifications',    visible: false, position: { x: 728, y: 72 } },
 ];
 
 // ─── Store Interface ─────────────────────────────────────────────
@@ -2531,9 +2531,31 @@ export const useDesktopStore = create<DesktopStore>()(
         hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, visible } : w),
       })),
 
-      moveHudWidget: (type, position) => set((s) => ({
-        hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, position } : w),
-      })),
+      moveHudWidget: (type, position) => set((s) => {
+        const widget = s.hudWidgets.find(w => w.type === type);
+        const defaults: Record<string, { width: number; height: number }> = {
+          'agent-sessions': { width: 340, height: 240 },
+          'auto-chat': { width: 320, height: 220 },
+          'notifications': { width: 300, height: 280 },
+        };
+        const defaultSize = defaults[type] ?? { width: 320, height: 220 };
+        const wWidth = widget?.size?.width ?? defaultSize.width;
+        const wHeight = widget?.size?.height ?? defaultSize.height;
+        const vpWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+        const vpHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+
+        const maxX = Math.max(0, vpWidth - wWidth);
+        const maxY = Math.max(0, vpHeight - wHeight);
+
+        const clampedPosition = {
+          x: Math.max(0, Math.min(position.x, maxX)),
+          y: Math.max(0, Math.min(position.y, maxY)),
+        };
+
+        return {
+          hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, position: clampedPosition } : w),
+        };
+      }),
 
       // Clamp to a sane minimum (readable content) and the current viewport
       // (a widget can never be resized larger than the screen that hosts it).

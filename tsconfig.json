@@ -16,7 +16,9 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@cmolg/daba-engine": ["node_modules/@cmolg/daba-engine/dist/index.d.ts"],
+      "@cmolg/daba-engine/*": ["node_modules/@cmolg/daba-engine/dist/*"]
     }
   },
   "include": ["src/**/*"],
