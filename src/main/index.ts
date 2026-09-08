@@ -30,6 +30,7 @@ import { registerBacklogWatcherIpcHandlers } from './backlog/watcher';
 import { registerBrowserIpcHandlers } from './browser/browser-ipc';
 import { registerPtyIpcHandlers, disposePtySessions } from './pty/ipc-pty';
 import { registerWorktreeIpcHandlers } from './worktrees/ipc-worktrees';
+import { startHookEndpoint, stopHookEndpoint } from './cockpit/hook-endpoint';
 import { initializeStorage, shutdownStorage } from './storage';
 import { settingsGet, settingsSet } from './storage/settings-store';
 import { browserController } from './browser/browser-controller';
@@ -194,6 +195,16 @@ function createWindow(): BrowserWindow {
   registerPtyIpcHandlers(mainWindow);
   // Cockpit F2 — per-session git worktrees + bootstrap, pushes worktree-progress
   registerWorktreeIpcHandlers(mainWindow);
+  // Cockpit F4 — the loopback endpoint Claude Code's hooks POST to. Started
+  // AFTER the registrars because its push target is this window, and started
+  // here rather than at import time so a port that cannot be taken degrades a
+  // feature instead of failing the boot. Idempotent: macOS's `activate` calls
+  // createWindow() again once every window is closed, and the second call only
+  // re-points the push.
+  void startHookEndpoint((channel, payload) => {
+    if (mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(channel, payload);
+  });
 
   return mainWindow;
 }
@@ -389,5 +400,7 @@ app.on('will-quit', () => {
   // An agent CLI is a long-lived child process: without this, quitting the IDE
   // leaves one `claude`/`codex` per open session running against the repo.
   disposePtySessions();
+  // Closing the listener revokes every session token with it.
+  void stopHookEndpoint();
   shutdownStorage();
 });

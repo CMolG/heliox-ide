@@ -27,6 +27,7 @@ import type { BacklogCard } from '../types/market';
 import type { PtySpawnPayload, PtySpawnResult, LiveSessionEntry } from '../main/pty/ipc-pty';
 import type { PtyInfo, PtyDataEvent, PtyExitEvent } from '../main/pty/pty-manager';
 import type { VendorAvailability } from '../main/pty/vendors';
+import type { AgentHookEvent } from '../main/cockpit/hook-endpoint';
 import type {
   WorktreeListResult, WorktreeCreateResult, WorktreeSpentResult,
   WorktreeRemoveResult, BootstrapRunIpcResult, WorktreeProgressEvent,
@@ -270,6 +271,15 @@ const fluxorAPI: FluxorAPI = {
     const handler = (_event: IpcRendererEvent, data: PtyExitEvent) => callback(data);
     ipcRenderer.on('fluxor:pty-exit', handler);
     return () => { ipcRenderer.removeListener('fluxor:pty-exit', handler); };
+  },
+
+  // ── Attention hooks (Cockpit F4) ──────────────────────────────
+  // Every session's events arrive on ONE channel; each window filters by its
+  // own sessionId, exactly as it already does for pty-data.
+  onAgentHookEvent: (callback: (payload: AgentHookEvent) => void) => {
+    const handler = (_event: IpcRendererEvent, data: AgentHookEvent) => callback(data);
+    ipcRenderer.on('fluxor:agent-hook-event', handler);
+    return () => { ipcRenderer.removeListener('fluxor:agent-hook-event', handler); };
   },
 
   // ── Session worktrees + bootstrap (Cockpit F2) ────────────────

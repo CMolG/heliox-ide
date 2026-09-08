@@ -393,6 +393,13 @@ export interface FluxorAPI {
   detectAgents: () => Promise<import('../main/pty/vendors').VendorAvailability[]>;
   onPtyData: (callback: (payload: import('../main/pty/pty-manager').PtyDataEvent) => void) => () => void;
   onPtyExit: (callback: (payload: import('../main/pty/pty-manager').PtyExitEvent) => void) => () => void;
+  /**
+   * Cockpit F4 — one channel for every session's hook events; the window
+   * filters by sessionId. Present only when the loopback endpoint bound a
+   * port, which is why the caller must tolerate it being absent (an older
+   * preload bundle has no such channel).
+   */
+  onAgentHookEvent: (callback: (payload: import('../main/cockpit/hook-endpoint').AgentHookEvent) => void) => () => void;
 
   // ── Session worktrees + bootstrap (Cockpit F2) ─────────────────
   /**

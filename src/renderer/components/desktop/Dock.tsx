@@ -241,6 +241,18 @@ export function Dock() {
           refreshLiveSessions();
           break;
         }
+        case 'cockpit': {
+          // One click, whole desktop: the board on the left, the sessions
+          // tiled on the right, and the camera moved to show all of it. It
+          // opens the session list too, because a cockpit whose list you have
+          // to go and find separately is a preset that gets used once.
+          const store = useDesktopStore.getState();
+          const existingList = store.windows.find(w => w.type === 'session-list');
+          if (!existingList) store.addWindow('session-list', { title: 'Sessions' });
+          // After the window exists, so the layout reserves its strip.
+          useDesktopStore.getState().arrangeCockpit();
+          break;
+        }
         case 'mental-draw-toggle': {
           const current = useDesktopStore.getState().mentalMode;
           setMentalMode(current === 'off' ? 'square' : 'off');

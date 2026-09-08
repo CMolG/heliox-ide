@@ -68,7 +68,7 @@ export interface DesktopWindow {
    * notification) before they ever reach this type, so no live window can
    * have this shape — see the migrate() comment for the full contract.
    */
-  type: 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena' | 'agent-session';
+  type: 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena' | 'agent-session' | 'session-list';
   title: string;
   /** Lucide icon name (e.g. 'MessageSquare', 'Terminal') */
   iconName: string;
@@ -148,12 +148,27 @@ export type AgentVendorId = 'claude' | 'codex' | 'opencode' | 'gemini';
  *  - 'bootstrapping'— F2: installing dependencies inside that worktree
  *  - 'starting'     — spawned, no output yet
  *  - 'running'      — producing output
- *  - 'waiting'      — declared here for F4's attention signal (Stop/Notification
- *                     hooks); nothing sets it yet
+ *  - 'waiting'      — F4: it needs a person. `attentionReason` says what for,
+ *                     and the badge prints both ('waiting · permission')
  *  - 'ended'        — the process exited; `exitCode` says how
  */
 export type AgentSessionAttention =
   | 'preparing' | 'bootstrapping' | 'starting' | 'running' | 'waiting' | 'ended';
+
+/**
+ * WHY a session is waiting (Cockpit F4).
+ *
+ * It lives here rather than beside the transition table in
+ * `src/renderer/lib/attention-machine.ts` because it is persisted on the
+ * window, and a persisted shape belongs with the rest of the window's shape.
+ * The machine imports it; nothing in `src/types` imports the machine.
+ *
+ * 'silent' is the odd one out on purpose: the other four are things the CLI
+ * said, and it is the one the Cockpit GUESSED from a quiet terminal. A guess
+ * that reads like a report is worse than no badge.
+ */
+export type AgentSessionAttentionReason =
+  | 'permission' | 'idle' | 'input' | 'stopped' | 'silent';
 
 export interface AgentSessionMeta {
   /** Correlates the window with its PTY in the main process, and names its log file. */
@@ -219,6 +234,29 @@ export interface AgentSessionMeta {
   exitCode?: number | null;
   logPath?: string;
   attention: AgentSessionAttention;
+  // ── F4 (attention) fills these ──
+  /** Why it is waiting. Only ever set together with `attention: 'waiting'`. */
+  attentionReason?: AgentSessionAttentionReason;
+  /**
+   * True when this session was spawned with its hook listeners armed — today
+   * `claude`, and only while the loopback endpoint is up.
+   *
+   * It changes how the window reads its own terminal: with hooks answering,
+   * output is no longer taken as proof the agent is working (see
+   * `attention-machine.ts`). Persisted because a rehydrated window must not
+   * silently fall back to the heuristic on a session that has hooks.
+   */
+  hooksArmed?: boolean;
+  /**
+   * True once ANY hook event has actually arrived. Armed is a claim; this is
+   * the evidence, and the gap between the two is what the window's dim
+   * "hooks: no event yet" hint exists to show.
+   */
+  hookSeen?: boolean;
+  /** Where Claude Code is writing this session's own transcript, per its hooks. */
+  transcriptPath?: string;
+  /** The agent's last line (truncated) — the badge's tooltip, not a transcript. */
+  lastMessage?: string;
 }
 
 export interface MentalAttachment {
@@ -269,7 +307,8 @@ export interface DockItem {
     | 'arena'
     | 'new-step'
     | 'new-flow'
-    | 'new-agent-session';
+    | 'new-agent-session'
+    | 'cockpit';
   /** For plugin items — the plugin ID to spawn */
   pluginId?: string;
 }

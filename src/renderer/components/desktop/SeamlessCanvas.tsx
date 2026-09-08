@@ -35,6 +35,7 @@ import { PromptDevZoneApp } from '@/renderer/components/atoms/apps/PromptDevZone
 import { WebPreviewApp } from '@/renderer/components/atoms/apps/WebPreviewApp';
 import { ArenaDashboardApp } from '@/renderer/components/atoms/apps/ArenaDashboardApp';
 import { AgentSessionApp } from '@/renderer/components/atoms/apps/AgentSessionApp';
+import { SessionListApp } from '@/renderer/components/atoms/apps/SessionListApp';
 import { WidgetLauncher } from './hud/WidgetLauncher';
 import { HudWidgetLayer } from './hud/HudWidgetLayer';
 import { DesktopCanvasBg } from './DesktopCanvasBg';
@@ -539,6 +540,9 @@ export function SeamlessCanvas() {
     // `agentSession` metadata; the app renders its "no session attached" state
     // if it somehow does not.
     if (win.type === 'agent-session') return <AgentSessionApp windowId={win.id} />;
+    // Cockpit F4 — every open session on one line each. It reads the store,
+    // so it needs nothing from the window but its own id.
+    if (win.type === 'session-list') return <SessionListApp windowId={win.id} />;
     return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#525252', fontSize: 13 }}>Empty window</div>;
   };
 
@@ -609,6 +613,19 @@ export function SeamlessCanvas() {
           });
           break;
         }
+        case 'cockpit': {
+          // Deliberately NOT anchored at (cx, cy) like its siblings above: a
+          // preset is about the whole desktop, and starting it wherever the
+          // right-click happened would put half the arrangement off-screen.
+          store.arrangeCockpit();
+          break;
+        }
+        case 'session-list': {
+          const existing = store.windows.find((w) => w.type === 'session-list');
+          if (existing) store.navigateToWindow(existing.id);
+          else store.addWindow('session-list', { title: 'Sessions', position: { x: cx, y: cy }, size: { width: 520, height: 220 } });
+          break;
+        }
         case 'reset-view': {
           store.setCanvasPan({ x: 0, y: 0 });
           store.setCanvasZoom(1);
@@ -636,6 +653,8 @@ export function SeamlessCanvas() {
         ...(import.meta.env.DEV ? [makeEntry('prompt-dev-zone', 'Prompt Dev Zone', 'FlaskConical', true)] : []),
         makeEntry('arrange', 'Arrange Components', 'Grid2x2'),
         makeEntry('stack', 'Stack Components', 'Layers'),
+        makeEntry('cockpit', 'Arrange as Cockpit', 'LayoutGrid'),
+        makeEntry('session-list', 'Open Session List', 'ListChecks'),
         makeEntry('reset-view', 'Reset Canvas View', 'Maximize2'),
       ],
     };

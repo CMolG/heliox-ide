@@ -50,12 +50,18 @@ import {
   isGitFailed,
   planPromptTyping,
   removalReason,
+  stripTitlePrefix,
+  titlePrefixFor,
 } from '../../../lib/agent-sessions';
+import {
+  attentionNotice, nextAttention, type AttentionInput, type AttentionState,
+} from '../../../lib/attention-machine';
 import type {
   AttachedSessionExistsError, CwdNotFoundError, PtySpawnSuccess, VendorNotFoundError,
 } from '@/main/pty/ipc-pty';
 import type { SpentVerdict } from '@/main/worktrees/worktree-manager';
 import type { BacklogCard } from '@/types/market';
+import type { AgentSessionMeta } from '@/types/desktop';
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -63,6 +69,42 @@ import type { BacklogCard } from '@/types/market';
 const NARROW_HEADER_PX = 440;
 /** How long a two-step control stays armed before reverting. */
 const CONFIRM_END_MS = 4000;
+
+/**
+ * How often the silence heuristic is consulted (F4).
+ *
+ * Four times finer than `IDLE_MS`, so the badge flips within a few seconds of
+ * the threshold instead of up to a full period late. It costs one comparison:
+ * the tick reads a ref and, on a session that is not `running`, returns the
+ * same state object and writes nothing.
+ */
+const IDLE_TICK_MS = 5000;
+
+/**
+ * How long after the FIRST output a hooks-armed session may stay silent before
+ * the window says so.
+ *
+ * This is the difference between a feature that fails loudly and one that
+ * fails invisibly: with hooks armed and none arriving, the badge is running on
+ * a heuristic nobody asked for, and the only way to notice used to be that the
+ * badge never said `waiting` again.
+ */
+const HOOK_HINT_MS = 30_000;
+
+/**
+ * What a NEW session id knows about attention: nothing.
+ *
+ * The previous session's token was revoked when its process died, so its hooks
+ * cannot fire again — carrying `hookSeen: true` across a restart would make the
+ * window trust hooks that are not armed yet and stop reading its own terminal.
+ */
+const ATTENTION_RESET: Partial<AgentSessionMeta> = {
+  attentionReason: undefined,
+  hooksArmed: false,
+  hookSeen: false,
+  transcriptPath: undefined,
+  lastMessage: undefined,
+};
 
 /**
  * Sessions this renderer has ALREADY asked to spawn, by sessionId.
@@ -133,6 +175,62 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
   const promptArmedRef = useRef(false);
   const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** When the session last produced output or the person last pressed Enter. */
+  const lastActivityRef = useRef(Date.now());
+  /** Armed once, `HOOK_HINT_MS` after the first output. */
+  const hookHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [hookHintDue, setHookHintDue] = useState(false);
+
+  /**
+   * The ONE place a session's attention changes (F4).
+   *
+   * Everything that can move it — a hook event, output, Enter, the silence
+   * tick, the process exiting — goes through the same pure machine, which is
+   * what stops the CLI's own redraw from quietly overwriting "waiting for a
+   * permission you never saw". Reads the store rather than closing over
+   * `meta`, so a callback captured by a long-lived listener is never stale.
+   */
+  const applyAttention = useCallback((input: AttentionInput) => {
+    const state = useDesktopStore.getState();
+    const current = state.windows.find((w) => w.id === windowId)?.agentSession;
+    if (!current) return;
+    const before: AttentionState = {
+      attention: current.attention,
+      attentionReason: current.attentionReason,
+      hooksArmed: current.hooksArmed === true,
+      hookSeen: current.hookSeen === true,
+    };
+    const after = nextAttention(before, input);
+    // Identity, not deep equality: the machine returns its input untouched
+    // when nothing happened, which is what keeps the 5 s tick from writing to
+    // the store forever.
+    if (after === before) return;
+
+    state.updateAgentSession(windowId, {
+      attention: after.attention,
+      attentionReason: after.attentionReason,
+      hooksArmed: after.hooksArmed,
+      hookSeen: after.hookSeen,
+    });
+
+    // Once per WAITING STRETCH, never per event. A session that goes
+    // stopped → permission → input is one interruption from where a person
+    // sits; three notifications for it is how a channel gets muted.
+    if (before.attention !== 'waiting' && after.attention === 'waiting') {
+      const message = attentionNotice(current.cardId ?? current.vendor, after.attentionReason);
+      state.addNotification(message);
+      // The OS notification is the channel that reaches someone in another
+      // window, and the least important of the two: it must never throw.
+      void Promise.resolve(
+        window.fluxorAPI?.showNotification({ title: 'Needs you', body: message }),
+      ).catch(() => { /* an OS that refuses notifications is not an error */ });
+    }
+  }, [windowId]);
+
+  /** Read by the terminal effect, which must never re-run (it owns xterm). */
+  const applyAttentionRef = useRef(applyAttention);
+  applyAttentionRef.current = applyAttention;
+
   const armPromptTyping = useCallback(() => {
     if (promptArmedRef.current) return;
     if (!promptDeliveryRef.current || !sawFirstChunkRef.current) return;
@@ -185,6 +283,12 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
     const keyDisposable = term.onData((data) => {
       const id = sessionIdRef.current;
       if (id) void window.fluxorAPI?.ptyWrite(id, data);
+      // Enter is the person answering whatever was in the way — a permission,
+      // a question, a plan. `\r`, not `\n`: that is the byte a PTY carries.
+      if (data.includes('\r')) {
+        lastActivityRef.current = Date.now();
+        applyAttentionRef.current({ kind: 'user_enter' });
+      }
     });
 
     const applyFit = () => {
@@ -222,10 +326,17 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
     const offData = api.onPtyData(({ sessionId, data }) => {
       if (sessionId !== sessionIdRef.current) return;
       termRef.current?.write(data);
+      lastActivityRef.current = Date.now();
+      // Only the two states output can actually move (attention-machine.ts):
+      // asking the machine on every chunk of a busy TUI would be hundreds of
+      // store reads a second to be told nothing changed.
+      const now = metaRef.current?.attention;
+      if (now === 'starting' || now === 'waiting') applyAttention({ kind: 'output' });
       if (sawFirstChunkRef.current) return;
       sawFirstChunkRef.current = true;
-      // First output means the session is doing something; say so.
-      updateAgentSession(windowId, { attention: 'running' });
+      // The hint clock starts at the first output, not at spawn: before then
+      // there is nothing for a hook to have been late to.
+      hookHintTimerRef.current = setTimeout(() => setHookHintDue(true), HOOK_HINT_MS);
       armPromptTyping();
     });
 
@@ -234,7 +345,11 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
       // The id is dead and will never be spawned again — release it so the
       // guard set does not grow for the lifetime of the app.
       spawnRequested.delete(sessionId);
-      updateAgentSession(windowId, { attention: 'ended', exitCode });
+      // The code first, then the transition: `describeAttention` reads both,
+      // and a badge that says `ended` for one frame before saying
+      // `ended · exit 0` is a flicker nobody needs to see.
+      updateAgentSession(windowId, { exitCode });
+      applyAttention({ kind: 'exit' });
       // F3 — the terminal write-back. Decided by the card the agent left
       // behind, not by this exit code: a CLI exits 0 when a person types
       // `exit`, which says nothing about whether the work is done.
@@ -251,11 +366,56 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
 
     return () => {
       if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
+      if (hookHintTimerRef.current) clearTimeout(hookHintTimerRef.current);
       offData();
       offExit();
       offProgress();
     };
-  }, [windowId, updateAgentSession, armPromptTyping]);
+  }, [windowId, updateAgentSession, armPromptTyping, applyAttention]);
+
+  // ── F4: the CLI's own hooks, over the loopback endpoint ──
+  //
+  // One channel carries every session's events; this window takes only its
+  // own. `transcriptPath` and `lastMessage` are FACTS and are stored whatever
+  // the machine decides about the state — they are what a person opens next.
+  useEffect(() => {
+    const api = window.fluxorAPI;
+    if (!api?.onAgentHookEvent) return;
+    return api.onAgentHookEvent((event) => {
+      if (event.sessionId !== sessionIdRef.current) return;
+      const patch: Partial<AgentSessionMeta> = {};
+      if (event.transcriptPath) patch.transcriptPath = event.transcriptPath;
+      if (event.lastMessage) patch.lastMessage = event.lastMessage;
+      if (event.transcriptPath || event.lastMessage) updateAgentSession(windowId, patch);
+      applyAttention({ kind: 'hook', event });
+    });
+  }, [windowId, updateAgentSession, applyAttention]);
+
+  // ── F4: the silence heuristic, for the vendors that have no hooks ──
+  //
+  // Stopped at `ended` rather than left running harmlessly: a timer per closed
+  // session is the kind of thing that is free once and expensive at twenty.
+  const sessionLive = !!meta && meta.attention !== 'ended';
+  useEffect(() => {
+    if (!sessionLive) return;
+    const id = setInterval(() => {
+      applyAttention({ kind: 'idle_tick', silentMs: Date.now() - lastActivityRef.current });
+    }, IDLE_TICK_MS);
+    return () => clearInterval(id);
+  }, [sessionLive, applyAttention]);
+
+  // ── F4: the state, in the window TITLE ──
+  //
+  // So a canvas of terminals, the dock, and any window list can be read
+  // WITHOUT opening one of them. The prefix is stripped before being re-added,
+  // which is what stops "waiting · running · claude · ..." from accumulating.
+  const attention = meta?.attention;
+  const windowTitle = win?.title;
+  useEffect(() => {
+    if (!attention || windowTitle === undefined) return;
+    const next = `${titlePrefixFor(attention)}${stripTitlePrefix(windowTitle)}`;
+    if (next !== windowTitle) useDesktopStore.getState().updateWindowTitle(windowId, next);
+  }, [attention, windowTitle, windowId]);
 
   // ── Bootstrap, as its own step so "Retry" can re-run just this half ──
   const runBootstrapStep = useCallback(async (worktreePath: string) => {
@@ -409,7 +569,12 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
         const ok = result as PtySpawnSuccess;
         setFailure(null);
         promptDeliveryRef.current = ok.promptDelivery;
-        updateAgentSession(windowId, { ptyStarted: true, logPath: ok.logPath });
+        // `hooksArmed` changes how this window reads its own terminal, so it
+        // is persisted the moment the main process answers — only it knows
+        // whether the endpoint was up when the CLI was spawned.
+        updateAgentSession(windowId, {
+          ptyStarted: true, logPath: ok.logPath, hooksArmed: ok.hooksArmed === true,
+        });
         armPromptTyping();
         // F3 — `runState: running`, HERE and not at click time: this is the
         // first instant at which a process actually exists. In worktree mode
@@ -499,10 +664,14 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
   /** Shared by "Start again" and "Open in a worktree instead". */
   const resetPromptState = useCallback(() => {
     if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
+    if (hookHintTimerRef.current) clearTimeout(hookHintTimerRef.current);
     promptDeliveryRef.current = null;
     sawFirstChunkRef.current = false;
     promptArmedRef.current = false;
+    lastActivityRef.current = Date.now();
+    setHookHintDue(false);
   }, []);
+
 
   const handleEnd = useCallback(() => {
     if (!meta) return;
@@ -529,6 +698,7 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
     // worktree it already has is REUSED (same name, same branch): re-cutting
     // one per attempt would leave a checkout behind on every retry.
     updateAgentSession(windowId, {
+      ...ATTENTION_RESET,
       sessionId: crypto.randomUUID(),
       ptyStarted: false,
       attention: meta.mode === 'worktree' && !meta.worktreeReady ? 'preparing' : 'starting',
@@ -552,6 +722,7 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
     resetPromptState();
     const sessionId = crypto.randomUUID();
     updateAgentSession(windowId, {
+      ...ATTENTION_RESET,
       sessionId,
       mode: 'worktree',
       worktreeName: defaultWorktreeName(sessionId),
@@ -618,13 +789,19 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
     && typeof meta.bootstrapExitCode === 'number'
     && meta.bootstrapExitCode !== 0
     && !meta.worktreeReady;
-  const statusText = describeAttention(meta.attention, meta.exitCode, meta.bootstrapExitCode);
+  const statusText = describeAttention(
+    meta.attention, meta.exitCode, meta.bootstrapExitCode, meta.attentionReason,
+  );
   const statusTone =
     bootstrapFailed ? theme.warning
       : ended && meta.exitCode === 0 ? theme.success
       : ended ? theme.danger
+      : meta.attention === 'waiting' ? theme.warning
       : meta.attention === 'running' ? theme.accentBlue
       : theme.textMuted;
+  // Armed, output flowing, and half a minute without a single event: the
+  // endpoint is not answering, and the badge everyone is reading is a guess.
+  const hooksSilent = hookHintDue && meta.hooksArmed === true && meta.hookSeen !== true && !ended;
 
   const removeBlockedBy = verdict ? removalReason(verdict) : 'checking the worktree…';
 
@@ -640,9 +817,21 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
         <span
           data-testid="agent-session-status"
           style={{ ...S.badge, color: statusTone, borderColor: statusTone }}
+          title={meta.lastMessage ?? undefined}
         >
           {statusText}
         </span>
+
+        {hooksSilent && (
+          <span
+            style={S.hint}
+            data-testid="agent-session-hook-hint"
+            title={'This session was launched with its attention hooks armed, and none has arrived. '
+              + 'The badge is running on the output/idle heuristic instead.'}
+          >
+            hooks: no event yet
+          </span>
+        )}
 
         <div style={S.spacer} />
 
@@ -854,6 +1043,10 @@ const S: Record<string, React.CSSProperties> = {
   badge: {
     flexShrink: 0, padding: '1px 6px', borderRadius: 3,
     border: '1px solid', fontSize: 10, letterSpacing: 0.3,
+  },
+  hint: {
+    flexShrink: 0, color: theme.textFaint, fontSize: 10, letterSpacing: 0.3,
+    whiteSpace: 'nowrap',
   },
   spacer: { flex: 1, minWidth: 4 },
   btn: {

@@ -24,6 +24,7 @@ import { app, ipcMain, type BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PtyManager, type PtyInfo, type PtyDataEvent, type PtyExitEvent, type PtySpawnFn } from './pty-manager';
+import { hookEndpointPort, hookSettingsFor, issueHookToken, revokeHookToken } from '../cockpit/hook-endpoint';
 import { AGENT_VENDORS, detectVendors, resolveVendorBin, whichBin, type AgentVendor, type AgentVendorId } from './vendors';
 
 export interface PtySpawnPayload {
@@ -119,7 +120,19 @@ export interface VendorNotFoundError {
  * is exactly the drift this avoids (the renderer cannot import this module:
  * `vendors.ts` reaches `node:child_process`).
  */
-export type PtySpawnSuccess = PtyInfo & { promptDelivery: AgentVendor['promptDelivery'] };
+export type PtySpawnSuccess = PtyInfo & {
+  promptDelivery: AgentVendor['promptDelivery'];
+  /**
+   * F4 — whether this session was launched with its attention hooks armed.
+   *
+   * It is not cosmetic: it CHANGES how the window reads its own terminal. With
+   * hooks armed, output arriving after a `Stop` is the CLI redrawing itself,
+   * not the agent working, so the renderer must stop treating output as proof
+   * of life. Only the main process knows whether the endpoint was up at spawn
+   * time, so the answer travels back with the spawn.
+   */
+  hooksArmed: boolean;
+};
 
 export type PtySpawnResult =
   | PtySpawnSuccess
@@ -139,6 +152,50 @@ export function isVendorNotFound(r: PtySpawnResult): r is VendorNotFoundError {
  * responsibility to satisfy one rule is how a manager becomes a god object.
  * Kept across a re-registration of the handlers for the same reason.
  */
+/**
+ * A `crypto.randomUUID()`, and nothing else.
+ *
+ * `claude --session-id` requires a UUID and refuses anything else, so an id
+ * that is not one (a hand-written fixture id, a legacy window) must not be
+ * passed at all — the session still gets its hooks, it just runs under the
+ * CLI's own id. That costs nothing, because every event is attributed by the
+ * URL PATH the token is bound to, not by the payload's `session_id`.
+ */
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+/**
+ * The launch arguments that arm F4's attention hooks, for the one vendor that
+ * has them.
+ *
+ * `codex` and `opencode` run no hooks at all — their invariants rest on
+ * `AGENTS.md` text, as they do today — so they get no arguments and
+ * `hooksArmed: false`, and their windows fall back to the output/idle
+ * heuristic. Same answer when the endpoint could not bind: no hooks is a state
+ * the session survives, not a reason to refuse to start.
+ */
+export function hookArgsFor(
+  vendor: AgentVendorId,
+  sessionId: string,
+): { extraArgs: string[]; hooksArmed: boolean } {
+  if (vendor !== 'claude') return { extraArgs: [], hooksArmed: false };
+  const port = hookEndpointPort();
+  if (port === null) return { extraArgs: [], hooksArmed: false };
+  const token = issueHookToken(sessionId);
+  if (!token) return { extraArgs: [], hooksArmed: false };
+  return {
+    extraArgs: [
+      ...(isUuid(sessionId) ? ['--session-id', sessionId] : []),
+      // Inline, never a file: `--settings` MERGES with the project's own
+      // hooks, so `.claude/settings.json` keeps firing and nothing of ours is
+      // left on disk to go stale or leak the token.
+      '--settings', hookSettingsFor(sessionId, token, port),
+    ],
+    hooksArmed: true,
+  };
+}
+
 const liveSessions = new Map<string, LiveSessionEntry>();
 
 let manager: PtyManager | null = null;
@@ -188,6 +245,9 @@ export function registerPtyIpcHandlers(mainWindow: BrowserWindow): void {
     // live PROCESSES, and a closed window whose agent is still running must
     // keep holding the main tree.
     liveSessions.delete(e.sessionId);
+    // The session's hook secret dies with its process: a stale token is a URL
+    // that still authenticates for a window nobody is looking at.
+    revokeHookToken(e.sessionId);
     push('fluxor:pty-exit', e);
   });
 
@@ -223,7 +283,10 @@ export function registerPtyIpcHandlers(mainWindow: BrowserWindow): void {
     // `promptDelivery: 'type'` vendors have no initial-prompt flag, so their
     // prompt never enters argv — the renderer types it into the live PTY.
     const prompt = vendor.promptDelivery === 'arg' ? payload.prompt : undefined;
-    const args = vendor.buildArgs({ prompt });
+    const { extraArgs, hooksArmed } = hookArgsFor(payload.vendor, payload.sessionId);
+    // BEFORE the positional prompt: `claude [options] [prompt]` — an option
+    // placed after it is read as more prompt, silently.
+    const args = vendor.buildArgs({ prompt, extraArgs });
 
     const info = mgr.spawn({
       sessionId: payload.sessionId,
@@ -238,7 +301,7 @@ export function registerPtyIpcHandlers(mainWindow: BrowserWindow): void {
       projectRoot: payload.projectRoot,
       mode: payload.mode,
     });
-    return { ...info, promptDelivery: vendor.promptDelivery };
+    return { ...info, promptDelivery: vendor.promptDelivery, hooksArmed };
   });
 
   ipcMain.handle('fluxor:pty-write', async (_event, sessionId: string, data: string) => {

@@ -31,6 +31,7 @@ import { clampLoopIterations, LOOP_DEFAULT_MAX_ITERATIONS } from '@/types/harnes
 import type { AgenticStepType } from '@/types/harness';
 import type { ModelPolicy } from '@/types/ipc-events';
 import { wouldCreateStepCycle } from '../lib/harness-compiler';
+import { cockpitBounds, cockpitLayout, type Rect } from '../lib/cockpit-layout';
 
 
 // ─── Unified z-stack helper ───────────────────────────────────────
@@ -128,6 +129,9 @@ const DEFAULT_DOCK_ITEMS: DockItem[] = [
   // Cockpit F1 — opens a vendor picker, then an agent-session window on the
   // open project. Disabled (with the reason) when no project is open.
   { id: 'dock-new-agent-session', type: 'action', label: 'Agent Session', iconName: 'Terminal', action: 'new-agent-session' },
+  // Cockpit F4 — the preset. Next to the session it arranges, because that is
+  // the order they are used in: open sessions, then lay them out.
+  { id: 'dock-cockpit', type: 'action', label: 'Cockpit', iconName: 'LayoutGrid', action: 'cockpit' },
   { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
   ...(import.meta.env.DEV ? [
     { id: 'dock-prompt-dev-zone', type: 'action', label: 'Prompt Dev Zone', iconName: 'FlaskConical', action: 'prompt-dev-zone' } satisfies DockItem,
@@ -306,6 +310,16 @@ interface DesktopStore {
   addModifier: (windowId: string, modifierId: string) => boolean;
   removeModifier: (windowId: string, modifierId: string) => void;
   updateWindowTitle: (windowId: string, title: string) => void;
+  /**
+   * Cockpit F4 — lays the desktop out as a cockpit: the board on the left, the
+   * agent sessions tiled on the right, the session list above the board when
+   * one is open, and the camera moved so all of it is on screen.
+   *
+   * Opens a backlog window if there is none, because a cockpit with no board
+   * is just a terminal grid. It never opens a session and never closes
+   * anything: arranging is a view, not an edit.
+   */
+  arrangeCockpit: () => void;
 
   // ── M2 Agent surface linking ───────────────────────────────────
   /**
@@ -851,6 +865,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'web-preview' ? (opts?.title ?? 'Preview')
           : type === 'arena' ? 'Fluxor Arena'
           : type === 'agent-session' ? (opts?.title ?? 'Agent session')
+          : type === 'session-list' ? 'Sessions'
           : 'Plugin';
         const defaultIcon = type === 'file-explorer' ? 'FileText'
           : type === 'backlog' ? 'KanbanSquare'
@@ -860,6 +875,7 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'web-preview' ? 'Globe'
           : type === 'arena' ? 'Trophy'
           : type === 'agent-session' ? 'Terminal'
+          : type === 'session-list' ? 'ListChecks'
           : 'Blocks';
         const win: DesktopWindow = {
           id,
@@ -2542,6 +2558,67 @@ export const useDesktopStore = create<DesktopStore>()(
       activeTutorial: null,
       setActiveTutorial: (id) => set({ activeTutorial: id }),
 
+      /**
+       * The Cockpit preset. See the interface declaration for what it promises.
+       *
+       * Ordering the sessions by `launchedAt` rather than by store order is
+       * what makes this idempotent-looking to a person: arrange twice and the
+       * same session is in the same cell, so the grid is a place you learn
+       * rather than a shuffle you re-read (interface-psychology, point 8).
+       */
+      arrangeCockpit: () => {
+        const container = typeof document !== 'undefined'
+          ? document.querySelector('.mental-graph-canvas-container')
+          : null;
+        const viewW = container?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1440);
+        const viewH = container?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 900);
+
+        // A cockpit with no board is a terminal grid. If there is none, this
+        // is the one thing the preset creates.
+        const existingBacklog = get().windows.find((w) => w.type === 'backlog');
+        const backlogId = existingBacklog?.id ?? get().addWindow('backlog', { title: 'Backlog' });
+
+        const state = get();
+        const listWindow = state.windows.find((w) => w.type === 'session-list');
+        const sessions = state.windows
+          .filter((w) => w.type === 'agent-session' && w.state !== 'minimized')
+          .sort((a, b) =>
+            (a.agentSession?.launchedAt ?? a.createdAt) - (b.agentSession?.launchedAt ?? b.createdAt));
+
+        const layout = cockpitLayout(
+          { width: viewW, height: viewH },
+          sessions.length,
+          { hasSessionList: !!listWindow },
+        );
+
+        // 'normal' with the rect: a maximized or minimized window ignores its
+        // position, so placing one without restoring it would leave a hole in
+        // the grid that the arithmetic says is filled.
+        const place = (windowId: string, rect: Rect) => get()._updateWindow(windowId, {
+          position: { x: rect.x, y: rect.y },
+          size: { width: rect.width, height: rect.height },
+          state: 'normal',
+        });
+
+        place(backlogId, layout.backlog);
+        if (listWindow && layout.sessionList) place(listWindow.id, layout.sessionList);
+        sessions.forEach((win, i) => {
+          const rect = layout.sessions[i];
+          if (rect) place(win.id, rect);
+        });
+
+        // Fit, never magnify: an arrangement that already fits stays at 1:1
+        // rather than being blown up to fill the viewport.
+        const bounds = cockpitBounds(layout);
+        const zoom = Math.min(1, viewW / Math.max(1, bounds.width), viewH / Math.max(1, bounds.height));
+        get().setCanvasZoom(zoom);
+        const applied = get().canvasZoom;
+        get().setCanvasPan({
+          x: viewW / 2 - (bounds.x + bounds.width / 2) * applied,
+          y: viewH / 2 - (bounds.y + bounds.height / 2) * applied,
+        });
+      },
+
       navigateToWindow: (windowId) => {
         const state = get();
         const win = state.windows.find(w => w.id === windowId);
@@ -2645,7 +2722,7 @@ export const useDesktopStore = create<DesktopStore>()(
     }),
     {
       name: 'fluxor-desktop',
-      version: 22,
+      version: 23,
       // Debounce localStorage writes: `partialize` below now includes
       // `boards[]` (the full mental graph of EVERY board, not just the one
       // on screen), so persist's default synchronous stringify-and-write on
@@ -3075,6 +3152,26 @@ export const useDesktopStore = create<DesktopStore>()(
               ? { ...w, agentSession: { ...w.agentSession, projectRoot: w.agentSession.cwd ?? '' } }
               : w,
           );
+        }
+
+        // v22 → v23: inject the 'cockpit' dock action. Same reason v20→v21 had
+        // to inject 'new-agent-session': `dockItems` is persisted whole, so a
+        // new default entry is invisible to everyone who has ever opened the
+        // app. The 'session-list' WINDOW type needs nothing — a new type is
+        // additive and no persisted window can carry it — and neither do the
+        // new `AgentSessionMeta` attention fields, which are all optional and
+        // whose absence reads exactly right on a session that predates hooks
+        // (not armed, nothing seen).
+        if (version < 23 && persisted && Array.isArray(persisted.dockItems)) {
+          const hasCockpit = persisted.dockItems.some((item: { action?: string }) => item?.action === 'cockpit');
+          if (!hasCockpit) {
+            const defaultItem = DEFAULT_DOCK_ITEMS.find((item) => item.action === 'cockpit');
+            if (defaultItem) {
+              const sessionIdx = persisted.dockItems.findIndex((item: { action?: string }) => item?.action === 'new-agent-session');
+              const insertAt = sessionIdx >= 0 ? sessionIdx + 1 : persisted.dockItems.length;
+              persisted.dockItems.splice(insertAt, 0, { ...defaultItem });
+            }
+          }
         }
 
         return persisted ?? {};

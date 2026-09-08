@@ -183,7 +183,9 @@ describe('Persisted dock migrations', () => {
 
     // v3→v4 inserts backlog + mental-draw-toggle; v15 removes the grid action;
     // v16 inserts new-step + new-flow between mental-draw-toggle and marketplace;
-    // v21 inserts new-agent-session right after new-flow (Cockpit F1).
+    // v21 inserts new-agent-session right after new-flow (Cockpit F1);
+    // v23 inserts cockpit right after new-agent-session (Cockpit F4) — the
+    // preset sits next to the session it arranges.
     expect(actions).toEqual([
       'new-chat',
       'file-explorer',
@@ -192,6 +194,7 @@ describe('Persisted dock migrations', () => {
       'new-step',
       'new-flow',
       'new-agent-session',
+      'cockpit',
       'marketplace',
     ]);
     // v15 migration also clears the grids array

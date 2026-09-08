@@ -19,7 +19,9 @@
  *   testable without mounting a terminal.
  */
 import { useDesktopStore } from '../store/desktop-store';
-import type { AgentSessionAttention, AgentSessionMeta, AgentVendorId } from '@/types/desktop';
+import type {
+  AgentSessionAttention, AgentSessionAttentionReason, AgentSessionMeta, AgentVendorId,
+} from '@/types/desktop';
 import type { SpentVerdict } from '@/main/worktrees/worktree-manager';
 import type { GitFailed } from '@/main/worktrees/ipc-worktrees';
 
@@ -73,11 +75,16 @@ export function planPromptTyping(
  * `bootstrapExitCode` is separate from `exitCode` on purpose: a failed install
  * and a failed AGENT are different events with different ways out, and one
  * number carrying both would make the window unable to tell them apart.
+ *
+ * F4 added `reason`, and it is the same idea one level down: `waiting` alone
+ * does not tell anyone whether to go and approve something or go and read
+ * something, so the badge says which — `waiting · permission`.
  */
 export function describeAttention(
   attention: AgentSessionAttention,
   exitCode?: number | null,
   bootstrapExitCode?: number | null,
+  reason?: AgentSessionAttentionReason,
 ): string {
   if (attention === 'preparing') return 'preparing worktree';
   if (attention === 'bootstrapping') {
@@ -88,7 +95,36 @@ export function describeAttention(
   if (attention === 'ended') {
     return typeof exitCode === 'number' ? `ended · exit ${exitCode}` : 'ended';
   }
+  if (attention === 'waiting' && reason) return `waiting · ${reason}`;
   return attention;
+}
+
+/**
+ * The leading word of a session window's TITLE — `waiting · `, `running · `,
+ * `ended · `.
+ *
+ * It exists so a canvas full of terminals, or any list of window titles, can
+ * be read WITHOUT opening a single one. Empty for the setup states, which are
+ * transient and whose window nobody is scanning yet.
+ */
+export function titlePrefixFor(attention: AgentSessionAttention): string {
+  if (attention === 'waiting' || attention === 'running' || attention === 'ended') {
+    return `${attention} · `;
+  }
+  return '';
+}
+
+/** Strips whatever `titlePrefixFor` last added, so prefixes never stack. */
+export function stripTitlePrefix(title: string): string {
+  return title.replace(/^(?:waiting|running|ended) · /, '');
+}
+
+/** `7:04` — how long this session has been open. Minutes are not capped at 60. */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 // ─── Worktrees (F2) ──────────────────────────────────────────────
@@ -275,7 +311,7 @@ export function describeCardSession(
   meta: AgentSessionMeta,
   cardStatus: string,
 ): { label: string; tooltip: string } {
-  const base = describeAttention(meta.attention, meta.exitCode, meta.bootstrapExitCode);
+  const base = describeAttention(meta.attention, meta.exitCode, meta.bootstrapExitCode, meta.attentionReason);
   const mirrored = meta.mode === 'worktree' && meta.mirroredStatus && meta.mirroredStatus !== cardStatus
     ? ` · in worktree: ${meta.mirroredStatus}`
     : '';

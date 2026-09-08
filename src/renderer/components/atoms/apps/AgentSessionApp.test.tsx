@@ -14,6 +14,9 @@
  *      then the agent — and each step says so in words.
  *   7. F2: a failed bootstrap and a taken main tree are both dead ends WITH a
  *      way out, and the removal offer states why it is not available.
+ *   8. F4: a hook event moves the badge and raises ONE notification per waiting
+ *      stretch; output after a Stop does not undo it; and a session whose hooks
+ *      were armed but never fired says so instead of pretending.
  *
  * Mocking strategy:
  * - `@xterm/xterm` and `@xterm/addon-fit` are replaced with recorders. jsdom
@@ -83,18 +86,34 @@ interface Meta {
   baseRef?: string;
   worktreeReady?: boolean;
   bootstrapExitCode?: number | null;
+  attentionReason?: string;
+  hooksArmed?: boolean;
+  hookSeen?: boolean;
+  transcriptPath?: string;
+  lastMessage?: string;
+  cardId?: string;
 }
 
 const store = vi.hoisted(() => {
   const listeners = new Set<() => void>();
+  const notifications: string[] = [];
   const state = {
     windows: [] as Array<{ id: string; type: string; title?: string; agentSession?: Meta }>,
+    notifications,
     updateAgentSession: (windowId: string, patch: Partial<Meta>) => {
       state.windows = state.windows.map((w) =>
         w.id === windowId && w.agentSession
           ? { ...w, agentSession: { ...w.agentSession, ...patch } }
           : w,
       );
+      listeners.forEach((l) => l());
+    },
+    // F4 — the desktop notification centre and the window title. Both are real
+    // here, not spies: "once per waiting stretch" and "the prefix does not
+    // stack" are claims about accumulated state, and a spy cannot show either.
+    addNotification: (message: string) => { notifications.push(message); },
+    updateWindowTitle: (windowId: string, title: string) => {
+      state.windows = state.windows.map((w) => (w.id === windowId ? { ...w, title } : w));
       listeners.forEach((l) => l());
     },
   };
@@ -123,6 +142,10 @@ type DataCb = (p: { sessionId: string; data: string }) => void;
 type ExitCb = (p: { sessionId: string; exitCode: number; signal?: number }) => void;
 
 type ProgressCb = (p: { worktreePath: string; line: string }) => void;
+type HookCb = (p: {
+  sessionId: string; kind: string; hookEventName: string;
+  notificationType?: string; transcriptPath?: string; lastMessage?: string; at: number;
+}) => void;
 
 const CREATED = {
   path: '/repo/javadaba-web/.claude/worktrees/jdb-205',
@@ -137,6 +160,7 @@ function installApi(spawnResult: unknown) {
   const dataCbs: DataCb[] = [];
   const exitCbs: ExitCb[] = [];
   const progressCbs: ProgressCb[] = [];
+  const hookCbs: HookCb[] = [];
   const api = {
     // The payload parameter is declared so `mock.calls` types as a tuple.
     ptySpawn: vi.fn(async (_payload: { sessionId: string; prompt?: string; cwd?: string; mode?: string; projectRoot?: string }) => spawnResult),
@@ -155,6 +179,11 @@ function installApi(spawnResult: unknown) {
       progressCbs.push(cb);
       return () => { progressCbs.splice(progressCbs.indexOf(cb), 1); };
     },
+    onAgentHookEvent: (cb: HookCb) => {
+      hookCbs.push(cb);
+      return () => { hookCbs.splice(hookCbs.indexOf(cb), 1); };
+    },
+    showNotification: vi.fn(async (_opts: { title: string; body: string }) => undefined),
   };
   (window as unknown as { fluxorAPI: unknown }).fluxorAPI = api;
   return {
@@ -163,6 +192,7 @@ function installApi(spawnResult: unknown) {
     emitExit: (p: { sessionId: string; exitCode: number }) => act(() => { exitCbs.forEach((cb) => cb(p)); }),
     emitProgress: (p: { worktreePath: string; line: string }) =>
       act(() => { progressCbs.forEach((cb) => cb(p)); }),
+    emitHook: (p: Parameters<HookCb>[0]) => act(() => { hookCbs.forEach((cb) => cb(p)); }),
   };
 }
 
@@ -192,6 +222,7 @@ function seedWindow(overrides: Partial<Meta> = {}): string {
   store.state.windows = [{
     id: 'win-1',
     type: 'agent-session',
+    title: 'claude · javadaba-web',
     agentSession: {
       vendor: 'claude', cwd: '/repo/javadaba-web', projectRoot: '/repo/javadaba-web',
       mode: 'attached', launchedAt: 1, ptyStarted: false, attention: 'starting',
@@ -225,6 +256,7 @@ beforeEach(() => {
   globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
   xterm.instances.length = 0;
   store.listeners.clear();
+  store.state.notifications.length = 0;
   seedWindow();
 });
 
@@ -743,5 +775,222 @@ describe('the worktree a finished session leaves behind', () => {
     await settle();
 
     expect(screen.queryByTestId('agent-session-worktree')).not.toBeInTheDocument();
+  });
+});
+
+// ── F4: attention ────────────────────────────────────────────────────────────
+
+/** A hook event as the loopback endpoint normalises it. */
+function hookEvent(sessionId: string, patch: Record<string, unknown>) {
+  return { sessionId, kind: 'other', hookEventName: '', at: 0, ...patch } as Parameters<
+    ReturnType<typeof installApi>['emitHook']
+  >[0];
+}
+
+const ARMED_SPAWN = { ...OK_SPAWN, hooksArmed: true };
+
+describe('attention (F4)', () => {
+  it('records whether the main process armed this session\'s hooks', async () => {
+    installApi(ARMED_SPAWN);
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+    expect(store.state.windows[0].agentSession?.hooksArmed).toBe(true);
+  });
+
+  it('a Stop hook puts the badge in WORDS, with the reason', async () => {
+    const { emitHook } = installApi(ARMED_SPAWN);
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+
+    emitHook(hookEvent(currentSid(), { kind: 'stop', hookEventName: 'Stop', lastMessage: 'done for now' }));
+
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('waiting · stopped');
+    // The agent's last line is kept — it is the tooltip, not a transcript.
+    expect(store.state.windows[0].agentSession?.lastMessage).toBe('done for now');
+  });
+
+  it('a permission prompt says permission, not just waiting', async () => {
+    const { emitHook } = installApi(ARMED_SPAWN);
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+
+    emitHook(hookEvent(currentSid(), {
+      kind: 'notification', hookEventName: 'Notification', notificationType: 'permission_prompt',
+    }));
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('waiting · permission');
+  });
+
+  it('ignores another session\'s hook events entirely', async () => {
+    const { emitHook } = installApi(ARMED_SPAWN);
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+
+    emitHook(hookEvent('somebody-else', { kind: 'stop', hookEventName: 'Stop' }));
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('starting');
+    expect(store.state.notifications).toHaveLength(0);
+  });
+
+  it('notifies ONCE per waiting stretch, not once per event', async () => {
+    const { emitHook, api } = installApi(ARMED_SPAWN);
+    seedWindow({ cardId: 'JDB-205' });
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+
+    emitHook(hookEvent(currentSid(), { kind: 'stop', hookEventName: 'Stop' }));
+    expect(store.state.notifications).toEqual(['JDB-205 needs you: stopped']);
+    expect(api.showNotification).toHaveBeenCalledTimes(1);
+
+    // Still waiting, now for a different reason: the badge follows, the
+    // notification does not — this is one interruption, not two.
+    emitHook(hookEvent(currentSid(), {
+      kind: 'notification', hookEventName: 'Notification', notificationType: 'permission_prompt',
+    }));
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('waiting · permission');
+    expect(store.state.notifications).toHaveLength(1);
+    expect(api.showNotification).toHaveBeenCalledTimes(1);
+
+    // Back to work, then blocked again: THAT is a second interruption.
+    emitHook(hookEvent(currentSid(), { kind: 'user_prompt', hookEventName: 'UserPromptSubmit' }));
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('running');
+    emitHook(hookEvent(currentSid(), { kind: 'stop', hookEventName: 'Stop' }));
+    expect(store.state.notifications).toHaveLength(2);
+  });
+
+  it('names the vendor when there is no card behind the session', async () => {
+    const { emitHook } = installApi(ARMED_SPAWN);
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+    emitHook(hookEvent(currentSid(), { kind: 'stop', hookEventName: 'Stop' }));
+    expect(store.state.notifications).toEqual(['claude needs you: stopped']);
+  });
+
+  it('does NOT let output after a Stop read as the agent working again', async () => {
+    const { emitHook, emitData } = installApi(ARMED_SPAWN);
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+
+    emitData({ sessionId: currentSid(), data: 'banner\r\n' });
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('running');
+
+    emitHook(hookEvent(currentSid(), { kind: 'stop', hookEventName: 'Stop' }));
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('waiting · stopped');
+
+    // The CLI repaints its footer. It is not the agent.
+    emitData({ sessionId: currentSid(), data: '\x1b[2K> ' });
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('waiting · stopped');
+  });
+
+  it('an Enter typed into the terminal is the person answering', async () => {
+    const { emitHook } = installApi(ARMED_SPAWN);
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+
+    emitHook(hookEvent(currentSid(), {
+      kind: 'notification', hookEventName: 'Notification', notificationType: 'permission_prompt',
+    }));
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('waiting · permission');
+
+    act(() => { xterm.instances[0].dataHandlers.forEach((cb) => cb('\r')); });
+    expect(screen.getByTestId('agent-session-status')).toHaveTextContent('running');
+  });
+
+  it('carries the state into the window TITLE, without stacking prefixes', async () => {
+    const { emitHook, emitData } = installApi(ARMED_SPAWN);
+    await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+    await settle();
+
+    emitData({ sessionId: currentSid(), data: 'banner' });
+    expect(store.state.windows[0].title).toBe('running · claude · javadaba-web');
+
+    emitHook(hookEvent(currentSid(), { kind: 'stop', hookEventName: 'Stop' }));
+    expect(store.state.windows[0].title).toBe('waiting · claude · javadaba-web');
+  });
+
+  it('says so when hooks were armed and none ever arrived', async () => {
+    vi.useFakeTimers();
+    try {
+      const { emitData } = installApi(ARMED_SPAWN);
+      await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+      await settle();
+
+      emitData({ sessionId: currentSid(), data: 'banner' });
+      expect(screen.queryByTestId('agent-session-hook-hint')).toBeNull();
+
+      act(() => { vi.advanceTimersByTime(31_000); });
+      expect(screen.getByTestId('agent-session-hook-hint'))
+        .toHaveTextContent('hooks: no event yet');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops the hint the moment a hook actually arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      const { emitData, emitHook } = installApi(ARMED_SPAWN);
+      await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+      await settle();
+
+      emitData({ sessionId: currentSid(), data: 'banner' });
+      act(() => { vi.advanceTimersByTime(31_000); });
+      expect(screen.getByTestId('agent-session-hook-hint')).toBeInTheDocument();
+
+      emitHook(hookEvent(currentSid(), { kind: 'session_start', hookEventName: 'SessionStart' }));
+      expect(screen.queryByTestId('agent-session-hook-hint')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never shows the hint on a session that has no hooks to be late', async () => {
+    vi.useFakeTimers();
+    try {
+      const { emitData } = installApi(OK_SPAWN);
+      await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+      await settle();
+
+      emitData({ sessionId: currentSid(), data: 'banner' });
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(screen.queryByTestId('agent-session-hook-hint')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to the silence heuristic when there are no hooks', async () => {
+    vi.useFakeTimers();
+    try {
+      const { emitData } = installApi(OK_SPAWN);
+      await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+      await settle();
+
+      emitData({ sessionId: currentSid(), data: 'thinking…' });
+      expect(screen.getByTestId('agent-session-status')).toHaveTextContent('running');
+
+      act(() => { vi.advanceTimersByTime(25_000); });
+      expect(screen.getByTestId('agent-session-status')).toHaveTextContent('waiting · silent');
+
+      // …and it lifts on its own the moment anything is printed again.
+      emitData({ sessionId: currentSid(), data: 'more' });
+      expect(screen.getByTestId('agent-session-status')).toHaveTextContent('running');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves an armed-but-silent session on the heuristic rather than freezing it', async () => {
+    vi.useFakeTimers();
+    try {
+      const { emitData } = installApi(ARMED_SPAWN);
+      await act(async () => { render(<AgentSessionApp windowId="win-1" />); });
+      await settle();
+
+      emitData({ sessionId: currentSid(), data: 'thinking…' });
+      act(() => { vi.advanceTimersByTime(25_000); });
+      // A broken endpoint degrades to F1's behaviour; it does not go quiet.
+      expect(screen.getByTestId('agent-session-status')).toHaveTextContent('waiting · silent');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
