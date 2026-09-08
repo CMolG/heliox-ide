@@ -11,9 +11,12 @@
  *
  * Boundaries:
  * - Owns: the terminal, its geometry, the spawn-once and prepare-once guards,
- *   the header strip, and every control's enabled/disabled reason.
+ *   the header strip, every control's enabled/disabled reason, and WHEN the
+ *   card's `runState` is written (F3) — at the two moments only this file
+ *   knows: the PTY actually came up, and the PTY actually exited.
  * - Does NOT own: which binary runs (main's vendor registry), git argv
- *   (src/main/worktrees/*), backlog cards (F3), attention signals (F4).
+ *   (src/main/worktrees/*), WHAT gets written to a card (card-writeback.ts),
+ *   or attention signals (F4).
  *
  * Architectural role:
  * - UI boundary module in the renderer. Everything privileged happens over
@@ -34,6 +37,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useDesktopStore } from '../../../store/desktop-store';
+import { cardFileFor, markCardRunning, settleCard } from '../../../lib/card-writeback';
+import { announceHumanEvents, diffForHumanEvents } from '../../../lib/human-cards';
 import { theme } from '../../../logic/theme';
 import { LucideIcon } from '../../desktop/LucideIcon';
 import {
@@ -50,6 +55,7 @@ import type {
   AttachedSessionExistsError, CwdNotFoundError, PtySpawnSuccess, VendorNotFoundError,
 } from '@/main/pty/ipc-pty';
 import type { SpentVerdict } from '@/main/worktrees/worktree-manager';
+import type { BacklogCard } from '@/types/market';
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -229,6 +235,11 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
       // guard set does not grow for the lifetime of the app.
       spawnRequested.delete(sessionId);
       updateAgentSession(windowId, { attention: 'ended', exitCode });
+      // F3 — the terminal write-back. Decided by the card the agent left
+      // behind, not by this exit code: a CLI exits 0 when a person types
+      // `exit`, which says nothing about whether the work is done.
+      const current = metaRef.current;
+      if (current?.cardId) void settleCard(current, exitCode);
     });
 
     // The bootstrap's own output, filtered by worktree: two sessions installing
@@ -400,12 +411,72 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
         promptDeliveryRef.current = ok.promptDelivery;
         updateAgentSession(windowId, { ptyStarted: true, logPath: ok.logPath });
         armPromptTyping();
+        // F3 — `runState: running`, HERE and not at click time: this is the
+        // first instant at which a process actually exists. In worktree mode
+        // the effect above already gated on `worktreeReady`, so the path
+        // card-writeback resolves is the worktree's own copy of the card.
+        if (meta.cardId) void markCardRunning({ ...meta, logPath: ok.logPath, ptyStarted: true });
       })
       .catch((err: unknown) => {
         setFailure({ kind: 'spawn_failed', message: err instanceof Error ? err.message : String(err) });
         updateAgentSession(windowId, { attention: 'ended', exitCode: null });
       });
   }, [windowId, meta, updateAgentSession, armPromptTyping]);
+
+  // ── F3: mirror the card the agent is editing INSIDE its worktree ──
+  //
+  // In worktree mode the Cockpit does not write the main-tree card at all, so
+  // the board has no way of knowing the agent already moved its card to
+  // `review` on a branch. This watcher is that way: it reads the worktree's own
+  // `.backlog`, mirrors the launched card's status onto the session (which the
+  // pile renders as `in worktree: review`), and raises a notification for any
+  // HUMAN card the session writes — the exact moment a person is needed, and
+  // the one event a worktree would otherwise swallow until the PR.
+  //
+  // Deliberately only those two uses. It is a watcher on a checkout, not a
+  // second board: merging its cards into `backlogCards` would replace the
+  // project's backlog with one branch's view of it.
+  const watchedWorktreeBacklog = meta && meta.mode === 'worktree' && meta.worktreePath
+    && meta.cardId && meta.attention !== 'ended'
+    ? cardFileFor(meta)?.dir
+    : undefined;
+  const watchedWorktreeRoot = meta?.worktreePath;
+  const watchedCardFilename = meta?.cardFilename;
+
+  useEffect(() => {
+    const api = window.fluxorAPI;
+    if (!api || !watchedWorktreeBacklog || !watchedWorktreeRoot) return;
+
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    // Seeded before the first push, so a HUMAN card written seconds later is a
+    // comparison against something rather than the silent "initial load" case.
+    let previous: BacklogCard[] | null = null;
+
+    void (async () => {
+      previous = await api.readBacklogDir(watchedWorktreeBacklog)
+        .then((cards) => cards as BacklogCard[])
+        .catch(() => null);
+      await api.watchBacklogDir(watchedWorktreeBacklog, watchedWorktreeRoot);
+      if (cancelled) return;
+      unsubscribe = api.onBacklogChanged(({ backlogDir, cards }) => {
+        if (backlogDir !== watchedWorktreeBacklog) return;
+        const fresh = cards as BacklogCard[];
+        // New HUMAN cards only: a card CLOSED on a branch has not reached
+        // anyone's board yet, so celebrating it here would be premature.
+        announceHumanEvents({ newHuman: diffForHumanEvents(previous, fresh).newHuman, closedHuman: [] }, fresh);
+        previous = fresh;
+        const mine = fresh.find((c) => c.filename === watchedCardFilename);
+        if (mine) updateAgentSession(windowId, { mirroredStatus: mine.status });
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+      void api.unwatchBacklogDir(watchedWorktreeBacklog);
+    };
+  }, [watchedWorktreeBacklog, watchedWorktreeRoot, watchedCardFilename, windowId, updateAgentSession]);
 
   // ── Once ended, is there anything left in that worktree to lose? ──
   const endedWorktreePath = meta?.attention === 'ended' && meta.mode === 'worktree'

@@ -7,10 +7,15 @@
 # vendor's own behaviour.
 #
 # Protocol:
+#   prints ARGS: <argv> on start — the launch prompt reaches a vendor through
+#     argv (vendors.ts: `claude [options] [prompt]`), and printing it is the
+#     only way an e2e can assert the prompt actually arrived rather than
+#     assuming the spawn carried it
 #   prints FAKE AGENT READY on start
 #   echoes each stdin line back prefixed with "echo:"
 #   the line `exit` ends it with code 0
 #   the line `fail` ends it with code 3
+echo "ARGS: $*"
 echo "FAKE AGENT READY"
 while IFS= read -r line; do
   # A PTY delivers Enter as CR; strip it so the comparisons below match.

@@ -44,7 +44,8 @@ import { StatusShape } from './StatusShape';
 import { BacklogModalSidebar } from './BacklogModalSidebar';
 import { formatCardDate, runStateOverlayIcon } from './BacklogCardItem';
 import { LaunchMenu } from './LaunchMenu';
-import { launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
+import { isHumanCard } from '@/renderer/lib/human-cards';
+import { launchAgentSession, launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
 import type { BacklogCard, BacklogComment } from '@/types/market';
 import type { CanvasGraphNode, FrameGraphNode } from '@/types/desktop';
 
@@ -64,6 +65,7 @@ export function BacklogCardModal() {
   const backlogCards = useDesktopStore((s) => s.backlogCards);
   const setBacklogCards = useDesktopStore((s) => s.setBacklogCards);
   const activeBacklogDir = useDesktopStore((s) => s.activeBacklogDir);
+  const activeBacklogProject = useDesktopStore((s) => s.activeBacklogProject);
   // F3 launchers — see launchActions.ts for the actual orchestration (zero
   // new materializer: runFrameWithContext / assemblePipeline+
   // insertPipelineAssembly+runFromStep, both already-existing seams).
@@ -185,9 +187,25 @@ export function BacklogCardModal() {
               variant="full"
               card={modalCard}
               frames={frames}
+              // A HUMAN card carries no launcher HERE either: the pile and the
+              // modal are two views of one card, and an affordance that exists
+              // in one of them is an affordance that exists.
+              launchable={!isHumanCard(modalCard)}
+              projectRoot={activeBacklogProject?.projectPath ?? null}
+              isExternalBacklog={activeBacklogProject?.isExternal ?? false}
               onLaunchExisting={(frameId) => { void launchExistingFlow(modalCard, frameId, activeBacklogDir); }}
               onLaunchAutoflow={() => { void launchAutoflow(modalCard, activeBacklogDir); }}
               onLaunchEpic={epic ? () => { void launchEpicFlow(epic, activeBacklogDir); } : undefined}
+              onLaunchAgent={activeBacklogDir
+                ? (vendor, mode) => {
+                  launchAgentSession(modalCard, activeBacklogDir, {
+                    vendor,
+                    mode,
+                    isExternal: activeBacklogProject?.isExternal ?? false,
+                    projectRoot: activeBacklogProject?.projectPath,
+                  });
+                }
+                : undefined}
             />
             {isEditing ? (
               <button onClick={handleSaveEdit} aria-label="Save edit" className="p-3 hover:bg-emerald-100 text-emerald-700 rounded-full transition-colors border border-emerald-300">

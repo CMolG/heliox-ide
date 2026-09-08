@@ -120,3 +120,85 @@ describe('BacklogPile', () => {
     expect(useDesktopStore.getState().canvasModalCard?.filename).toBe('a.md');
   });
 });
+
+describe('BacklogPile — the "Needs you" lane (Cockpit F3)', () => {
+  function human(overrides: Partial<BacklogCard> = {}) {
+    return makeCard({
+      filename: 'HUMAN-001-needs-you.md', taskId: 'HUMAN-001', epic: 'HUMAN',
+      tags: ['human'], title: 'Set a secret on the server', ...overrides,
+    });
+  }
+
+  it('is absent entirely when there is no HUMAN card', () => {
+    useDesktopStore.setState({ backlogCards: [makeCard({ filename: 'a.md', taskId: 'JDB-001' })] });
+    render(<BacklogPile searchTerm="" activeStatuses={ALL_STATUSES} backlogDir="/proj/.backlog" />);
+    expect(screen.queryByTestId('needs-you-lane')).not.toBeInTheDocument();
+  });
+
+  it('pins HUMAN cards above the pile and counts them in its header', () => {
+    useDesktopStore.setState({
+      backlogCards: [
+        makeCard({ filename: 'a.md', taskId: 'JDB-001', title: 'Ordinary work' }),
+        human(),
+      ],
+    });
+    render(<BacklogPile searchTerm="" activeStatuses={ALL_STATUSES} backlogDir="/proj/.backlog" />);
+    const lane = screen.getByTestId('needs-you-lane');
+    expect(lane).toHaveTextContent('Needs you · 1');
+    expect(lane).toHaveTextContent('Set a secret on the server');
+  });
+
+  it('takes them OUT of the flat list — a card is in one place, not two', () => {
+    useDesktopStore.setState({
+      backlogCards: [makeCard({ filename: 'a.md', taskId: 'JDB-001', title: 'Ordinary work' }), human()],
+    });
+    render(<BacklogPile searchTerm="" activeStatuses={ALL_STATUSES} backlogDir="/proj/.backlog" />);
+    const lane = screen.getByTestId('needs-you-lane');
+    const outside = screen.getAllByTestId('backlog-card').filter((c) => !lane.contains(c));
+    expect(outside).toHaveLength(1);
+    expect(outside[0]).toHaveTextContent('Ordinary work');
+  });
+
+  it('renders no launcher on a lane card — an agent cannot start it', () => {
+    useDesktopStore.setState({ backlogCards: [human()] });
+    render(<BacklogPile searchTerm="" activeStatuses={ALL_STATUSES} backlogDir="/proj/.backlog" />);
+    expect(screen.getByTestId('needs-you-lane').querySelector('[data-testid="launch-menu-trigger"]')).toBeNull();
+  });
+
+  it('says what each lane card unblocks, from BOTH directions of related[]', () => {
+    useDesktopStore.setState({
+      backlogCards: [
+        human({ related: ['JDB-090'] }),
+        makeCard({ filename: 'a.md', taskId: 'JDB-090' }),
+        makeCard({ filename: 'b.md', taskId: 'JDB-191', related: ['HUMAN-001'] }),
+      ],
+    });
+    render(<BacklogPile searchTerm="" activeStatuses={ALL_STATUSES} backlogDir="/proj/.backlog" />);
+    expect(screen.getByTestId('needs-you-unblocks')).toHaveTextContent('unblocks: JDB-090, JDB-191');
+  });
+
+  it('ignores the status filters — being needed by a person is not a status', () => {
+    useDesktopStore.setState({ backlogCards: [human({ status: 'todo' })] });
+    render(<BacklogPile searchTerm="" activeStatuses={['deploy']} backlogDir="/proj/.backlog" />);
+    expect(screen.getByTestId('needs-you-lane')).toHaveTextContent('Set a secret on the server');
+  });
+
+  it('respects the search box — a search that cannot find what it shows is a bug', () => {
+    useDesktopStore.setState({ backlogCards: [human()] });
+    render(<BacklogPile searchTerm="something else" activeStatuses={ALL_STATUSES} backlogDir="/proj/.backlog" />);
+    expect(screen.queryByTestId('needs-you-lane')).not.toBeInTheDocument();
+  });
+
+  it('drops a HUMAN card that reached deploy — it is done, and it needs nobody', () => {
+    useDesktopStore.setState({ backlogCards: [human({ status: 'deploy' })] });
+    render(<BacklogPile searchTerm="" activeStatuses={ALL_STATUSES} backlogDir="/proj/.backlog" />);
+    expect(screen.queryByTestId('needs-you-lane')).not.toBeInTheDocument();
+  });
+
+  it('opens the modal on a lane card, like any other card', () => {
+    useDesktopStore.setState({ backlogCards: [human()] });
+    render(<BacklogPile searchTerm="" activeStatuses={ALL_STATUSES} backlogDir="/proj/.backlog" />);
+    fireEvent.click(screen.getByTestId('backlog-card'));
+    expect(useDesktopStore.getState().canvasModalCard?.filename).toBe('HUMAN-001-needs-you.md');
+  });
+});

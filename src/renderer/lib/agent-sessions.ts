@@ -165,6 +165,11 @@ export interface OpenAgentSessionOptions {
   /** Worktree mode only. Defaults to `session-<8 hex>` / `cockpit/session-<8 hex>`. */
   worktreeName?: string;
   branch?: string;
+  // ── F3: the card that opened this session, if any ──
+  cardId?: string;
+  backlogDir?: string;
+  cardFilename?: string;
+  isExternalBacklog?: boolean;
 }
 
 /**
@@ -194,6 +199,10 @@ export function openAgentSession(opts: OpenAgentSessionOptions): string {
     worktreeName,
     branch,
     prompt: opts.prompt,
+    cardId: opts.cardId,
+    backlogDir: opts.backlogDir,
+    cardFilename: opts.cardFilename,
+    isExternalBacklog: opts.isExternalBacklog,
     launchedAt: Date.now(),
     ptyStarted: false,
     // A worktree session's first act is creating its worktree, and the badge
@@ -210,4 +219,66 @@ export function openAgentSession(opts: OpenAgentSessionOptions): string {
     iconName: 'Terminal',
     agentSession,
   });
+}
+
+// ─── Cards ↔ sessions (F3) ───────────────────────────────────────
+
+/** The minimum of a desktop window this module needs — so the lookup stays testable. */
+export interface SessionWindowLike {
+  id: string;
+  agentSession?: AgentSessionMeta;
+}
+
+export type BacklogSessionCorrelation = Record<string, { backlogDir: string; filename: string; cardId: string }>;
+
+/**
+ * The session window a card currently has, if any.
+ *
+ * Two routes in on purpose, and neither is redundant. The window's own
+ * `cardFilename` is the durable one: it survives "Start again", which mints a
+ * fresh `sessionId` and would otherwise orphan the correlation entry the
+ * launcher wrote. The correlation map is the authoritative one at launch, and
+ * is what a future consumer with only a sessionId in hand can ask.
+ *
+ * When several match — a card relaunched after an earlier session ended — the
+ * most recently launched wins, because that is the one the overlay is about.
+ */
+export function findCardSessionWindow(
+  windows: SessionWindowLike[],
+  correlation: BacklogSessionCorrelation,
+  filename: string,
+): { windowId: string; meta: AgentSessionMeta } | null {
+  let best: { windowId: string; meta: AgentSessionMeta } | null = null;
+  for (const win of windows) {
+    const meta = win.agentSession;
+    if (!meta) continue;
+    const matches = meta.cardFilename === filename
+      || correlation[meta.sessionId]?.filename === filename;
+    if (!matches) continue;
+    if (!best || meta.launchedAt >= best.meta.launchedAt) best = { windowId: win.id, meta };
+  }
+  return best;
+}
+
+/**
+ * What the card's overlay says about its session, in words and in a tooltip.
+ *
+ * The label is F1's attention word — the same vocabulary the session window's
+ * own badge uses, so the two surfaces never describe one session differently.
+ * In worktree mode it also carries the card's status INSIDE the worktree when
+ * that has moved ahead of the main tree's: that divergence is not a fault, it
+ * is the whole shape of the feature (the agent closed its card on a branch,
+ * and the branch has not merged yet), and a board that hid it would be lying
+ * about work that is already done.
+ */
+export function describeCardSession(
+  meta: AgentSessionMeta,
+  cardStatus: string,
+): { label: string; tooltip: string } {
+  const base = describeAttention(meta.attention, meta.exitCode, meta.bootstrapExitCode);
+  const mirrored = meta.mode === 'worktree' && meta.mirroredStatus && meta.mirroredStatus !== cardStatus
+    ? ` · in worktree: ${meta.mirroredStatus}`
+    : '';
+  const where = meta.mode === 'worktree' ? (meta.branch ?? 'worktree') : 'attached';
+  return { label: `${base}${mirrored}`, tooltip: `session ${meta.vendor} · ${where}` };
 }

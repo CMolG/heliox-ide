@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
-import { launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
+import { cardPathForPrompt, launchAgentSession, launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
 import type { BacklogCard } from '@/types/market';
 import type { PipelineAssembly } from '@/types/meta-agent';
 
@@ -306,5 +306,116 @@ describe('launchEpicFlow (F3 mode 3 — flow por épica)', () => {
 
     expect(startHarness).not.toHaveBeenCalled();
     expect(useDesktopStore.getState().mentalNodes).toHaveLength(0);
+  });
+});
+
+describe('launchAgentSession (Cockpit F3 mode 4 — the card opens a vendor CLI)', () => {
+  function agentCard(overrides: Partial<BacklogCard> = {}): BacklogCard {
+    return makeCard({
+      filename: 'JDB-001-probe.md', taskId: 'JDB-001',
+      title: 'Probe the launcher end to end', ...overrides,
+    });
+  }
+
+  function sessionOf(windowId: string) {
+    return useDesktopStore.getState().windows.find((w) => w.id === windowId)?.agentSession;
+  }
+
+  it('opens an agent-session window on the project, with the card and its prompt', () => {
+    const windowId = launchAgentSession(agentCard(), '/proj/.backlog', {
+      vendor: 'claude', mode: 'worktree', isExternal: false,
+    });
+    const meta = sessionOf(windowId)!;
+    expect(meta.vendor).toBe('claude');
+    expect(meta.projectRoot).toBe('/proj');
+    expect(meta.cwd).toBe('/proj');
+    expect(meta.cardId).toBe('JDB-001');
+    expect(meta.backlogDir).toBe('/proj/.backlog');
+    expect(meta.cardFilename).toBe('JDB-001-probe.md');
+    expect(meta.prompt).toContain('The card file is .backlog/JDB-001-probe.md');
+  });
+
+  it('titles the window with the card id and the vendor, not with a directory', () => {
+    const windowId = launchAgentSession(agentCard(), '/proj/.backlog', {
+      vendor: 'codex', mode: 'attached', isExternal: false,
+    });
+    expect(useDesktopStore.getState().windows.find((w) => w.id === windowId)?.title)
+      .toBe('JDB-001 · codex');
+  });
+
+  it('names the worktree after the card and cuts a branch from the id and a capped title slug', () => {
+    const windowId = launchAgentSession(agentCard(), '/proj/.backlog', {
+      vendor: 'claude', mode: 'worktree', isExternal: false,
+    });
+    const meta = sessionOf(windowId)!;
+    expect(meta.worktreeName).toBe('jdb-001');
+    expect(meta.branch).toBe('jdb-001/probe-the-launcher-end-to-end');
+    expect(meta.branch!.split('/')[1].length).toBeLessThanOrEqual(40);
+  });
+
+  it('caps a long title slug at 40 characters and leaves no trailing dash', () => {
+    const windowId = launchAgentSession(
+      agentCard({ title: 'A really quite extraordinarily long card title that keeps going' }),
+      '/proj/.backlog', { vendor: 'claude', mode: 'worktree', isExternal: false },
+    );
+    const slug = sessionOf(windowId)!.branch!.split('/')[1];
+    expect(slug.length).toBeLessThanOrEqual(40);
+    expect(slug.endsWith('-')).toBe(false);
+  });
+
+  it('registers the session against the card so the pile can show its overlay', () => {
+    const windowId = launchAgentSession(agentCard(), '/proj/.backlog', {
+      vendor: 'claude', mode: 'attached', isExternal: false,
+    });
+    const sessionId = sessionOf(windowId)!.sessionId;
+    expect(useDesktopStore.getState().backlogSessionCorrelation[sessionId]).toEqual({
+      backlogDir: '/proj/.backlog', filename: 'JDB-001-probe.md', cardId: 'JDB-001',
+    });
+  });
+
+  it('forces attached for an external backlog — a worktree has no copy of the card', () => {
+    const windowId = launchAgentSession(agentCard(), '/data/fluxor/proj/.backlog', {
+      vendor: 'claude', mode: 'worktree', isExternal: true, projectRoot: '/proj',
+    });
+    const meta = sessionOf(windowId)!;
+    expect(meta.mode).toBe('attached');
+    expect(meta.isExternalBacklog).toBe(true);
+    expect(meta.projectRoot).toBe('/proj');
+    // Outside the project, so the prompt names it absolutely or the agent looks
+    // for a `.backlog` that is not there.
+    expect(meta.prompt).toContain('/data/fluxor/proj/.backlog/JDB-001-probe.md');
+  });
+
+  it('writes NOTHING to the card at launch — status is the agent\'s, runState waits for a real PTY', async () => {
+    window.fluxorAPI = { updateBacklogCardStatus: vi.fn() } as unknown as typeof window.fluxorAPI;
+    useDesktopStore.setState({ backlogCards: [agentCard()] });
+    launchAgentSession(agentCard(), '/proj/.backlog', {
+      vendor: 'claude', mode: 'attached', isExternal: false,
+    });
+    expect(window.fluxorAPI!.updateBacklogCardStatus).not.toHaveBeenCalled();
+    expect(useDesktopStore.getState().backlogCards[0]).toMatchObject({ status: 'todo', runState: 'idle' });
+  });
+
+  it('creates no canvas node and starts no flow — it is not one of the three flow launchers', () => {
+    launchAgentSession(agentCard(), '/proj/.backlog', {
+      vendor: 'claude', mode: 'worktree', isExternal: false,
+    });
+    expect(useDesktopStore.getState().mentalNodes).toHaveLength(0);
+    expect(useHarnessStore.getState().executionStatus).toBe(useHarnessStore.getInitialState().executionStatus);
+  });
+});
+
+describe('cardPathForPrompt', () => {
+  it('relativises an in-tree backlog against the project root', () => {
+    expect(cardPathForPrompt('/proj', '/proj/.backlog', 'a.md')).toBe('.backlog/a.md');
+  });
+
+  it('tolerates a trailing separator on the project root', () => {
+    expect(cardPathForPrompt('/proj/', '/proj/.backlog', 'a.md')).toBe('.backlog/a.md');
+  });
+
+  it('keeps an out-of-tree backlog absolute', () => {
+    expect(cardPathForPrompt('/proj', '/data/fluxor/proj/.backlog', 'a.md'))
+      .toBe('/data/fluxor/proj/.backlog/a.md');
   });
 });

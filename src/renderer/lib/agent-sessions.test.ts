@@ -37,9 +37,12 @@ import {
   describeWorktreeVerdict,
   isGitFailed,
   openAgentSession,
+  describeCardSession,
+  findCardSessionWindow,
   planPromptTyping,
   removalReason,
 } from './agent-sessions';
+import type { AgentSessionMeta } from '@/types/desktop';
 import type { SpentVerdict } from '@/main/worktrees/worktree-manager';
 
 beforeEach(() => {
@@ -256,5 +259,67 @@ describe('isGitFailed', () => {
     expect(isGitFailed({ path: '/w', branch: 'x' })).toBe(false);
     expect(isGitFailed(null)).toBe(false);
     expect(isGitFailed(undefined)).toBe(false);
+  });
+});
+
+// ─── Cards ↔ sessions (F3) ───────────────────────────────────────
+
+function sessionMeta(overrides: Partial<AgentSessionMeta> = {}): AgentSessionMeta {
+  return {
+    sessionId: 's1', vendor: 'claude', cwd: '/proj', projectRoot: '/proj',
+    mode: 'attached', launchedAt: 1000, ptyStarted: true, attention: 'running',
+    ...overrides,
+  };
+}
+
+describe('findCardSessionWindow', () => {
+  it('finds the window through the correlation the launcher registered', () => {
+    const windows = [{ id: 'w1', agentSession: sessionMeta() }];
+    const found = findCardSessionWindow(windows, { s1: { backlogDir: '/b', filename: 'a.md', cardId: 'JDB-1' } }, 'a.md');
+    expect(found?.windowId).toBe('w1');
+  });
+
+  it('finds it through the window\'s own metadata after a restart minted a new sessionId', () => {
+    // "Start again" replaces sessionId, so the correlation map no longer keys
+    // this session — the card is still written on the window itself.
+    const windows = [{ id: 'w1', agentSession: sessionMeta({ sessionId: 's2', cardFilename: 'a.md' }) }];
+    expect(findCardSessionWindow(windows, {}, 'a.md')?.windowId).toBe('w1');
+  });
+
+  it('is null for a card with no session, and for windows with no session at all', () => {
+    const windows = [{ id: 'w0' }, { id: 'w1', agentSession: sessionMeta({ cardFilename: 'other.md' }) }];
+    expect(findCardSessionWindow(windows, {}, 'a.md')).toBeNull();
+  });
+
+  it('prefers the most recently launched when a card was relaunched', () => {
+    const windows = [
+      { id: 'old', agentSession: sessionMeta({ sessionId: 's1', cardFilename: 'a.md', launchedAt: 1000 }) },
+      { id: 'new', agentSession: sessionMeta({ sessionId: 's2', cardFilename: 'a.md', launchedAt: 2000 }) },
+    ];
+    expect(findCardSessionWindow(windows, {}, 'a.md')?.windowId).toBe('new');
+  });
+});
+
+describe('describeCardSession', () => {
+  it('reuses F1\'s attention vocabulary, so the card and the window never disagree', () => {
+    expect(describeCardSession(sessionMeta({ attention: 'preparing' }), 'todo').label).toBe('preparing worktree');
+    expect(describeCardSession(sessionMeta({ attention: 'bootstrapping' }), 'todo').label).toBe('bootstrapping');
+    expect(describeCardSession(sessionMeta({ attention: 'ended', exitCode: 3 }), 'todo').label).toBe('ended · exit 3');
+  });
+
+  it('names the vendor and the branch in the tooltip, or "attached" when there is none', () => {
+    expect(describeCardSession(sessionMeta({ mode: 'worktree', branch: 'jdb-1/probe' }), 'todo').tooltip)
+      .toBe('session claude · jdb-1/probe');
+    expect(describeCardSession(sessionMeta(), 'todo').tooltip).toBe('session claude · attached');
+  });
+
+  it('shows the worktree\'s own status when it has moved ahead of the main tree\'s', () => {
+    const meta = sessionMeta({ mode: 'worktree', branch: 'b', mirroredStatus: 'review' });
+    expect(describeCardSession(meta, 'doing').label).toBe('running · in worktree: review');
+  });
+
+  it('says nothing extra when the two agree, or when the session is attached', () => {
+    expect(describeCardSession(sessionMeta({ mode: 'worktree', mirroredStatus: 'doing' }), 'doing').label).toBe('running');
+    expect(describeCardSession(sessionMeta({ mirroredStatus: 'review' }), 'doing').label).toBe('running');
   });
 });

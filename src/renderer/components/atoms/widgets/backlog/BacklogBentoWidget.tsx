@@ -31,9 +31,10 @@
  * cutover, replaced later by F3's three canonical launchers (out of this
  * task's scope; the frozen reference has no such buttons either).
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useFluxorStore } from '@/renderer/store';
+import { announceHumanEvents, diffForHumanEvents } from '@/renderer/lib/human-cards';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { theme } from '@/renderer/logic/theme';
 import { BacklogFilters } from './BacklogFilters';
@@ -56,6 +57,7 @@ export function BacklogBentoWidget({ windowId }: { windowId: string }) {
   const backlogCards = useDesktopStore((s) => s.backlogCards);
   const setBacklogCards = useDesktopStore((s) => s.setBacklogCards);
   const setActiveBacklogDir = useDesktopStore((s) => s.setActiveBacklogDir);
+  const setActiveBacklogProject = useDesktopStore((s) => s.setActiveBacklogProject);
 
   const [view, setView] = useState<'picker' | 'pile'>('picker');
   const [backlogs, setBacklogs] = useState<BacklogProject[]>([]);
@@ -66,6 +68,18 @@ export function BacklogBentoWidget({ windowId }: { windowId: string }) {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [activeStatuses, setActiveStatuses] = useState<BacklogStatus[]>(ALL_STATUSES);
+
+  /**
+   * The previous reading of this directory, for F3's HUMAN-card diff.
+   *
+   * `null` until the first read lands, which is what makes the initial load
+   * silent: announcing the eleven HUMAN cards already on a board every time the
+   * widget mounts is how a notification channel gets ignored by the end of the
+   * day. Seeded by `loadCards` rather than by the first watcher push, so the
+   * FIRST push — which is usually a real change, since the watcher only fires
+   * on one — is already a comparison against something.
+   */
+  const prevCardsRef = useRef<BacklogCard[] | null>(null);
 
   // ─── Preserved behavior layer (picker / scan / init / refresh) ─────────
   const scanForBacklogs = useCallback(async () => {
@@ -101,6 +115,7 @@ export function BacklogBentoWidget({ windowId }: { windowId: string }) {
     try {
       const cards = await window.fluxorAPI?.readBacklogDir(selectedBacklog.backlogPath);
       setBacklogCards((cards ?? []) as BacklogCard[]);
+      prevCardsRef.current = (cards ?? []) as BacklogCard[];
     } catch {
       setError('Failed to read backlog');
     } finally {
@@ -116,7 +131,14 @@ export function BacklogBentoWidget({ windowId }: { windowId: string }) {
   // persist edits — see desktop-store.ts's activeBacklogDir doc comment.
   useEffect(() => {
     setActiveBacklogDir(selectedBacklog?.backlogPath ?? null);
-  }, [selectedBacklog, setActiveBacklogDir]);
+    // Its sibling: which project this backlog belongs to and whether it lives
+    // outside the tree — both needed by F3's agent-session launcher, and
+    // neither derivable from the directory alone (an external backlog's path
+    // is inside the IDE's own config directory).
+    setActiveBacklogProject(selectedBacklog
+      ? { projectPath: selectedBacklog.projectPath, isExternal: selectedBacklog.isExternal }
+      : null);
+  }, [selectedBacklog, setActiveBacklogDir, setActiveBacklogProject]);
 
   // F4 — watcher wiring: external `.backlog` edits reflect without a manual
   // Refresh. The main-process watcher (src/main/backlog/watcher.ts) re-reads
@@ -136,9 +158,14 @@ export function BacklogBentoWidget({ windowId }: { windowId: string }) {
       await window.fluxorAPI?.watchBacklogDir(dir, root);
       if (cancelled) return;
       unsubscribe = window.fluxorAPI?.onBacklogChanged(({ backlogDir, cards }) => {
-        if (backlogDir === dir) {
-          useDesktopStore.getState().mergeBacklogCards(cards as BacklogCard[]);
-        }
+        if (backlogDir !== dir) return;
+        const fresh = cards as BacklogCard[];
+        // F3 — the reverse channel. A session that hits a wall only a person
+        // can clear writes a HUMAN card; this is the moment that card exists,
+        // and it is the only moment at which telling someone still helps.
+        announceHumanEvents(diffForHumanEvents(prevCardsRef.current, fresh), fresh);
+        prevCardsRef.current = fresh;
+        useDesktopStore.getState().mergeBacklogCards(fresh);
       });
     })();
 
@@ -178,6 +205,9 @@ export function BacklogBentoWidget({ windowId }: { windowId: string }) {
     setView('picker');
     setSelectedBacklog(null);
     setBacklogCards([]);
+    // A different backlog is a different board: its own HUMAN cards are all
+    // pre-existing to us, so the next selection starts silent again.
+    prevCardsRef.current = null;
   }, [setBacklogCards]);
 
   const toggleStatus = useCallback((status: BacklogStatus) => {

@@ -19,12 +19,13 @@
 import React, { useMemo } from 'react';
 import { LucideIcon } from '@/renderer/components/desktop/LucideIcon';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
+import { describeCardSession, findCardSessionWindow } from '@/renderer/lib/agent-sessions';
 import { STATUS_CONFIG } from './statusConfig';
 import { PRIORITY_CONFIG } from './priorityConfig';
 import { StatusShape } from './StatusShape';
 import { EpicBadge } from './EpicBadge';
 import { LaunchMenu } from './LaunchMenu';
-import { launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
+import { launchAgentSession, launchAutoflow, launchEpicFlow, launchExistingFlow } from './launchActions';
 import type { BacklogCard, BacklogRunState } from '@/types/market';
 import type { CanvasGraphNode, FrameGraphNode } from '@/types/desktop';
 
@@ -96,9 +97,23 @@ export interface BacklogCardItemProps {
    * wiring from callers.
    */
   runStateOverlay?: React.ReactNode;
+  /**
+   * F3 — false on a HUMAN card: the LaunchMenu is not rendered at all. The work
+   * is a person's, and an affordance that cannot do anything is worse than no
+   * affordance (`.harness/skills/backlog/SKILL.md` § HUMAN cards).
+   */
+  launchable?: boolean;
+  /**
+   * F3 — task ids this card unblocks, rendered under the title. Supplied by the
+   * "Needs you" lane (BacklogPile.tsx); absent everywhere else, because outside
+   * the lane it is a fact about a card nobody is looking at right now.
+   */
+  unblocks?: string[];
 }
 
-export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOverlay }: BacklogCardItemProps) {
+export function BacklogCardItem({
+  card, onOpen, isSelected, onSelect, runStateOverlay, launchable = true, unblocks,
+}: BacklogCardItemProps) {
   const statusObj = STATUS_CONFIG[card.status];
   const priorityInfo = PRIORITY_CONFIG[card.priority] ?? PRIORITY_CONFIG.medium;
 
@@ -107,10 +122,41 @@ export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOv
   // insertPipelineAssembly+runFromStep, both already-existing seams).
   const mentalNodes = useDesktopStore((s) => s.mentalNodes);
   const activeBacklogDir = useDesktopStore((s) => s.activeBacklogDir);
+  const activeBacklogProject = useDesktopStore((s) => s.activeBacklogProject);
   const frames = useMemo(
     () => mentalNodes.filter(isFrameGraphNode).map((f) => ({ id: f.id, title: f.data.title })),
     [mentalNodes],
   );
+
+  // F3 session overlay. The two raw slices are selected and the derivation is
+  // memoized rather than derived inside the selector: a selector that builds a
+  // new object every call has no stable snapshot, which under React 19's
+  // useSyncExternalStore is a render loop rather than a slow render.
+  const windows = useDesktopStore((s) => s.windows);
+  const sessionCorrelation = useDesktopStore((s) => s.backlogSessionCorrelation);
+  const cardSession = useMemo(
+    () => findCardSessionWindow(windows, sessionCorrelation, card.filename),
+    [windows, sessionCorrelation, card.filename],
+  );
+  const focusWindow = useDesktopStore((s) => s.focusWindow);
+  const sessionOverlay = useMemo(() => {
+    if (!cardSession) return null;
+    const { label, tooltip } = describeCardSession(cardSession.meta, card.status);
+    return (
+      <button
+        type="button"
+        data-testid="run-state-overlay"
+        data-session-vendor={cardSession.meta.vendor}
+        title={tooltip}
+        aria-label={`${tooltip} — ${label}`}
+        onClick={(e) => { e.stopPropagation(); focusWindow(cardSession.windowId); }}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-black/30 bg-neutral-100 text-[10px] font-extrabold uppercase text-black hover:border-black transition-colors"
+      >
+        <LucideIcon name="Terminal" size={12} strokeWidth={2.5} />
+        {label}
+      </button>
+    );
+  }, [cardSession, card.status, focusWindow]);
   // Bound once — see LaunchMenu.tsx's own comment on why a locally-bound
   // const (not a re-evaluated `card.epic` read) is what survives narrowing
   // into a closure.
@@ -157,7 +203,10 @@ export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOv
         <div className="flex flex-wrap items-center gap-2 mb-2">
           {/* Status Shape (outside the badge) */}
           <StatusShape sides={statusObj.sides} className="w-5 h-5" fillClass={statusObj.fillClass} strokeClass={statusObj.strokeClass} />
-          {runStateOverlay ?? runStateOverlayIcon(card.runState)}
+          {/* A live session outranks the runState icon in the SAME slot: while a
+              session is up it is the more specific answer to "what is happening
+              to this card", and two overlays side by side would say it twice. */}
+          {runStateOverlay ?? sessionOverlay ?? runStateOverlayIcon(card.runState)}
 
           {/* Status Badge */}
           <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-extrabold uppercase ${statusObj.colorClass}`}>
@@ -170,14 +219,38 @@ export function BacklogCardItem({ card, onOpen, isSelected, onSelect, runStateOv
             <LaunchMenu
               card={card}
               frames={frames}
+              launchable={launchable}
+              projectRoot={activeBacklogProject?.projectPath ?? null}
+              isExternalBacklog={activeBacklogProject?.isExternal ?? false}
               onLaunchExisting={(frameId) => { void launchExistingFlow(card, frameId, activeBacklogDir); }}
               onLaunchAutoflow={() => { void launchAutoflow(card, activeBacklogDir); }}
               onLaunchEpic={epic ? () => { void launchEpicFlow(epic, activeBacklogDir); } : undefined}
+              onLaunchAgent={activeBacklogDir
+                ? (vendor, mode) => {
+                  launchAgentSession(card, activeBacklogDir, {
+                    vendor,
+                    mode,
+                    isExternal: activeBacklogProject?.isExternal ?? false,
+                    projectRoot: activeBacklogProject?.projectPath,
+                  });
+                }
+                : undefined}
             />
           </div>
         </div>
 
         <h3 className="text-lg sm:text-xl font-black text-black leading-tight mb-2 truncate group-hover:whitespace-normal group-hover:overflow-visible group-hover:line-clamp-none line-clamp-1">{card.title}</h3>
+
+        {/* What closing this card lets start — the half of the both-ways link
+            that a person waiting on nothing in particular never sees. */}
+        {unblocks && unblocks.length > 0 && (
+          <p
+            data-testid="needs-you-unblocks"
+            className="text-[11px] font-extrabold uppercase tracking-wider text-neutral-500 mb-2 break-words"
+          >
+            unblocks: {unblocks.join(', ')}
+          </p>
+        )}
         <p className="text-sm text-black/70 font-bold line-clamp-2">{excerptOf(card.description)}</p>
 
         {card.tags.length > 0 && (

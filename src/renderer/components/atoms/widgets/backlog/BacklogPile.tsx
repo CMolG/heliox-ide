@@ -21,6 +21,15 @@
  * draggable" look is preserved by attaching the sortable listeners to a
  * thin, unstyled wrapper around `BacklogCardItem` rather than adding a
  * visible grip handle (the reference has none).
+ *
+ * F3 adds one thing above the pile: the "Needs you" lane. HUMAN cards leave the
+ * flat list and are pinned at the top, because they are not a status and they
+ * do not compete for position with work an agent can pick up — they are the
+ * board's only entries that are waiting on a PERSON, and a card that only says
+ * so from inside a filtered, sorted list of two hundred is a card nobody reads.
+ * The lane therefore ignores the status filters (it is not a status) but obeys
+ * the search box (a search that cannot find a card it is showing is a bug), and
+ * it drops cards in `deploy`, which are done.
  */
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
@@ -30,6 +39,7 @@ import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
+import { isHumanCard, unblockedBy } from '@/renderer/lib/human-cards';
 import { STATUS_CONFIG } from './statusConfig';
 import { BacklogCardItem } from './BacklogCardItem';
 import type { BacklogCard, BacklogStatus } from '@/types/market';
@@ -69,6 +79,20 @@ export function reorderBacklogCards(
   const insertAt = targetIdx === -1 ? rest.length : targetIdx;
   rest.splice(insertAt, 0, ...dragged);
   return rest.map((c, i) => ({ ...c, order: i }));
+}
+
+/** One search predicate, so the lane and the pile can never disagree about what a term matches. */
+function matchesSearch(card: BacklogCard, term: string): boolean {
+  return card.title.toLowerCase().includes(term)
+    || card.description.toLowerCase().includes(term)
+    || card.tags.some((t) => t.toLowerCase().includes(term));
+}
+
+function byStatusThenOrder(a: BacklogCard, b: BacklogCard): number {
+  const orderA = STATUS_CONFIG[a.status].order;
+  const orderB = STATUS_CONFIG[b.status].order;
+  if (orderA !== orderB) return orderA - orderB;
+  return a.order - b.order;
 }
 
 function SortableCard({
@@ -111,20 +135,25 @@ export function BacklogPile({ cards, searchTerm, activeStatuses, backlogDir }: B
     const term = searchTerm.toLowerCase();
     return backlogCards
       .filter((card) => {
-        const matchesSearch =
-          card.title.toLowerCase().includes(term) ||
-          card.description.toLowerCase().includes(term) ||
-          card.tags.some((t) => t.toLowerCase().includes(term));
+        // HUMAN cards leave the flat list — they render in the pinned lane above.
+        if (isHumanCard(card)) return false;
         const matchesStatus = activeStatuses.includes(card.status);
-        return matchesSearch && matchesStatus;
+        return matchesSearch(card, term) && matchesStatus;
       })
-      .sort((a, b) => {
-        const orderA = STATUS_CONFIG[a.status].order;
-        const orderB = STATUS_CONFIG[b.status].order;
-        if (orderA !== orderB) return orderA - orderB;
-        return a.order - b.order;
-      });
+      .sort(byStatusThenOrder);
   }, [backlogCards, searchTerm, activeStatuses]);
+
+  /** The lane: HUMAN cards, still open, matching the search — and NOT the status filters. */
+  const needsYouCards = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+    return backlogCards
+      .filter((card) => isHumanCard(card) && card.status !== 'deploy' && matchesSearch(card, term))
+      .sort(byStatusThenOrder);
+  }, [backlogCards, searchTerm]);
+
+  // Built over the WHOLE set, not the lane: what a HUMAN card unblocks is a
+  // fact about the board, and a card filtered out of view still unblocks.
+  const unblocksIndex = useMemo(() => unblockedBy(backlogCards), [backlogCards]);
 
   const activeCard = activeFilename ? backlogCards.find((c) => c.filename === activeFilename) ?? null : null;
 
@@ -184,6 +213,32 @@ export function BacklogPile({ cards, searchTerm, activeStatuses, backlogDir }: B
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="w-full max-w-4xl flex flex-col gap-4 relative pb-20" data-testid="backlog-pile" role="list" aria-label="Backlog cards">
+        {/* ── "Needs you" lane — pinned, unsortable, outside the status filters ── */}
+        {needsYouCards.length > 0 && (
+          <section
+            data-testid="needs-you-lane"
+            aria-label="Cards that need a person"
+            className="flex flex-col gap-3 p-4 bg-amber-50 border-2 border-black rounded-3xl"
+          >
+            <h2 className="text-sm font-black uppercase tracking-widest text-black">
+              Needs you · {needsYouCards.length}
+            </h2>
+            {needsYouCards.map((card) => (
+              <BacklogCardItem
+                key={card.filename}
+                card={card}
+                isSelected={selectedFilenames.has(card.filename)}
+                onOpen={() => openCanvasModal(card)}
+                onSelect={handleCardSelect}
+                // No launcher, ever: the whole point of the card is that an
+                // agent cannot do it.
+                launchable={false}
+                unblocks={(unblocksIndex.get(card.taskId.toUpperCase()) ?? []).map((c) => c.taskId)}
+              />
+            ))}
+          </section>
+        )}
+
         {filteredAndSortedCards.length === 0 ? (
           <div className="text-center py-20 bg-white border border-dashed border-black rounded-3xl" data-testid="backlog-pile-empty">
             <p className="text-neutral-500 font-extrabold uppercase tracking-widest text-sm">No hay tarjetas que coincidan con los filtros.</p>

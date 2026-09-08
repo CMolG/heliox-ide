@@ -143,6 +143,23 @@ const liveSessions = new Map<string, LiveSessionEntry>();
 
 let manager: PtyManager | null = null;
 
+/**
+ * Registration is idempotent, and the window it pushes to is a variable rather
+ * than a closed-over constant — the same shape `registerWorktreeIpcHandlers`
+ * already has, and for the same reason: on macOS `app.on('activate')` calls
+ * `createWindow()` again once every window has been closed, which runs every
+ * registrar a second time. `ipcMain.handle` THROWS on a duplicate channel, so
+ * without this the second call takes the app down.
+ *
+ * The manager's `data`/`exit` listeners are inside the guard too, and that half
+ * matters just as much: attaching them twice would push every byte of every
+ * terminal twice, and the second copy would go to a destroyed window.
+ *
+ * F2 found this and left it as a known latent fault in F1; this is it fixed.
+ */
+let registered = false;
+let targetWindow: BrowserWindow | null = null;
+
 function getManager(): PtyManager {
   if (manager) return manager;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -156,10 +173,13 @@ function getManager(): PtyManager {
 
 export function registerPtyIpcHandlers(mainWindow: BrowserWindow): void {
   const mgr = getManager();
+  targetWindow = mainWindow;
+  if (registered) return;
+  registered = true;
 
   const push = (channel: string, payload: unknown) => {
-    if (mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send(channel, payload);
+    if (!targetWindow || targetWindow.isDestroyed()) return;
+    targetWindow.webContents.send(channel, payload);
   };
 
   mgr.on('data', (e: PtyDataEvent) => push('fluxor:pty-data', e));

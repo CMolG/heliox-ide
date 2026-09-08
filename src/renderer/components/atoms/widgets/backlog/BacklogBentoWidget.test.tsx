@@ -182,3 +182,88 @@ describe('BacklogBentoWidget', () => {
     expect(screen.queryByText('Should not appear')).not.toBeInTheDocument();
   });
 });
+
+describe('BacklogBentoWidget — HUMAN card notifications (Cockpit F3)', () => {
+  function human(overrides: Partial<BacklogCard> = {}): BacklogCard {
+    return makeCard({
+      filename: 'HUMAN-002-token.md', taskId: 'HUMAN-002', epic: 'HUMAN', tags: ['human'],
+      title: 'Set the admin token on the server', ...overrides,
+    });
+  }
+
+  /** Mounts the widget on a single auto-selected backlog and hands back the watcher's push. */
+  async function mountWatching(initialCards: BacklogCard[]) {
+    let push: ((payload: { backlogDir: string; cards: BacklogCard[] }) => void) | undefined;
+    window.fluxorAPI = {
+      scanBacklogs: vi.fn().mockResolvedValue([
+        { projectPath: '/proj', projectName: 'Proj', backlogPath: '/proj/.backlog', cardCount: initialCards.length, isExternal: false },
+      ]),
+      listProjectsWithoutBacklog: vi.fn().mockResolvedValue([]),
+      readBacklogDir: vi.fn().mockResolvedValue(initialCards),
+      watchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      unwatchBacklogDir: vi.fn().mockResolvedValue({ success: true }),
+      onBacklogChanged: vi.fn((cb: typeof push) => { push = cb; return vi.fn(); }),
+      showNotification: vi.fn(),
+    } as unknown as typeof window.fluxorAPI;
+    useFluxorStore.setState({ projectPath: '/proj' });
+    render(<BacklogBentoWidget windowId="w1" />);
+    await screen.findByTestId('backlog-filters', {}, { timeout: 3000 });
+    await waitFor(() => expect(push).toBeDefined());
+    return (cards: BacklogCard[]) => push!({ backlogDir: '/proj/.backlog', cards });
+  }
+
+  it('says nothing about the HUMAN cards already on the board when it opens', async () => {
+    await mountWatching([makeCard(), human()]);
+    expect(useDesktopStore.getState().notifications).toHaveLength(0);
+    expect(useFluxorStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('raises a notification, a toast and an OS notification when a session writes a new HUMAN card', async () => {
+    const pushCards = await mountWatching([makeCard()]);
+    pushCards([makeCard(), human()]);
+
+    await waitFor(() => expect(useDesktopStore.getState().notifications).toHaveLength(1));
+    expect(useDesktopStore.getState().notifications[0].message)
+      .toBe('Needs you: HUMAN-002 Set the admin token on the server');
+    expect(useFluxorStore.getState().toasts[0].message).toContain('HUMAN-002');
+    expect(window.fluxorAPI!.showNotification).toHaveBeenCalledWith({
+      title: 'Needs you', body: 'HUMAN-002 — Set the admin token on the server',
+    });
+  });
+
+  it('toasts what a closed HUMAN card just unblocked, without a notification', async () => {
+    const blocked = makeCard({ filename: 'a.md', taskId: 'JDB-090', related: ['HUMAN-002'] });
+    const pushCards = await mountWatching([human({ status: 'todo' }), blocked]);
+    pushCards([human({ status: 'deploy' }), blocked]);
+
+    await waitFor(() => expect(useFluxorStore.getState().toasts).toHaveLength(1));
+    expect(useFluxorStore.getState().toasts[0]).toMatchObject({
+      message: 'HUMAN-002 done · unblocks JDB-090', type: 'success',
+    });
+    expect(useDesktopStore.getState().notifications).toHaveLength(0);
+  });
+
+  it('stays quiet for an ordinary card appearing', async () => {
+    const pushCards = await mountWatching([makeCard()]);
+    pushCards([makeCard(), makeCard({ filename: 'b.md', taskId: 'JDB-002' })]);
+    await waitFor(() => expect(useDesktopStore.getState().backlogCards).toHaveLength(2));
+    expect(useDesktopStore.getState().notifications).toHaveLength(0);
+    expect(useFluxorStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('announces a HUMAN card once, not on every subsequent push', async () => {
+    const pushCards = await mountWatching([makeCard()]);
+    pushCards([makeCard(), human()]);
+    await waitFor(() => expect(useDesktopStore.getState().notifications).toHaveLength(1));
+    pushCards([makeCard(), human()]);
+    pushCards([makeCard(), human()]);
+    await waitFor(() => expect(useDesktopStore.getState().backlogCards).toHaveLength(2));
+    expect(useDesktopStore.getState().notifications).toHaveLength(1);
+  });
+
+  it('records which project the open backlog belongs to, and whether it is external', async () => {
+    await mountWatching([makeCard()]);
+    expect(useDesktopStore.getState().activeBacklogProject)
+      .toEqual({ projectPath: '/proj', isExternal: false });
+  });
+});

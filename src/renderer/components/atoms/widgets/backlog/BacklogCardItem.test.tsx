@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { BacklogCardItem, formatCardDate } from './BacklogCardItem';
+import { useDesktopStore } from '@/renderer/store/desktop-store';
 import type { BacklogCard } from '@/types/market';
+import type { AgentSessionMeta } from '@/types/desktop';
 
 function makeCard(overrides: Partial<BacklogCard> = {}): BacklogCard {
   return {
@@ -122,5 +124,57 @@ describe('runState overlay (F4 — write-back overlay, F0 spec §3.1)', () => {
     );
     expect(screen.getByTestId('overlay-slot')).toBeInTheDocument();
     expect(screen.queryByTestId('run-state-overlay')).not.toBeInTheDocument();
+  });
+});
+
+describe('session overlay (Cockpit F3 — a live session on the card)', () => {
+  beforeEach(() => {
+    useDesktopStore.setState(useDesktopStore.getInitialState(), true);
+  });
+
+  function withSession(meta: Partial<AgentSessionMeta>) {
+    useDesktopStore.setState({
+      windows: [{
+        id: 'w1', type: 'agent-session', title: 'JDB-1 · claude', iconName: 'Terminal',
+        position: { x: 0, y: 0 }, size: { width: 10, height: 10 }, zIndex: 1,
+        isMinimized: false, isMaximized: false,
+        agentSession: {
+          sessionId: 's1', vendor: 'claude', cwd: '/proj', projectRoot: '/proj',
+          mode: 'attached', launchedAt: 1, ptyStarted: true, attention: 'running',
+          cardFilename: 't1.md', cardId: 'TASK-1', ...meta,
+        },
+      }] as unknown as ReturnType<typeof useDesktopStore.getState>['windows'],
+    });
+  }
+
+  it('replaces the runState icon with the session\'s state in WORDS', () => {
+    withSession({ attention: 'running' });
+    render(<BacklogCardItem card={makeCard({ runState: 'running' })} onOpen={() => {}} isSelected={false} onSelect={() => {}} />);
+    const overlay = screen.getByTestId('run-state-overlay');
+    expect(overlay).toHaveTextContent('running');
+    expect(overlay).toHaveAttribute('title', 'session claude · attached');
+    // One overlay, not two: the live session is the more specific answer.
+    expect(screen.getAllByTestId('run-state-overlay')).toHaveLength(1);
+  });
+
+  it('appends the worktree\'s own status when it has moved ahead of the board\'s', () => {
+    withSession({ mode: 'worktree', branch: 'task-1/probe', mirroredStatus: 'review' });
+    render(<BacklogCardItem card={makeCard({ status: 'doing' })} onOpen={() => {}} isSelected={false} onSelect={() => {}} />);
+    expect(screen.getByTestId('run-state-overlay')).toHaveTextContent('running · in worktree: review');
+  });
+
+  it('focuses the session window when clicked, without opening the card', () => {
+    withSession({});
+    const onOpen = vi.fn();
+    render(<BacklogCardItem card={makeCard()} onOpen={onOpen} isSelected={false} onSelect={() => {}} />);
+    fireEvent.click(screen.getByTestId('run-state-overlay'));
+    expect(useDesktopStore.getState().activeWindowId).toBe('w1');
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('leaves a card with no session showing its plain runState icon', () => {
+    withSession({ cardFilename: 'someone-else.md' });
+    render(<BacklogCardItem card={makeCard({ runState: 'completed' })} onOpen={() => {}} isSelected={false} onSelect={() => {}} />);
+    expect(screen.getByTestId('run-state-overlay')).toHaveAttribute('data-run-state', 'completed');
   });
 });

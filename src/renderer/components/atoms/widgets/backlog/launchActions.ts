@@ -52,10 +52,12 @@ import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
 import { calculateSafeInsertionPoint } from '@/renderer/store/spatial-engine';
 import { compileFlowFromCanvas } from '@/renderer/lib/harness-compiler';
+import { openAgentSession } from '@/renderer/lib/agent-sessions';
+import { buildLaunchPrompt } from '@/renderer/lib/launch-prompt';
 import { epicToPipelineAssembly, slugify } from './epicPipeline';
 import type { BacklogCard } from '@/types/market';
 import type { PipelineAssembly } from '@/types/meta-agent';
-import type { FrameGraphNode } from '@/types/desktop';
+import type { AgentVendorId, FrameGraphNode } from '@/types/desktop';
 
 // Mirrors HudAutoChatPanel.tsx's own `estimateFrameSize` (MarketplaceApp.tsx
 // carries an equivalent third copy under a different name) — there is no
@@ -252,4 +254,110 @@ export async function launchEpicFlow(epicName: string, backlogDir: string | null
     const rootCard = rootStep ? epicCards.find((c) => slugify(c.taskId) === rootStep.id) : undefined;
     if (rootCard) optimisticallyMarkRunning(backlogDir, rootCard.filename);
   }
+}
+
+// ─── Mode 4 — "Open agent session" (Cockpit F3) ──────────────────
+
+/** A branch name is read by people in `git branch`; 40 characters is where a slug stops helping. */
+const MAX_BRANCH_SLUG_CHARS = 40;
+
+/** The parent of `.backlog` — the project, for an in-tree backlog. */
+function parentDirOf(dir: string): string {
+  const trimmed = dir.replace(/[/\\]+$/, '');
+  const cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return cut > 0 ? trimmed.slice(0, cut) : trimmed;
+}
+
+/**
+ * Where the card is FROM THE AGENT'S working directory.
+ *
+ * An in-tree backlog gives `.backlog/<file>.md`, which is true in the main tree
+ * and equally true inside a worktree — same relative layout, which is exactly
+ * why the write-back rule can be "the file the agent can see". An external
+ * backlog is outside the project entirely, so the prompt has to name it
+ * absolutely or the agent will look for a directory that is not there.
+ */
+export function cardPathForPrompt(projectRoot: string, backlogDir: string, filename: string): string {
+  const root = projectRoot.replace(/[/\\]+$/, '');
+  if (backlogDir.startsWith(`${root}/`) || backlogDir.startsWith(`${root}\\`)) {
+    return `${backlogDir.slice(root.length + 1)}/${filename}`;
+  }
+  return `${backlogDir.replace(/[/\\]+$/, '')}/${filename}`;
+}
+
+export interface LaunchAgentSessionOptions {
+  vendor: AgentVendorId;
+  mode: 'attached' | 'worktree';
+  /** The backlog lives in the IDE's config dir rather than in the tree. */
+  isExternal: boolean;
+  /**
+   * Required when `isExternal` — an external backlog's directory says nothing
+   * about which project it belongs to, and the picker is what knows. For an
+   * in-tree backlog it defaults to `.backlog`'s parent.
+   */
+  projectRoot?: string;
+}
+
+/**
+ * The Cockpit's launcher: the card opens a vendor CLI in a terminal, in the
+ * project where `.harness/` already lives.
+ *
+ * It shares nothing with the three above by design. Those materialize a flow on
+ * the canvas and run it through Fluxor's own harness engine; this one starts no
+ * flow, creates no canvas node, and calls no model. The agent IS the vendor CLI,
+ * and the only thing the Cockpit contributes is the first prompt
+ * (`launch-prompt.ts`) and the `runState` write-back (`card-writeback.ts`).
+ * `runAgent`, `harness-engine` and the three launchers are untouched.
+ *
+ * The optimistic `{status:'doing', runState:'running'}` the three above write at
+ * click time is deliberately NOT done here: `status` belongs to the agent (that
+ * is its first instruction) and `runState` is written when the PTY is actually
+ * up, not when a menu was clicked — a session that dies on a missing binary
+ * never ran anything.
+ *
+ * Returns the id of the session window it opened.
+ */
+export function launchAgentSession(
+  card: BacklogCard,
+  backlogDir: string,
+  opts: LaunchAgentSessionOptions,
+): string {
+  const projectRoot = opts.projectRoot ?? parentDirOf(backlogDir);
+  // An external backlog has no copy of the card inside a worktree, so there
+  // would be nothing there for the agent to move. Forced, not refused — the
+  // launcher already says why (LaunchMenu's disabled `worktree` row).
+  const mode = opts.isExternal ? 'attached' : opts.mode;
+
+  const idSlug = slugify(card.taskId);
+  const titleSlug = slugify(card.title).slice(0, MAX_BRANCH_SLUG_CHARS).replace(/-+$/, '');
+
+  const windowId = openAgentSession({
+    vendor: opts.vendor,
+    cwd: projectRoot,
+    projectRoot,
+    mode,
+    // Reused on a retry rather than re-cut, so a second attempt does not leave
+    // a second checkout on disk (AgentSessionApp's `handleRestart`).
+    worktreeName: idSlug,
+    branch: `${idSlug}/${titleSlug || 'session'}`,
+    prompt: buildLaunchPrompt(card, {
+      cardRelativePath: cardPathForPrompt(projectRoot, backlogDir, card.filename),
+    }),
+    title: `${card.taskId} · ${opts.vendor}`,
+    cardId: card.taskId,
+    // Always the MAIN tree's directory: it is what the board reads, and what
+    // an attached session writes. The worktree's own copy is derived from
+    // `worktreePath` at write time (card-writeback.ts).
+    backlogDir,
+    cardFilename: card.filename,
+    isExternalBacklog: opts.isExternal,
+  });
+
+  const sessionId = useDesktopStore.getState().windows.find((w) => w.id === windowId)?.agentSession?.sessionId;
+  if (sessionId) {
+    useDesktopStore.getState().registerBacklogSession(sessionId, {
+      backlogDir, filename: card.filename, cardId: card.taskId,
+    });
+  }
+  return windowId;
 }

@@ -362,6 +362,23 @@ interface DesktopStore {
   registerBacklogRunStep: (stepId: string, backlogDir: string, filename: string) => void;
   clearBacklogRunStep: (stepId: string) => void;
   /**
+   * The same idea one layer over, for the Cockpit's fourth launcher (F3):
+   * ptySessionId -> the card that opened it. Transient for the same reason as
+   * `backlogRunCorrelation` — a correlation to a process that died with the app
+   * is not worth restoring, and restoring one would make a dead session look
+   * live on the board.
+   *
+   * It is not the ONLY route from a card to its session: the window's own
+   * `agentSession.cardFilename` carries the same fact and survives "Start
+   * again", which mints a fresh sessionId. Both are consulted
+   * (`findCardSessionWindow`) precisely because neither alone is complete —
+   * this map knows about a session whose window metadata was reset, and the
+   * metadata knows about a session this map no longer keys.
+   */
+  backlogSessionCorrelation: Record<string, { backlogDir: string; filename: string; cardId: string }>;
+  registerBacklogSession: (sessionId: string, entry: { backlogDir: string; filename: string; cardId: string }) => void;
+  clearBacklogSession: (sessionId: string) => void;
+  /**
    * Directory backing the currently-open backlog (set by
    * BacklogBentoWidget's picker/back navigation — F2 Task 10). Read by
    * BacklogCardModal (F2 Task 9) to resolve where to persist content edits:
@@ -371,6 +388,17 @@ interface DesktopStore {
    */
   activeBacklogDir: string | null;
   setActiveBacklogDir: (dir: string | null) => void;
+  /**
+   * `activeBacklogDir`'s sibling, for the same reason and set in the same
+   * breath (BacklogBentoWidget's picker). A card knows the directory it lives
+   * in but not which PROJECT that is, nor whether the backlog is external —
+   * and F3's fourth launcher needs both: the project is where an agent session
+   * runs and what the one-attached-session rule is counted per, and an external
+   * backlog cannot be launched in a worktree at all, because a worktree has no
+   * copy of the card to write to.
+   */
+  activeBacklogProject: { projectPath: string; isExternal: boolean } | null;
+  setActiveBacklogProject: (project: { projectPath: string; isExternal: boolean } | null) => void;
 
   // Connections
   connections: WindowConnection[];
@@ -1108,8 +1136,19 @@ export const useDesktopStore = create<DesktopStore>()(
         return { backlogRunCorrelation: rest };
       }),
 
+      backlogSessionCorrelation: {},
+      registerBacklogSession: (sessionId, entry) => set((s) => ({
+        backlogSessionCorrelation: { ...s.backlogSessionCorrelation, [sessionId]: entry },
+      })),
+      clearBacklogSession: (sessionId) => set((s) => {
+        const { [sessionId]: _removed, ...rest } = s.backlogSessionCorrelation;
+        return { backlogSessionCorrelation: rest };
+      }),
+
       activeBacklogDir: null,
       setActiveBacklogDir: (dir) => set({ activeBacklogDir: dir }),
+      activeBacklogProject: null,
+      setActiveBacklogProject: (project) => set({ activeBacklogProject: project }),
 
       // ─── Connections ───────────────────────────────────
       connections: [],

@@ -6,7 +6,7 @@
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
 // src/types/desktop.ts — Types for the seamless desktop window system
-import type { MarketMod, MarketRole } from './market';
+import type { BacklogStatus, MarketMod, MarketRole } from './market';
 import type { AgenticStepType, StepContract } from './harness';
 
 // ─── OpenCode Provider Theming ───────────────────────────────────
@@ -189,8 +189,22 @@ export interface AgentSessionMeta {
   bootstrapExitCode?: number | null;
   // ── F3 (card → session) fills these ──
   cardId?: string;
+  /** The backlog the card was launched from — always the MAIN tree's directory. */
   backlogDir?: string;
   cardFilename?: string;
+  /**
+   * The backlog lives in the IDE's config directory, not in the repository. A
+   * worktree therefore has no copy of the card to write to, which is why such a
+   * session is forced to `attached` (card-writeback.ts's file rule).
+   */
+  isExternalBacklog?: boolean;
+  /**
+   * Worktree mode only: the `status` the card carries INSIDE the worktree, as
+   * the session's own watcher last saw it. The main-tree card is not written in
+   * worktree mode, so this is the only thing that can tell the board an agent
+   * has already moved its card to `review` on a branch.
+   */
+  mirroredStatus?: BacklogStatus;
   /** First prompt handed to the agent (by argv or typed — see the vendor registry). */
   prompt?: string;
   launchedAt: number;
