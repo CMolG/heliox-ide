@@ -15,7 +15,9 @@ import {
   AGENT_VENDOR_IDS,
   detectVendors,
   resolveVendorBin,
+  resolveVendorExtraArgs,
   vendorBinEnvVar,
+  vendorExtraArgsEnvVar,
   whichBin,
   type ExecFileFn,
 } from './vendors';
@@ -80,6 +82,47 @@ describe('resolveVendorBin', () => {
   it('scopes the override to its own vendor', () => {
     const env = { FLUXOR_AGENT_BIN_CLAUDE: '/tmp/fake' };
     expect(resolveVendorBin(AGENT_VENDORS.codex, env)).toBe('codex');
+  });
+});
+
+describe('resolveVendorExtraArgs', () => {
+  it('is empty when nothing is set', () => {
+    expect(resolveVendorExtraArgs('claude', {})).toEqual([]);
+  });
+
+  it('names its variable per vendor, upper-cased', () => {
+    expect(vendorExtraArgsEnvVar('claude')).toBe('FLUXOR_AGENT_EXTRA_ARGS_CLAUDE');
+    expect(vendorExtraArgsEnvVar('opencode')).toBe('FLUXOR_AGENT_EXTRA_ARGS_OPENCODE');
+  });
+
+  it('splits on whitespace, collapsing runs and trimming the ends', () => {
+    expect(resolveVendorExtraArgs('claude', {
+      FLUXOR_AGENT_EXTRA_ARGS_CLAUDE: '  --permission-mode   bypassPermissions --model haiku ',
+    })).toEqual(['--permission-mode', 'bypassPermissions', '--model', 'haiku']);
+  });
+
+  it('treats a blank value as unset rather than as one empty argument', () => {
+    expect(resolveVendorExtraArgs('codex', { FLUXOR_AGENT_EXTRA_ARGS_CODEX: '   ' })).toEqual([]);
+  });
+
+  it('scopes to its own vendor', () => {
+    const env = { FLUXOR_AGENT_EXTRA_ARGS_CLAUDE: '--model haiku' };
+    expect(resolveVendorExtraArgs('codex', env)).toEqual([]);
+  });
+
+  it('does NOT honour quotes — the documented limit of the seam', () => {
+    // Pinned rather than fixed: implementing quoting here would be a second,
+    // subtly different shell parser in front of a spawn that never uses a
+    // shell. An argument with a space belongs in the vendor registry.
+    expect(resolveVendorExtraArgs('claude', {
+      FLUXOR_AGENT_EXTRA_ARGS_CLAUDE: '--append-system-prompt "be brief"',
+    })).toEqual(['--append-system-prompt', '"be', 'brief"']);
+  });
+
+  it('lands before the positional prompt when the registry builds argv', () => {
+    const extra = resolveVendorExtraArgs('claude', { FLUXOR_AGENT_EXTRA_ARGS_CLAUDE: '--model haiku' });
+    expect(AGENT_VENDORS.claude.buildArgs({ prompt: 'p', extraArgs: [...extra, '--session-id', 'u'] }))
+      .toEqual(['--model', 'haiku', '--session-id', 'u', 'p']);
   });
 });
 

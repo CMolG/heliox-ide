@@ -414,6 +414,14 @@ export interface FluxorAPI {
   worktreeSpent: (worktreePath: string) => Promise<import('../main/worktrees/ipc-worktrees').WorktreeSpentResult>;
   worktreeRemove: (worktreePath: string, force?: boolean)
     => Promise<import('../main/worktrees/ipc-worktrees').WorktreeRemoveResult>;
+  /**
+   * Cockpit F5 — copies `<backlogDir>/<filename>` into
+   * `<worktreePath>/.backlog/` when the worktree does not already have it. A
+   * worktree is cut from `origin/main`, so a card written this session is
+   * absent from it and the launch prompt points at nothing. Never overwrites.
+   */
+  worktreeSeedCard: (worktreePath: string, backlogDir: string, filename: string)
+    => Promise<import('../main/worktrees/ipc-worktrees').WorktreeSeedCardResult>;
   bootstrapDetect: (projectRoot: string) => Promise<import('../main/worktrees/bootstrap').BootstrapResolution>;
   bootstrapSet: (projectRoot: string, command: string | null) => Promise<{ success: boolean }>;
   bootstrapRun: (worktreePath: string, projectRoot: string)

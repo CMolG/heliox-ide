@@ -108,6 +108,40 @@ export function resolveVendorBin(vendor: AgentVendor, env: NodeJS.ProcessEnv = p
   return override && override.trim() ? override.trim() : vendor.bin;
 }
 
+/**
+ * Environment variable that prepends extra arguments to a vendor's argv, e.g.
+ * `FLUXOR_AGENT_EXTRA_ARGS_CLAUDE="--model haiku"`.
+ *
+ * A per-machine DEVELOPER SEAM, deliberately not a setting: it is how the F5
+ * field test pins a cheap model and a permission mode for a run of throwaway
+ * probes, and how anyone can try a flag against a real CLI without editing the
+ * vendor registry. Nothing in the product's UI writes it and nothing reads it
+ * back — a flag that belonged in the product would belong in the registry.
+ */
+export function vendorExtraArgsEnvVar(id: AgentVendorId): string {
+  return `FLUXOR_AGENT_EXTRA_ARGS_${id.toUpperCase()}`;
+}
+
+/**
+ * Splits the variable on whitespace, and that is the WHOLE rule: no quoting,
+ * no escapes, no shell.
+ *
+ * Documented rather than fixed, because the alternative is worse. Implementing
+ * quoting here would be a second, subtly different shell parser sitting in
+ * front of a spawn that never goes through a shell — the kind of thing that is
+ * right for a year and then swallows a `--flag "a b"` in a way nobody can see
+ * from the terminal. An argument with a space in it goes in the vendor
+ * registry, where it can be a real array element.
+ */
+export function resolveVendorExtraArgs(
+  id: AgentVendorId,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const raw = env[vendorExtraArgsEnvVar(id)];
+  if (!raw || !raw.trim()) return [];
+  return raw.trim().split(/\s+/);
+}
+
 export interface VendorAvailability {
   id: AgentVendorId;
   label: string;

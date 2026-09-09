@@ -488,6 +488,21 @@ export function AgentSessionApp({ windowId }: AgentSessionAppProps) {
         baseRef: created.baseRef,
       });
 
+      // F5 — the card, before the bootstrap and long before the agent.
+      //
+      // The branch was cut from `origin/main`, so a card that has not reached
+      // it yet (written this session, uncommitted, or on an unpushed branch) is
+      // NOT in this checkout — and the launch prompt's first line tells the
+      // agent to read exactly that file. Copying it is the only step that makes
+      // the prompt true; an existing copy is the branch's own and is left alone.
+      // Best effort throughout: a session must start even if this cannot.
+      if (meta.cardFilename && meta.backlogDir && !meta.isExternalBacklog) {
+        const seed = await api.worktreeSeedCard?.(created.path, meta.backlogDir, meta.cardFilename);
+        if (seed && !isGitFailed(seed) && seed.seeded) {
+          writeOwnLine(`— seeded ${meta.cardFilename} into the worktree (not on origin/main yet)`);
+        }
+      }
+
       await runBootstrapStep(created.path);
     })();
   }, [windowId, meta, updateAgentSession, runBootstrapStep, writeOwnLine]);

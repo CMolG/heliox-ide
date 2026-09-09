@@ -16,7 +16,9 @@
  *    transcript;
  *  - a HUMAN card is pinned in its lane, says what it unblocks, and has no
  *    launcher at all;
- *  - a HUMAN card written WHILE a session runs becomes a notification.
+ *  - a HUMAN card written WHILE a session runs becomes a notification;
+ *  - (F5) a card that has NOT reached `origin/main` is seeded into the worktree
+ *    that was cut without it, so the prompt's first instruction is true.
  *
  * The repository is temporary and the agent is `e2e/fixtures/fake-agent.sh`,
  * pointed at through `FLUXOR_AGENT_BIN_CLAUDE` — no LLM, no network, no login.
@@ -37,6 +39,14 @@ const FAKE_AGENT = path.join(__dirname, 'fixtures', 'fake-agent.sh');
 
 const CARD_FILE = 'JDB-001-probe.md';
 const HUMAN_FILE = 'HUMAN-001-needs-you.md';
+/**
+ * F5's card, and the one property that makes the test mean anything: it is
+ * written AFTER the initial commit, so it is untracked and therefore absent
+ * from any worktree cut from `main`. That is the exact shape of a card written
+ * during a session, which is most of them.
+ */
+const UNCOMMITTED_CARD_FILE = 'JDB-002-not-on-main.md';
+const SEED_WORKTREE_NAME = 'JDB-002';
 
 let app: ElectronApplication;
 let page: Page;
@@ -208,8 +218,10 @@ async function openBoard(): Promise<ReturnType<Page['getByTestId']>> {
 async function launchFromCard(
   board: ReturnType<Page['getByTestId']>,
   mode: 'attached' | 'worktree',
+  file: string = CARD_FILE,
+  cardId: string = 'JDB-001',
 ): Promise<string> {
-  const card = board.locator(`[data-testid="backlog-card"][data-filename="${CARD_FILE}"]`);
+  const card = board.locator(`[data-testid="backlog-card"][data-filename="${file}"]`);
   await expect(card).toBeVisible({ timeout: 15_000 });
   await card.getByTestId('launch-menu-trigger').click();
   await board.getByTestId('launch-menu-agent').click();
@@ -218,15 +230,16 @@ async function launchFromCard(
   await board.getByTestId('launch-agent-vendor-claude').click();
 
   await page.waitForFunction(
-    () => (window as any).__DESKTOP_STORE__.getState().windows
-      .some((w: any) => w.type === 'agent-session' && w.agentSession?.cardId === 'JDB-001' && !w.agentSession?.exitCode),
+    (id) => (window as any).__DESKTOP_STORE__.getState().windows
+      .some((w: any) => w.type === 'agent-session' && w.agentSession?.cardId === id && !w.agentSession?.exitCode),
+    cardId,
     { timeout: 15_000 },
   );
-  return page.evaluate(() => {
+  return page.evaluate((id) => {
     const wins = (window as any).__DESKTOP_STORE__.getState().windows
-      .filter((w: any) => w.type === 'agent-session' && w.agentSession?.cardId === 'JDB-001');
+      .filter((w: any) => w.type === 'agent-session' && w.agentSession?.cardId === id);
     return wins.sort((a: any, b: any) => b.agentSession.launchedAt - a.agentSession.launchedAt)[0].id as string;
-  });
+  }, cardId);
 }
 
 test('a card opens a session, its prompt reaches argv, and an unfinished card settles as failed', async () => {
@@ -341,4 +354,73 @@ test('a HUMAN card written while a session runs becomes a notification', async (
   await page.keyboard.press('Enter');
   await expect(win.getByTestId('agent-session-status')).toHaveText('ended · exit 0', { timeout: 15_000 });
   fs.rmSync(newHuman, { force: true });
+});
+
+/**
+ * F5 — the gap the field test found, and the fix for it.
+ *
+ * A session worktree is cut from `origin/main` (decision 3), so a card that
+ * has not reached it — written this session, uncommitted, or on an unpushed
+ * branch — is NOT in the checkout, while the launch prompt's first line tells
+ * the agent to read exactly that path. This card is written after the initial
+ * commit and never staged, which is precisely that shape.
+ */
+test('a card that is not on origin/main yet is seeded into the worktree cut for it', async () => {
+  const mainCardPath = path.join(backlogDir, UNCOMMITTED_CARD_FILE);
+  fs.writeFileSync(
+    mainCardPath,
+    cardFile(
+      {
+        taskId: 'JDB-002', priority: 'medium', status: 'todo', runState: 'idle', order: 3,
+        estimate: 1, epic: 'cockpit', tags: ['cockpit'],
+      },
+      'Seed me',
+      'A card written this session, so it exists nowhere but the working tree.',
+    ),
+    'utf-8',
+  );
+  // The premise, asserted rather than assumed: git does not know this file.
+  expect(git(project, 'status', '--porcelain')).toContain(UNCOMMITTED_CARD_FILE);
+
+  const board = await openBoard();
+  const sessionWindowId = await launchFromCard(board, 'worktree', UNCOMMITTED_CARD_FILE, 'JDB-002');
+  const win = page.getByTestId(`desktop-window-${sessionWindowId}`);
+  const terminal = win.getByTestId('agent-session-terminal');
+  await expect(terminal).toBeVisible({ timeout: 10_000 });
+
+  // 1. The Cockpit says what it did, in the session's own log surface.
+  await expect(terminal).toContainText('preparing worktree', { timeout: 25_000 });
+  await expect(terminal).toContainText(
+    `seeded ${UNCOMMITTED_CARD_FILE} into the worktree (not on origin/main yet)`,
+    { timeout: 25_000 },
+  );
+
+  // 2. And the file is really there — which is what makes the prompt's first
+  //    instruction ("read the card file in full first") true.
+  const worktreeCard = path.join(
+    project, '.claude', 'worktrees', SEED_WORKTREE_NAME, '.backlog', UNCOMMITTED_CARD_FILE,
+  );
+  await expect.poll(() => fs.existsSync(worktreeCard), { timeout: 20_000 }).toBe(true);
+  expect(fs.readFileSync(worktreeCard, 'utf-8')).toContain('task_id: JDB-002');
+
+  // 3. The agent starts after it, inside that worktree.
+  await expect(terminal).toContainText('FAKE AGENT READY', { timeout: 25_000 });
+  await expect(win.getByTestId('agent-session-status')).toHaveText('running', { timeout: 15_000 });
+
+  // 4. The write-back went to the copy the agent can see, and the main tree's
+  //    card was left exactly as it was (card-writeback.ts's file rule).
+  await expect.poll(() => fs.readFileSync(worktreeCard, 'utf-8'), { timeout: 20_000 })
+    .toContain('runState: running');
+  expect(fs.readFileSync(mainCardPath, 'utf-8')).toContain('runState: idle');
+
+  await terminal.click();
+  await page.keyboard.type('exit');
+  await page.keyboard.press('Enter');
+  await expect(win.getByTestId('agent-session-status')).toHaveText('ended · exit 0', { timeout: 20_000 });
+
+  // Nothing this test made is left registered in the project's git.
+  execFileSync('git', ['worktree', 'remove', '--force', path.dirname(path.dirname(worktreeCard))], {
+    cwd: project, env: GIT_ENV, stdio: 'ignore',
+  });
+  fs.rmSync(mainCardPath, { force: true });
 });

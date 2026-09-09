@@ -25,7 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PtyManager, type PtyInfo, type PtyDataEvent, type PtyExitEvent, type PtySpawnFn } from './pty-manager';
 import { hookEndpointPort, hookSettingsFor, issueHookToken, revokeHookToken } from '../cockpit/hook-endpoint';
-import { AGENT_VENDORS, detectVendors, resolveVendorBin, whichBin, type AgentVendor, type AgentVendorId } from './vendors';
+import { AGENT_VENDORS, detectVendors, resolveVendorBin, resolveVendorExtraArgs, whichBin, type AgentVendor, type AgentVendorId } from './vendors';
 
 export interface PtySpawnPayload {
   sessionId: string;
@@ -284,9 +284,15 @@ export function registerPtyIpcHandlers(mainWindow: BrowserWindow): void {
     // prompt never enters argv — the renderer types it into the live PTY.
     const prompt = vendor.promptDelivery === 'arg' ? payload.prompt : undefined;
     const { extraArgs, hooksArmed } = hookArgsFor(payload.vendor, payload.sessionId);
-    // BEFORE the positional prompt: `claude [options] [prompt]` — an option
-    // placed after it is read as more prompt, silently.
-    const args = vendor.buildArgs({ prompt, extraArgs });
+    // The per-machine seam goes FIRST, so a developer's `--model haiku` cannot
+    // land between `--settings` and its JSON payload, and last-wins flags stay
+    // decidable: ours override theirs, never the other way round.
+    // All of it BEFORE the positional prompt: `claude [options] [prompt]` — an
+    // option placed after it is read as more prompt, silently.
+    const args = vendor.buildArgs({
+      prompt,
+      extraArgs: [...resolveVendorExtraArgs(payload.vendor), ...extraArgs],
+    });
 
     const info = mgr.spawn({
       sessionId: payload.sessionId,

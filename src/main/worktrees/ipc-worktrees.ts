@@ -38,6 +38,7 @@ import {
   type BootstrapResolution,
   type BootstrapRunResult,
 } from './bootstrap';
+import { seedCardIntoWorktree, type SeedCardResult } from './seed-card';
 
 export interface GitFailed {
   error: 'git_failed';
@@ -50,6 +51,7 @@ export type WorktreeCreateResult = CreatedWorktree | GitFailed;
 export type WorktreeSpentResult = SpentVerdict | GitFailed;
 export type WorktreeRemoveResult = { success: true } | GitFailed;
 export type BootstrapRunIpcResult = BootstrapRunResult | GitFailed;
+export type WorktreeSeedCardResult = SeedCardResult | GitFailed;
 
 export interface WorktreeProgressEvent {
   worktreePath: string;
@@ -125,6 +127,21 @@ export function registerWorktreeIpcHandlers(mainWindow: BrowserWindow): void {
       });
       return out;
     },
+  );
+
+  /**
+   * F5 — the card the worktree was cut without.
+   *
+   * Between `worktree-create` and the bootstrap, because the launch prompt's
+   * very first instruction is to read that file: a session that starts without
+   * it starts by improvising. Sits here rather than inside `worktree-create`
+   * because a worktree opened from the dock carries no card at all, and
+   * `create` must not learn what a card is to serve it.
+   */
+  ipcMain.handle(
+    'fluxor:worktree-seed-card',
+    async (_e, worktreePath: string, backlogDir: string, filename: string): Promise<WorktreeSeedCardResult> =>
+      attempt(() => seedCardIntoWorktree(worktreePath, backlogDir, filename)),
   );
 
   ipcMain.handle('fluxor:bootstrap-detect', async (_e, projectRoot: string): Promise<BootstrapResolution> =>

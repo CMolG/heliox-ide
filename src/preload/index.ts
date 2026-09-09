@@ -31,6 +31,7 @@ import type { AgentHookEvent } from '../main/cockpit/hook-endpoint';
 import type {
   WorktreeListResult, WorktreeCreateResult, WorktreeSpentResult,
   WorktreeRemoveResult, BootstrapRunIpcResult, WorktreeProgressEvent,
+  WorktreeSeedCardResult,
 } from '../main/worktrees/ipc-worktrees';
 import type { BootstrapResolution } from '../main/worktrees/bootstrap';
 
@@ -294,6 +295,11 @@ const fluxorAPI: FluxorAPI = {
 
   worktreeRemove: (worktreePath: string, force?: boolean): Promise<WorktreeRemoveResult> =>
     ipcRenderer.invoke('fluxor:worktree-remove', worktreePath, force),
+
+  // F5 — copies the card into a worktree that was cut without it (a card that
+  // has not reached `origin/main` yet is simply not in the checkout).
+  worktreeSeedCard: (worktreePath: string, backlogDir: string, filename: string): Promise<WorktreeSeedCardResult> =>
+    ipcRenderer.invoke('fluxor:worktree-seed-card', worktreePath, backlogDir, filename),
 
   bootstrapDetect: (projectRoot: string): Promise<BootstrapResolution> =>
     ipcRenderer.invoke('fluxor:bootstrap-detect', projectRoot),
