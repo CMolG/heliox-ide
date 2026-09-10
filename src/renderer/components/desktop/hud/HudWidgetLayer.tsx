@@ -6,8 +6,8 @@
  * - Each widget is independently draggable and snap-to-grid positioned.
  * - Sits ABOVE the canvas but BELOW modals/marketplace (z-index 180).
  * - Resolves each widget's placement (drag-release, resize-release, and
- *   spawn/reopen) through resolveHudWidgetPlacement (logic/hud-grid.ts) so
- *   a widget can never land in the top-right safe zone or overlap another
+ *   spawn/reopen) through resolveHudWidgetPlacement (logic/hud-widget-policy.ts)
+ *   so a widget can never land in the top-right safe zone or overlap another
  *   widget — see the `others`/safe-zone handling in DraggableWidget below.
  *
  * Boundaries:
@@ -19,16 +19,29 @@
  */
 import React, { useRef, useCallback, useEffect } from 'react';
 import { useDesktopStore } from '../../../store/desktop-store';
+import { useFluxorStore } from '../../../store';
 import type { HudWidgetType } from '../../../store/desktop-store';
 import { WidgetWrapper } from '../../atoms/WidgetWrapper';
 import { AgentSessionsWidget } from '../../atoms/widgets/AgentSessionsWidget';
 import { HudAutoChatPanel } from './HudAutoChatPanel';
 import { NotificationsWidget } from '../../atoms/widgets/NotificationsWidget';
 import { LucideIcon } from '../LucideIcon';
+// Generic HUD grid math (HUD_GRID/snap/clamp/placement) now lives in
+// @cmolg/daba-engine's core/hud-grid (adoption plan #20, javadaba-web Core,
+// Task 10). This file used to import its own copy from `logic/hud-grid.ts`
+// (deleted) — the Fluxor-specific policy that used to live there (widget size
+// mins, the reserved top-right safe zone) moved to `logic/hud-widget-policy.ts`,
+// a thin adapter over the motor's primitives. See that file's docblock.
 import {
-  snapSizeToHudGrid, MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT, resolveHudWidgetPlacement,
-} from '../../../logic/hud-grid';
-import type { HudRect } from '../../../logic/hud-grid';
+  snapSizeToHudGrid,
+  MIN_WIDGET_WIDTH,
+  MIN_WIDGET_HEIGHT,
+  resolveHudWidgetPlacement,
+  CANVAS_PADDING_X,
+  TOP_BAR_HEIGHT,
+  BOTTOM_DOCK_RESERVE,
+} from '../../../logic/hud-widget-policy';
+import type { HudRect } from '../../../logic/hud-widget-policy';
 import { theme } from '../../../logic/theme';
 
 // ─── Widget metadata ─────────────────────────────────────────────
@@ -78,32 +91,30 @@ interface DraggableWidgetProps {
    *  itself), in the same absolute px space as `position`. Passed down by
    *  HudWidgetLayer so drag-release, resize-release, and spawn/reopen can
    *  all resolve this widget's placement against its actual neighbours —
-   *  see resolveHudWidgetPlacement in logic/hud-grid.ts. */
+   *  see resolveHudWidgetPlacement in logic/hud-widget-policy.ts. */
   others: HudRect[];
 }
 
 function DraggableWidget({ type, position, size, others }: DraggableWidgetProps) {
-  const setHudWidgetVisible = useDesktopStore(s => s.setHudWidgetVisible);
-  const moveHudWidget       = useDesktopStore(s => s.moveHudWidget);
-  const resizeHudWidget     = useDesktopStore(s => s.resizeHudWidget);
+  const setHudWidgetVisible = useDesktopStore((s) => s.setHudWidgetVisible);
+  const moveHudWidget = useDesktopStore((s) => s.moveHudWidget);
+  const resizeHudWidget = useDesktopStore((s) => s.resizeHudWidget);
+  const showSidebar = useFluxorStore((s) => s?.showSidebar ?? false);
+  const showInspector = useDesktopStore((s) => s?.settings?.showInspector !== false);
 
   const meta = WIDGET_META[type];
   // Effective size: user-resized (persisted) size wins over the widget's default
   const { width: w, height: h } = effectiveWidgetSize(type, size);
 
-  // Spawn/reopen leg of the placement resolver: the moment this widget
-  // starts being displayed (initial mount for an already-visible widget, OR
-  // freshly mounted because WidgetLauncher just toggled it visible — either
-  // way HudWidgetLayer only renders visible widgets, so mount === "appeared"),
-  // check whether its current position is still valid and relocate it if not.
-  // Deliberately mount-only (empty deps): re-running this whenever a SIBLING
-  // moves would fight the user's own drags every time another widget settles.
+  // Spawn/reopen leg of the placement resolver
   useEffect(() => {
     const resolved = resolveHudWidgetPlacement({
       desired: position,
       size: { width: w, height: h },
       viewport: { width: window.innerWidth, height: window.innerHeight },
       others,
+      showSidebar,
+      showInspector,
     });
     if (resolved.x !== position.x || resolved.y !== position.y) {
       moveHudWidget(type, resolved);
@@ -127,112 +138,130 @@ function DraggableWidget({ type, position, size, others }: DraggableWidgetProps)
   } | null>(null);
   const widgetRef = useRef<HTMLDivElement>(null);
 
-  const handleHeaderMouseDown = useCallback((e: React.MouseEvent) => {
-    // Only left button; do not steal from interactive children
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
+  const handleHeaderMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      // Only left button; do not steal from interactive children
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
 
-    dragState.current = {
-      startMouseX: e.clientX,
-      startMouseY: e.clientY,
-      startPosX: position.x,
-      startPosY: position.y,
-    };
+      dragState.current = {
+        startMouseX: e.clientX,
+        startMouseY: e.clientY,
+        startPosX: position.x,
+        startPosY: position.y,
+      };
 
-    const onMouseMove = (ev: MouseEvent) => {
-      if (!dragState.current || !widgetRef.current) return;
-      const dx = ev.clientX - dragState.current.startMouseX;
-      const dy = ev.clientY - dragState.current.startMouseY;
-      const rawX = dragState.current.startPosX + dx;
-      const rawY = dragState.current.startPosY + dy;
-      // Apply live position via transform (no store writes during drag)
-      widgetRef.current.style.transform = `translate(${rawX}px, ${rawY}px)`;
-    };
+      const onMouseMove = (ev: MouseEvent) => {
+        if (!dragState.current || !widgetRef.current) return;
+        const dx = ev.clientX - dragState.current.startMouseX;
+        const dy = ev.clientY - dragState.current.startMouseY;
+        const rawX = dragState.current.startPosX + dx;
+        const rawY = dragState.current.startPosY + dy;
 
-    const onMouseUp = (ev: MouseEvent) => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      if (!dragState.current) return;
-      const dx = ev.clientX - dragState.current.startMouseX;
-      const dy = ev.clientY - dragState.current.startMouseY;
-      const rawX = dragState.current.startPosX + dx;
-      const rawY = dragState.current.startPosY + dy;
-      // Snap + clamp (same feel as before), then nudge off the safe zone /
-      // other widgets if the drop landed on either.
-      const resolved = resolveHudWidgetPlacement({
-        desired: { x: rawX, y: rawY },
-        size: { width: w, height: h },
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-        others,
-      });
-      moveHudWidget(type, resolved);
-      dragState.current = null;
-    };
+        // GUARDRAIL: Clamp live drag position strictly to safe canvas bounds
+        const minX = showSidebar ? 280 + CANVAS_PADDING_X : CANVAS_PADDING_X;
+        const maxX = Math.max(
+          minX,
+          window.innerWidth - w - (showInspector ? 300 + CANVAS_PADDING_X : CANVAS_PADDING_X),
+        );
+        const minY = TOP_BAR_HEIGHT;
+        const maxY = Math.max(minY, window.innerHeight - h - BOTTOM_DOCK_RESERVE);
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  }, [position, type, moveHudWidget, w, h, others]);
+        const clampedX = Math.max(minX, Math.min(rawX, maxX));
+        const clampedY = Math.max(minY, Math.min(rawY, maxY));
+        // Apply live position via transform (no store writes during drag)
+        widgetRef.current.style.transform = `translate(${clampedX}px, ${clampedY}px)`;
+      };
 
-  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    // Only left button; do not steal from interactive children
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
+      const onMouseUp = (ev: MouseEvent) => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        if (!dragState.current) return;
+        const dx = ev.clientX - dragState.current.startMouseX;
+        const dy = ev.clientY - dragState.current.startMouseY;
+        const rawX = dragState.current.startPosX + dx;
+        const rawY = dragState.current.startPosY + dy;
+        // Snap + clamp, then dodge safe zone / panels / other widgets
+        const resolved = resolveHudWidgetPlacement({
+          desired: { x: rawX, y: rawY },
+          size: { width: w, height: h },
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          others,
+          showSidebar,
+          showInspector,
+        });
+        moveHudWidget(type, resolved);
+        dragState.current = null;
+      };
 
-    resizeState.current = {
-      startMouseX: e.clientX,
-      startMouseY: e.clientY,
-      startWidth: w,
-      startHeight: h,
-    };
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    [position, type, moveHudWidget, w, h, others, showSidebar, showInspector],
+  );
 
-    const onMouseMove = (ev: MouseEvent) => {
-      if (!resizeState.current || !widgetRef.current) return;
-      const dx = ev.clientX - resizeState.current.startMouseX;
-      const dy = ev.clientY - resizeState.current.startMouseY;
-      const liveWidth = Math.max(MIN_WIDGET_WIDTH, resizeState.current.startWidth + dx);
-      const liveHeight = Math.max(MIN_WIDGET_HEIGHT, resizeState.current.startHeight + dy);
-      // Apply live size directly to the DOM (no store writes during drag)
-      widgetRef.current.style.width = `${liveWidth}px`;
-      widgetRef.current.style.height = `${liveHeight}px`;
-    };
+  const handleResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
 
-    const onMouseUp = (ev: MouseEvent) => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      if (!resizeState.current) return;
-      const dx = ev.clientX - resizeState.current.startMouseX;
-      const dy = ev.clientY - resizeState.current.startMouseY;
-      const rawWidth = resizeState.current.startWidth + dx;
-      const rawHeight = resizeState.current.startHeight + dy;
-      const snapped = snapSizeToHudGrid({ width: rawWidth, height: rawHeight });
-      // resizeHudWidget clamps to the min/viewport-max — no need to duplicate that here.
-      resizeHudWidget(type, snapped);
-      // Growing in place can push the widget into the safe zone or over a
-      // neighbour it previously cleared — re-resolve position (same origin,
-      // new size) and only write if it actually needs to move.
-      const resolvedPos = resolveHudWidgetPlacement({
-        desired: position,
-        size: snapped,
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-        others,
-      });
-      if (resolvedPos.x !== position.x || resolvedPos.y !== position.y) {
-        moveHudWidget(type, resolvedPos);
-      }
-      resizeState.current = null;
-    };
+      resizeState.current = {
+        startMouseX: e.clientX,
+        startMouseY: e.clientY,
+        startWidth: w,
+        startHeight: h,
+      };
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  }, [type, w, h, resizeHudWidget, position, others, moveHudWidget]);
+      const onMouseMove = (ev: MouseEvent) => {
+        if (!resizeState.current || !widgetRef.current) return;
+        const dx = ev.clientX - resizeState.current.startMouseX;
+        const dy = ev.clientY - resizeState.current.startMouseY;
+        // GUARDRAIL: Clamp live size so widget never exceeds current viewport frame
+        const maxW = Math.max(MIN_WIDGET_WIDTH, window.innerWidth - position.x - (showInspector ? 312 : 12));
+        const maxH = Math.max(MIN_WIDGET_HEIGHT, window.innerHeight - position.y - 72);
+        const liveWidth = Math.min(maxW, Math.max(MIN_WIDGET_WIDTH, resizeState.current.startWidth + dx));
+        const liveHeight = Math.min(maxH, Math.max(MIN_WIDGET_HEIGHT, resizeState.current.startHeight + dy));
+        widgetRef.current.style.width = `${liveWidth}px`;
+        widgetRef.current.style.height = `${liveHeight}px`;
+      };
+
+      const onMouseUp = (ev: MouseEvent) => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        if (!resizeState.current) return;
+        const dx = ev.clientX - resizeState.current.startMouseX;
+        const dy = ev.clientY - resizeState.current.startMouseY;
+        const rawWidth = resizeState.current.startWidth + dx;
+        const rawHeight = resizeState.current.startHeight + dy;
+        const snapped = snapSizeToHudGrid({ width: rawWidth, height: rawHeight });
+        resizeHudWidget(type, snapped);
+
+        const resolvedPos = resolveHudWidgetPlacement({
+          desired: position,
+          size: snapped,
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          others,
+          showSidebar,
+          showInspector,
+        });
+        if (resolvedPos.x !== position.x || resolvedPos.y !== position.y) {
+          moveHudWidget(type, resolvedPos);
+        }
+        resizeState.current = null;
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    [type, w, h, resizeHudWidget, position, others, moveHudWidget, showSidebar, showInspector],
+  );
 
   const outerStyle: React.CSSProperties = {
     position: 'absolute',
     top: 0,
     left: 0,
-    // Use transform for position so we can do live updates without layout
     transform: `translate(${position.x}px, ${position.y}px)`,
     width: w,
     height: h,
@@ -261,7 +290,7 @@ function DraggableWidget({ type, position, size, others }: DraggableWidgetProps)
     position: 'absolute',
     top: 0,
     left: 0,
-    right: 28, // leave room for the close button
+    right: 28, // leave room for close button
     height: 28,
     cursor: 'grab',
     zIndex: 1,
@@ -271,14 +300,12 @@ function DraggableWidget({ type, position, size, others }: DraggableWidgetProps)
   return (
     <div ref={widgetRef} style={outerStyle} data-testid={`hud-widget-${type}`}>
       <div style={{ position: 'relative', height: '100%' }}>
-        {/* Drag handle overlaid on top of the WidgetWrapper header */}
         <div
           style={dragHandleStyle}
           onMouseDown={handleHeaderMouseDown}
           aria-hidden="true"
           data-testid={`hud-widget-drag-${type}`}
         />
-        {/* Close button */}
         <button
           style={closeBtnStyle}
           onClick={() => setHudWidgetVisible(type, false)}
@@ -287,12 +314,10 @@ function DraggableWidget({ type, position, size, others }: DraggableWidgetProps)
         >
           <LucideIcon name="X" size={12} />
         </button>
-        {/* The actual widget */}
         <WidgetWrapper title={meta.title} iconName={meta.iconName}>
           {renderWidgetBody(type)}
         </WidgetWrapper>
       </div>
-      {/* SE resize handle — user-resizing with persisted, grid-snapped size */}
       <div
         className="resize-handle nodrag"
         data-dir="se"
@@ -306,11 +331,51 @@ function DraggableWidget({ type, position, size, others }: DraggableWidgetProps)
 // ─── HudWidgetLayer ──────────────────────────────────────────────
 
 export function HudWidgetLayer() {
-  const hudWidgets = useDesktopStore(s => s.hudWidgets);
+  const hudWidgets = useDesktopStore((s) => s.hudWidgets);
+  const showSidebar = useFluxorStore((s) => s?.showSidebar ?? false);
+  const showInspector = useDesktopStore((s) => s?.settings?.showInspector !== false);
 
-  // Guard against unknown/legacy widget types (e.g. a stale persisted entry) so a
-  // bad type can never crash the whole Desktop via WIDGET_META[type].defaultWidth.
-  const visibleWidgets = hudWidgets.filter(w => w.visible && WIDGET_META[w.type]);
+  // Dynamic layout & window resize guardrail: when window resizes OR side panels toggle,
+  // re-resolve placement for all active widgets so none are lost or covered.
+  useEffect(() => {
+    const handleLayoutChange = () => {
+      const state = useDesktopStore.getState ? useDesktopStore.getState() : null;
+      if (!state || !state.hudWidgets) return;
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const currentShowSidebar = useFluxorStore.getState ? useFluxorStore.getState()?.showSidebar ?? false : false;
+      const currentShowInspector = state.settings?.showInspector !== false;
+      const active = state.hudWidgets.filter((w) => w.visible && WIDGET_META[w.type]);
+
+      active.forEach((w) => {
+        const size = effectiveWidgetSize(w.type, w.size);
+        const others = active
+          .filter((o) => o.type !== w.type)
+          .map((o) => {
+            const s = effectiveWidgetSize(o.type, o.size);
+            return { x: o.position.x, y: o.position.y, width: s.width, height: s.height };
+          });
+
+        const resolved = resolveHudWidgetPlacement({
+          desired: w.position,
+          size,
+          viewport,
+          others,
+          showSidebar: currentShowSidebar,
+          showInspector: currentShowInspector,
+        });
+
+        if (resolved.x !== w.position.x || resolved.y !== w.position.y) {
+          state.moveHudWidget(w.type, resolved);
+        }
+      });
+    };
+
+    handleLayoutChange();
+    window.addEventListener('resize', handleLayoutChange);
+    return () => window.removeEventListener('resize', handleLayoutChange);
+  }, [showSidebar, showInspector]);
+
+  const visibleWidgets = hudWidgets.filter((w) => w.visible && WIDGET_META[w.type]);
 
   if (visibleWidgets.length === 0) return null;
 
@@ -318,12 +383,9 @@ export function HudWidgetLayer() {
     position: 'fixed',
     inset: 0,
     pointerEvents: 'none',
-    zIndex: 180, // above canvas (100), SessionStatusDock (150), but below marketplace/modals (200+)
+    zIndex: 180,
   };
 
-  // Effective rect (position + effective size) per visible widget, keyed by
-  // type — the basis for each widget's `others` prop (every OTHER visible
-  // widget's rect) that the placement resolver avoids on drag/resize/spawn.
   const rectsByType = new Map<HudWidgetType, HudRect>();
   for (const w of visibleWidgets) {
     const { width, height } = effectiveWidgetSize(w.type, w.size);
@@ -332,13 +394,13 @@ export function HudWidgetLayer() {
 
   return (
     <div style={layerStyle} data-testid="hud-widget-layer" aria-label="HUD widgets" role="region">
-      {visibleWidgets.map(w => (
+      {visibleWidgets.map((w) => (
         <DraggableWidget
           key={w.type}
           type={w.type}
           position={w.position}
           size={w.size}
-          others={visibleWidgets.filter(o => o.type !== w.type).map(o => rectsByType.get(o.type)!)}
+          others={visibleWidgets.filter((o) => o.type !== w.type).map((o) => rectsByType.get(o.type)!)}
         />
       ))}
     </div>

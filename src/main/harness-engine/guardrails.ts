@@ -137,6 +137,69 @@ function undeclaredDependencies(after: Record<string, string>): string[] {
   return [...imported].filter((pkg) => !declared.has(pkg)).sort();
 }
 
+/** Every i18n key referenced via `t('key')` / `t("key")` / `t(\`key\`)` across the workspace. */
+function collectUsedI18nKeys(after: Record<string, string>): Set<string> {
+  const used = new Set<string>();
+  const callRe = /\bt\(\s*['"`]([A-Za-z0-9_.-]+)['"`]/g;
+  for (const [path, content] of Object.entries(after)) {
+    if (!/\.(ts|tsx|js|jsx|mts|cts)$/.test(path) || /node_modules/.test(path)) continue;
+    for (const match of content.matchAll(callRe)) {
+      used.add(match[1]);
+    }
+  }
+  return used;
+}
+
+/**
+ * Keys a FLAT i18n catalog defines — `'dotted.key': ...` at the top level.
+ * Deliberately does NOT recognize nested object keys: the i18n-ready mod
+ * mandates flat catalogs, so a nested shape does not satisfy coverage.
+ */
+function catalogDefinedKeys(content: string): Set<string> {
+  const defined = new Set<string>();
+  const keyRe = /['"`]([A-Za-z0-9_.-]+)['"`]\s*:/g;
+  for (const match of content.matchAll(keyRe)) {
+    defined.add(match[1]);
+  }
+  return defined;
+}
+
+/** Best-effort map of a flat i18n catalog's dotted keys to their string literal values. */
+function catalogKeyValues(content: string): Map<string, string> {
+  const values = new Map<string, string>();
+  const kvRe = /['"`]([A-Za-z0-9_.-]+)['"`]\s*:\s*(['"`])((?:\\.|(?!\2).)*)\2/g;
+  for (const match of content.matchAll(kvRe)) {
+    values.set(match[1], match[3]);
+  }
+  return values;
+}
+
+/**
+ * Reduce a `pathPattern` regex source to the single concrete file path it
+ * denotes, when the pattern is simple enough to admit one unambiguous answer
+ * (e.g. `src/App\.(tsx|jsx)$` → `src/App.tsx`) — so corrective feedback can
+ * tell the model to write an exact filename instead of "match this regex".
+ * Returns null when regex machinery survives the reduction (character
+ * classes, wildcards, top-level alternation, etc.) — a corrective prompt must
+ * never assert a fabricated path.
+ */
+export function literalizePathPattern(pattern: string): string | null {
+  let result = pattern
+    .replace(/^\(\^\|\\\/\)/, '')
+    .replace(/^\^/, '')
+    .replace(/\$$/, '')
+    .replace(/\\\//g, '/')
+    .replace(/\\\./g, '.');
+
+  let previous: string;
+  do {
+    previous = result;
+    result = result.replace(/\(([^()|]+)(?:\|[^()]*)?\)/, '$1');
+  } while (result !== previous);
+
+  return /[$^*+?|\\[\]{}()]/.test(result) ? null : result;
+}
+
 /** Pure, deterministic contract check — identical verdict for any model. */
 export function verifyStepContract(
   contract: StepContract,
@@ -170,9 +233,11 @@ export function verifyStepContract(
     const matches = Object.keys(after).filter((path) => pathRe.test(path));
 
     if (matches.length === 0) {
+      const literalPath = literalizePathPattern(req.pathPattern);
+      const literalSuffix = literalPath ? ` Create the file \`${literalPath}\`.` : '';
       findings.push({
         requirement: `artifact-missing:${req.description}`,
-        detail: `Missing required artifact (${req.description}). Create a file whose path matches /${req.pathPattern}/.`,
+        detail: `Missing required artifact (${req.description}). Create a file whose path matches /${req.pathPattern}/.${literalSuffix}`,
       });
       continue;
     }
@@ -219,6 +284,44 @@ export function verifyStepContract(
     }
   }
 
+  for (const req of contract.localeCoverage ?? []) {
+    const catalogPath = Object.keys(after).find((p) => new RegExp(req.catalogPathPattern, 'i').test(p));
+    if (!catalogPath) {
+      findings.push({
+        requirement: `locale-missing:${req.description}`,
+        detail: `The i18n catalog for (${req.description}) does not exist. Create a file whose path matches /${req.catalogPathPattern}/.`,
+      });
+      continue;
+    }
+
+    const used = collectUsedI18nKeys(after);
+    const defined = catalogDefinedKeys(after[catalogPath]);
+    const missingKeys = [...used].filter((k) => !defined.has(k)).sort();
+    if (missingKeys.length > 0) {
+      findings.push({
+        requirement: `locale-coverage:${req.description}`,
+        detail: `The i18n catalog \`${catalogPath}\` (${req.description}) is missing ${missingKeys.length} key(s) that are used via t() in the app — add a real value for EACH: ${missingKeys.slice(0, 20).join(', ')}${missingKeys.length > 20 ? ', …' : ''}. Use FLAT dotted string keys.`,
+      });
+    }
+
+    if (req.requireTranslated && req.sourcePathPattern) {
+      const sourcePath = Object.keys(after).find((p) => new RegExp(req.sourcePathPattern!, 'i').test(p));
+      if (sourcePath) {
+        const srcKV = catalogKeyValues(after[sourcePath]);
+        const dstKV = catalogKeyValues(after[catalogPath]);
+        const untranslated = [...srcKV.keys()]
+          .filter((k) => dstKV.has(k) && dstKV.get(k) === srcKV.get(k) && (srcKV.get(k) || '').length > 3)
+          .sort();
+        if (untranslated.length > 0) {
+          findings.push({
+            requirement: `locale-untranslated:${req.description}`,
+            detail: `These keys in \`${catalogPath}\` are still identical to the source language (untranslated) — translate EACH: ${untranslated.slice(0, 20).join(', ')}${untranslated.length > 20 ? ', …' : ''}.`,
+          });
+        }
+      }
+    }
+  }
+
   return findings;
 }
 
@@ -230,6 +333,7 @@ function isEmptyContract(contract: StepContract): boolean {
     && !contract.requireDeclaredDependencies
     && (contract.requiredArtifacts ?? []).length === 0
     && (contract.forbiddenArtifacts ?? []).length === 0
+    && (contract.localeCoverage ?? []).length === 0
     && contract.maxAttempts === undefined
   );
 }
@@ -239,11 +343,12 @@ function isEmptyContract(contract: StepContract): boolean {
  * contributed by its attached mods (`MarketModRuntime.contract`, aggregated by
  * `collectModRuntime` in executor.ts) into a single effective contract.
  *
- *   - Booleans (`mustWriteFiles`, `forbidStubMarkers`, `requireDeclaredDependencies`)
- *     OR across base + fragments — any one requiring it makes the merged
- *     contract require it.
- *   - Arrays (`requiredArtifacts`, `forbiddenArtifacts`) concatenate, base
- *     first, so the step's own corrective feedback still surfaces first.
+ *   - Booleans (`mustWriteFiles`, `forbidStubMarkers`, `requireDeclaredDependencies`,
+ *     `haltOnBreach`) OR across base + fragments — any one requiring it makes
+ *     the merged contract require it.
+ *   - Arrays (`requiredArtifacts`, `forbiddenArtifacts`, `localeCoverage`)
+ *     concatenate, base first, so the step's own corrective feedback still
+ *     surfaces first.
  *   - `maxAttempts` takes the largest of the defined values (never let one
  *     mod's smaller budget starve another mod's requirement); `undefined`
  *     when none of them define it.
@@ -266,8 +371,10 @@ export function mergeStepContracts(
   const mustWriteFiles = all.some((c) => Boolean(c.mustWriteFiles));
   const forbidStubMarkers = all.some((c) => Boolean(c.forbidStubMarkers));
   const requireDeclaredDependencies = all.some((c) => Boolean(c.requireDeclaredDependencies));
+  const haltOnBreach = all.some((c) => Boolean(c.haltOnBreach));
   const requiredArtifacts = all.flatMap((c) => c.requiredArtifacts ?? []);
   const forbiddenArtifacts = all.flatMap((c) => c.forbiddenArtifacts ?? []);
+  const localeCoverage = all.flatMap((c) => c.localeCoverage ?? []);
   const declaredMaxAttempts = all
     .map((c) => c.maxAttempts)
     .filter((value): value is number => typeof value === 'number');
@@ -279,12 +386,32 @@ export function mergeStepContracts(
     ...(requireDeclaredDependencies ? { requireDeclaredDependencies } : {}),
     ...(requiredArtifacts.length > 0 ? { requiredArtifacts } : {}),
     ...(forbiddenArtifacts.length > 0 ? { forbiddenArtifacts } : {}),
+    ...(localeCoverage.length > 0 ? { localeCoverage } : {}),
     ...(maxAttempts !== undefined ? { maxAttempts } : {}),
+    ...(haltOnBreach ? { haltOnBreach } : {}),
   };
 }
 
-/** Build the corrective feedback appended to the step prompt on the next attempt. */
-export function buildCorrectivePrompt(findings: GuardrailFinding[]): string {
+/**
+ * Build the corrective feedback appended to the step prompt on the next
+ * attempt. Plain (default): the standard deterministic failure block. Escalated
+ * (`opts.escalate`, set once the guardrail loop detects the SAME findings as
+ * the previous attempt): a blunter, more directive block — the model made no
+ * progress on plain feedback, so the corrective becomes harder to ignore
+ * instead of the loop surrendering early.
+ */
+export function buildCorrectivePrompt(findings: GuardrailFinding[], opts?: { escalate?: boolean }): string {
+  if (opts?.escalate) {
+    return [
+      '',
+      '── GUARDRAIL ESCALATION (you produced the SAME gaps again) ──',
+      'You repeated the identical failure. The step is NOT complete until every item below exists on disk. Do exactly this and nothing else:',
+      ...findings.map((finding, index) => `${index + 1}. ${finding.detail}`),
+      'Call write_file for EACH file above — verbatim path, COMPLETE content, zero TODO/FIXME/placeholder.',
+      'Do NOT call list_directory or read_file again, and do NOT explain or summarize.',
+      'Producing every file now is the ONLY action that ends this step.',
+    ].join('\n');
+  }
   return [
     '',
     '── GUARDRAIL FAILURE (automated, deterministic check) ──',

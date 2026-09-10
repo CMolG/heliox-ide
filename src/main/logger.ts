@@ -31,16 +31,43 @@ class SafeLogger {
   warn(...args: unknown[]): void  { this.write('warn', args); }
   error(...args: unknown[]): void { this.write('error', args); }
 
+  /**
+   * Always-persisted error, for crash handlers only.
+   *
+   * `error()` prefers the console and only falls back to a file when the
+   * console itself is broken. That is the wrong trade for a fatal: in dev the
+   * console IS a terminal that dies with the process, so the one line that
+   * explains why the app went away is exactly the line that gets lost. This
+   * writes to BOTH sinks, synchronously, because the process may be
+   * milliseconds from exiting.
+   */
+  fatal(...args: unknown[]): void {
+    const line = this.format('fatal', args);
+    try {
+      console.error('[Fluxor][FATAL]', ...args);
+    } catch { /* console may already be gone — the file sink below is the point */ }
+    this.writeToFile(line);
+  }
+
+  /** Absolute path of the persistent sink, so startup can point a human at it. */
+  get filePath(): string | null {
+    return this.ensureFileSink();
+  }
+
   // ── Internals ───────────────────────────────────────────────────
+
+  private format(level: LogLevel | 'fatal', args: unknown[]): string {
+    const message = args.map(a =>
+      typeof a === 'string' ? a : (a instanceof Error ? a.stack ?? a.message : JSON.stringify(a)),
+    ).join(' ');
+    return `${new Date().toISOString()} [Fluxor][${level.toUpperCase()}] ${message}`;
+  }
 
   private write(level: LogLevel, args: unknown[]): void {
     if (LEVEL_ORDER[level] < LEVEL_ORDER[this.minLevel]) return;
 
     const prefix = `[Fluxor][${level.toUpperCase()}]`;
-    const message = args.map(a =>
-      typeof a === 'string' ? a : (a instanceof Error ? a.stack ?? a.message : JSON.stringify(a)),
-    ).join(' ');
-    const line = `${new Date().toISOString()} ${prefix} ${message}`;
+    const line = this.format(level, args);
 
     // Attempt console write first (fast path)
     if (!this.consoleFailed) {

@@ -11,13 +11,48 @@
  *
  * Architectural role:
  * - UI boundary module in the renderer process (presentation + local interaction).
+ *
+ * Task 13 (adoption plan #20), Fase 2: this file used to own its OWN shell
+ * (group headers, row markup, hover/locate/rename wiring) duplicating what
+ * `@cmolg/daba-engine`'s `ComponentsPanel` now provides generically. This
+ * file keeps ONLY domain data + decoration: it computes `ComponentsPanelGroup[]`
+ * from desktop-store (grouping/labels — 1:1 with the groups that existed
+ * before this task, task13-decisiones.md Q8), and supplies `renderRow` to
+ * decorate each row with the exact same icons/badges/buttons/chips as
+ * before. Locate (pan), rename (in-place edit), hover-highlight, and the
+ * empty state are now the motor's job — see `onLocate`/`renamingId`/
+ * `itemTestId`/`emptyState` wiring below and `engine-bridge.ts`'s
+ * `syncEngineItems`/`syncEngineSelection` for how `engine.items` gets
+ * populated in the first place.
+ *
+ * CAUTION preserved from the orchestrator's review: content nested INSIDE a
+ * `renderRow` (attached-item chips, a grid's child-window rows, a flow's
+ * child StepRows) used to be RENDERED AS SIBLINGS of the row in the old
+ * shell — clicking/right-clicking them was inert (no ancestor listener). Now
+ * that they're DESCENDANTS of the motor's own row div (which owns
+ * onClick=locate()/onContextMenu=onContextMenuRequest), every nested
+ * interactive element below stops propagation on click/dblclick/contextmenu
+ * so it doesn't ALSO fire the PARENT row's locate/context-menu — see the
+ * inline comments at each nested block, and
+ * `NodeTree.nestedRowIsolation.test.tsx` for the regression test.
  */
-import React, { useCallback, useState, useRef, useEffect } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useDesktopStore } from '@/renderer/store/desktop-store';
 import { useHarnessStore } from '@/renderer/store/harness-store';
+import { engineStore, parseBridgeId, namespacedId, type BridgeItemKind } from '@/renderer/store/engine-bridge';
 import { LucideIcon } from './desktop/LucideIcon';
 import { theme } from '@/renderer/logic/theme';
-import type { AttachableType, FrameGraphNode, MentalGraphNode, StepGraphNode } from '@/types/desktop';
+// NodeTree's inline right-click menu adopted onto @cmolg/daba-engine's
+// unified ContextMenu (adoption plan #20, javadaba-web Core, Task 10) — one
+// provider per CtxTarget.kind ('window' | 'mental' | 'grid' | 'step'; 'flow'
+// and 'attachable' items get NO context menu, matching today — see the
+// onContextMenuRequest wiring below).
+import {
+  ContextMenu, useContextMenuState, ComponentsPanel, EngineProvider, centerOn,
+  type ContextMenuContext, type ContextMenuEntry, type ContextMenuProviders,
+  type ComponentsPanelGroup, type EngineItem,
+} from '@cmolg/daba-engine';
+import type { AttachableType, DesktopWindow, FrameGraphNode, MentalGraphNode, StepGraphNode } from '@/types/desktop';
 import type { AgenticExecutionStatus } from '@/types/harness';
 
 const ELECTRIC_BLUE = '#4285F4';
@@ -29,10 +64,10 @@ const TYPE_META: Record<AttachableType, { color: string; icon: string; label: st
   step: { color: '#2BB673', icon: 'ListChecks', label: 'Step' },
 };
 
-// aria-label prefix per window type — renderGroup() is shared by Chats,
-// Backlog, Plugins, and Prompt Dev Zone, so the prefix must key off the
-// row's own win.type rather than a single hardcoded word (see File:/Grid:
-// precedent below for file-viewer/grid rows).
+// aria-label prefix per window type — windowAriaLabel() is shared by every
+// window row regardless of which group it's in, so the prefix must key off
+// the row's own win.type rather than a single hardcoded word (see the
+// file-explorer/file-viewer special case in windowAriaLabel() below).
 const WINDOW_KIND_LABEL: Record<string, string> = {
   backlog: 'Backlog',
   plugin: 'Plugin',
@@ -81,13 +116,21 @@ function worstStepStatus(
  * A single step row inside the Flows/Steps section — shared by a frame's
  * child steps AND by orphan steps (steps that exist on the canvas but aren't
  * referenced by any frame's `childIds`, rendered in their own "Steps" group).
- * Both call sites pass a distinct `testIdPrefix` so their existing/new test
- * ids stay stable and distinguishable (`nav-flow-child-*` vs `nav-step-*`).
  *
- * Carries the same onContextMenu wiring the old (buggy) Mental Cards row
- * used to give every step — that row disappears now that Mental Cards is
- * restricted to `type === 'mental'` (see below), so without this, right-click
- * → Locate/Delete on a step would silently vanish instead of just relocating.
+ * TWO MODES, matching the two call sites below:
+ * - NESTED (a frame's child): `onNavigate`/`onContextMenuAction` are
+ *   provided — this row is a DESCENDANT of the flow's own motor row, so its
+ *   onClick/onContextMenu handlers stop propagation (see the CAUTION in this
+ *   file's header comment) after doing the same select+center /
+ *   open-context-menu work `navigateToMentalNode`/`openContextMenu` always did.
+ * - TOP-LEVEL (an orphan, rendered as the sole `renderRow` content of its
+ *   OWN motor row via the "Steps" group): `onNavigate`/`onContextMenuAction`
+ *   are omitted — no onClick/onContextMenu attributes at all, so the click/
+ *   right-click bubbles up to the motor row itself, which already handles
+ *   locate() (pan) + `onLocate` (selection) + `onContextMenuRequest` (kind
+ *   'step') generically. Omitting the handlers here (rather than adding a
+ *   redundant SECOND one that would need to fire before the row's own) is
+ *   the simpler way to get identical behavior out of one shared component.
  */
 function StepRow({
   step,
@@ -98,20 +141,20 @@ function StepRow({
 }: {
   step: StepGraphNode;
   status: AgenticExecutionStatus;
-  onNavigate: () => void;
-  onContextMenuAction: (e: React.MouseEvent) => void;
+  onNavigate?: () => void;
+  onContextMenuAction?: (e: React.MouseEvent) => void;
   testIdPrefix: string;
 }) {
   return (
     <div
       className="nav-child-item"
       data-testid={`${testIdPrefix}-${step.id}`}
-      onClick={onNavigate}
+      onClick={onNavigate ? (e) => { e.stopPropagation(); onNavigate(); } : undefined}
       onContextMenu={onContextMenuAction}
       style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 6,
         padding: '4px 12px 4px 32px',
-        cursor: 'pointer',
+        cursor: onNavigate ? 'pointer' : 'default',
         color: theme.textDim,
         fontSize: 11,
         transition: 'background 0.1s ease',
@@ -140,39 +183,54 @@ function kebabToTitle(str: string): string {
   return str.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
-/** Keyboard activation (Enter/Space) for rows using role="button" instead of a real <button>
- *  — the row hosts inner Minimize/Close buttons, so it can't itself be a <button> (invalid nesting). */
-function activateOnKey(handler: () => void) {
-  return (e: React.KeyboardEvent) => {
-    if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault();
-      handler();
-    }
-  };
+/**
+ * Viewport for the motor's `centerOn` (and this file's own `centerViewportOn`
+ * wrapper below) — `window.innerWidth - 280`/`window.innerHeight - 60`,
+ * unchanged formula, now read LAZILY (a function, not a resolved `Size`) so
+ * it reflects the sidebar's ACTUAL width at click time even if it collapses/
+ * reopens between renders (task13-decisiones.md Q1 — this is exactly what
+ * the motor's `viewport?: Size | (() => Size)` gap (E5) exists for).
+ */
+function panViewport(): { width: number; height: number } {
+  return { width: window.innerWidth - 280, height: window.innerHeight - 60 };
 }
 
 /**
  * Computes the canvasPan {x, y} that centers a canvas item (window, grid, or
  * mental/flow/step node) inside the visible viewport. This is the single
  * source of truth for that math — every "locate on canvas" action (row
- * click, keyboard activation, right-click → Locate) must call this instead
- * of re-deriving the formula, so they all agree on what "centered" means.
+ * click, keyboard activation, right-click → Locate) calls this instead of
+ * re-deriving the formula, so they all agree on what "centered" means.
  *
- * The -280/-60 offsets subtract this panel's width and the top chrome height
- * from the raw window size, since the visible canvas viewport is narrower
- * than window.innerWidth/innerHeight by exactly that much.
+ * Delegates to the motor's own `centerOn` (task13-decisiones.md Q1: with
+ * `viewport = panViewport()` and zero insets, this is algebraically
+ * IDENTICAL to the `-(pos.x*zoom) + viewportW/2 - (size.width*zoom)/2`
+ * formula this function used to compute inline — verified with a golden-
+ * value test, `NodeTree.locateViewport.test.tsx`) — a single canonical
+ * implementation instead of two that happen to agree.
  */
-function centerViewportOn(
+export function centerViewportOn(
   position: { x: number; y: number },
   size: { width: number; height: number },
   zoom: number,
 ): { x: number; y: number } {
-  const viewportW = window.innerWidth - 280;
-  const viewportH = window.innerHeight - 60;
-  return {
-    x: -(position.x * zoom) + viewportW / 2 - (size.width * zoom) / 2,
-    y: -(position.y * zoom) + viewportH / 2 - (size.height * zoom) / 2,
-  };
+  return centerOn({ x: position.x, y: position.y, width: size.width, height: size.height }, panViewport(), zoom, {});
+}
+
+type CtxTarget =
+  | { kind: 'window'; id: string }
+  | { kind: 'mental'; id: string }
+  | { kind: 'grid'; id: string }
+  | { kind: 'step'; id: string };
+
+/** `File: `/`Grid: `/`Flow: ` etc. prefix per window type — file-explorer and
+ *  file-viewer both read "File:" (previously two separate hand-rolled row
+ *  blocks that happened to agree; now one shared aria-label function). */
+function windowAriaLabel(win: DesktopWindow, isActive: boolean): string {
+  const kindLabel =
+    win.type === 'file-explorer' || win.type === 'file-viewer' ? 'File'
+    : WINDOW_KIND_LABEL[win.type] ?? 'Component';
+  return `${kindLabel}: ${win.title}${isActive ? ', active' : ''}`;
 }
 
 export function NodeTree() {
@@ -181,12 +239,12 @@ export function NodeTree() {
   const grids = useDesktopStore(s => s.grids);
   const activeWindowId = useDesktopStore(s => s.activeWindowId);
   const focusWindow = useDesktopStore(s => s.focusWindow);
+  const focusGrid = useDesktopStore(s => s.focusGrid);
   const setCanvasPan = useDesktopStore(s => s.setCanvasPan);
   const canvasZoom = useDesktopStore(s => s.canvasZoom);
   const removeWindow = useDesktopStore(s => s.removeWindow);
   const setWindowState = useDesktopStore(s => s.setWindowState);
   const connections = useDesktopStore(s => s.connections);
-  const setHoveredWindowId = useDesktopStore(s => s.setHoveredWindowId);
   const detachFromWindow = useDesktopStore(s => s.detachFromWindow);
   const removeAttachedItem = useDesktopStore(s => s.removeAttachedItem);
   const removeAttachable = useDesktopStore(s => s.removeAttachable);
@@ -204,22 +262,8 @@ export function NodeTree() {
   const updateGridTitle = useDesktopStore(s => s.updateGridTitle);
   const stepStatuses = useHarnessStore(s => s.stepStatuses);
 
-  type CtxTarget =
-    | { kind: 'window'; id: string }
-    | { kind: 'mental'; id: string }
-    | { kind: 'grid'; id: string };
-
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: CtxTarget } | null>(null);
+  const { state: contextMenuState, open: engineOpenContextMenu, close: closeContextMenu } = useContextMenuState();
   const [renamingItem, setRenamingItem] = useState<CtxTarget | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const renameInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (renamingItem && renameInputRef.current) {
-      renameInputRef.current.focus();
-      renameInputRef.current.select();
-    }
-  }, [renamingItem]);
 
   const navigateToWindow = useCallback((windowId: string) => {
     const win = useDesktopStore.getState().windows.find(w => w.id === windowId);
@@ -231,10 +275,9 @@ export function NodeTree() {
   const navigateToGrid = useCallback((gridId: string) => {
     const grid = useDesktopStore.getState().grids.find(g => g.id === gridId);
     if (!grid) return;
-    const focusGrid = useDesktopStore.getState().focusGrid;
     focusGrid(gridId);
     setCanvasPan(centerViewportOn(grid.position, grid.size, canvasZoom));
-  }, [setCanvasPan, canvasZoom]);
+  }, [setCanvasPan, canvasZoom, focusGrid]);
 
   // Shared by Flow rows and their child Step rows — both are `mentalNodes`
   // entries with the same position/width/height shape, so one lookup +
@@ -247,87 +290,184 @@ export function NodeTree() {
     setCanvasPan(centerViewportOn(node.position, { width: node.width, height: node.height }, canvasZoom));
   }, [setSelectedMentalNodeIds, setCanvasPan, canvasZoom]);
 
+  // Thin wrapper over the motor's open() — keeps every NESTED row's
+  // onContextMenu call site (`openContextMenu(e, {kind, id})`) unchanged.
+  // TOP-LEVEL rows (window/grid/mental/step as their own motor row) get their
+  // context menu automatically via `onContextMenuRequest` below instead.
   const openContextMenu = useCallback((e: React.MouseEvent, target: CtxTarget) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, target });
+    engineOpenContextMenu({ targetKind: target.kind, targetId: target.id, worldPos: { x: 0, y: 0 } }, { x: e.clientX, y: e.clientY });
+  }, [engineOpenContextMenu]);
+
+  const startRename = useCallback((target: CtxTarget) => {
+    setRenamingItem(target);
   }, []);
 
-  const handleContextMenuAction = useCallback((action: string) => {
-    if (!contextMenu) return;
-    const { target } = contextMenu;
-    switch (action) {
-      case 'rename': {
-        if (target.kind === 'window') {
-          const win = useDesktopStore.getState().windows.find(w => w.id === target.id);
-          if (win) setRenameValue(win.title);
-        } else if (target.kind === 'mental') {
-          const node = useDesktopStore.getState().mentalNodes.find(n => n.id === target.id);
-          if (node) setRenameValue(node.text);
-        } else if (target.kind === 'grid') {
-          const grid = useDesktopStore.getState().grids.find(g => g.id === target.id);
-          if (grid) setRenameValue(grid.title ?? `Grid ${grid.columns}×${grid.rows}`);
-        }
-        setRenamingItem(target);
-        break;
+  // One provider per CtxTarget.kind, entries ported verbatim from the old
+  // inline switch (adoption plan #20, Task 10) plus a NEW 'step' provider
+  // (orphan steps now reach the context menu through the motor's generic
+  // onContextMenuRequest, same as frame-child steps already did manually) —
+  // Rename is deliberately absent for 'step' (task13-decisiones.md Q3,
+  // corrected semantics: steps never supported rename, even though the OLD
+  // per-row menu accidentally offered it with no input to show — see this
+  // task's report for the verification). testId mirrors the old
+  // `nodetree-ctx-${action}` convention so existing e2e selectors still work.
+  const nodeTreeContextMenuProviders: ContextMenuProviders = useMemo(() => {
+    const buildEntries = (kind: CtxTarget['kind']) => (ctx: ContextMenuContext): ContextMenuEntry[] => {
+      const target: CtxTarget = { kind, id: ctx.targetId! };
+      const entries: ContextMenuEntry[] = [];
+      if (kind !== 'step') {
+        entries.push({
+          id: 'rename', testId: 'nodetree-ctx-rename', label: 'Rename',
+          icon: <LucideIcon name="Pencil" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => startRename(target),
+        });
       }
-      case 'locate':
-        if (target.kind === 'window') navigateToWindow(target.id);
-        // Deliberate behavior change: this branch used to re-derive the
-        // centering math inline and only re-center, so right-click → Locate
-        // and clicking the node's own row disagreed on whether selection
-        // followed. Delegating to navigateToMentalNode means Locate now also
-        // selects the node, matching row-click behavior (the old split was a
-        // duplication artifact, not an intentional difference).
-        else if (target.kind === 'mental') navigateToMentalNode(target.id);
-        else if (target.kind === 'grid') navigateToGrid(target.id);
-        break;
-      case 'minimize':
-        if (target.kind === 'window') {
-          const win = useDesktopStore.getState().windows.find(w => w.id === target.id);
-          if (win) setWindowState(target.id, win.state === 'minimized' ? 'normal' : 'minimized');
-        }
-        break;
-      case 'delete':
-        if (target.kind === 'window') removeWindow(target.id);
-        else if (target.kind === 'mental') removeMentalNode(target.id);
-        else if (target.kind === 'grid') removeGrid(target.id);
-        break;
+      entries.push({
+        id: 'locate', testId: 'nodetree-ctx-locate', label: 'Locate',
+        icon: <LucideIcon name="Navigation" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+        onSelect: () => {
+          if (target.kind === 'window') navigateToWindow(target.id);
+          // Deliberate behavior change (pre-adoption): this used to
+          // re-derive the centering math inline and only re-center, so
+          // right-click → Locate and clicking the node's own row disagreed
+          // on whether selection followed. Delegating to
+          // navigateToMentalNode means Locate now also selects the node,
+          // matching row-click behavior (the old split was a duplication
+          // artifact, not an intentional difference).
+          else if (target.kind === 'mental' || target.kind === 'step') navigateToMentalNode(target.id);
+          else if (target.kind === 'grid') navigateToGrid(target.id);
+        },
+      });
+      if (kind === 'window') {
+        entries.push({
+          id: 'minimize', testId: 'nodetree-ctx-minimize', label: 'Minimize',
+          icon: <LucideIcon name="Minus" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => {
+            const win = useDesktopStore.getState().windows.find(w => w.id === target.id);
+            if (win) setWindowState(target.id, win.state === 'minimized' ? 'normal' : 'minimized');
+          },
+        });
+        entries.push({
+          id: 'delete', testId: 'nodetree-ctx-delete', label: 'Close window', danger: true,
+          icon: <LucideIcon name="Trash2" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => removeWindow(target.id),
+        });
+      } else {
+        entries.push({
+          id: 'delete', testId: 'nodetree-ctx-delete', label: 'Delete', danger: true,
+          icon: <LucideIcon name="Trash2" size={13} style={{ opacity: 0.6, flexShrink: 0 }} />,
+          onSelect: () => {
+            if (target.kind === 'mental' || target.kind === 'step') removeMentalNode(target.id);
+            else if (target.kind === 'grid') removeGrid(target.id);
+          },
+        });
+      }
+      return entries;
+    };
+    return {
+      window: buildEntries('window'),
+      mental: buildEntries('mental'),
+      grid: buildEntries('grid'),
+      step: buildEntries('step'),
+    };
+  }, [startRename, navigateToWindow, navigateToMentalNode, navigateToGrid, setWindowState, removeWindow, removeMentalNode, removeGrid]);
+
+  // ─── Motor-generic row callbacks (ComponentsPanel props) ────────────
+
+  const itemLabel = useCallback((item: EngineItem): string => {
+    return (item.meta as { label?: string } | undefined)?.label ?? item.id;
+  }, []);
+
+  const itemClassName = useCallback((item: EngineItem): string | undefined => {
+    return item.kind === 'window' || item.kind === 'grid' || item.kind === 'flow' ? 'nav-window-item' : 'nav-child-item';
+  }, []);
+
+  const itemTestId = useCallback((item: EngineItem): string | undefined => {
+    const parsed = parseBridgeId(item.id);
+    if (!parsed) return undefined;
+    const { kind, rawId } = parsed;
+    if (kind === 'window') return `nav-window-${rawId}`;
+    if (kind === 'grid') return `nav-grid-${rawId}`;
+    if (kind === 'flow') return `nav-flow-${rawId}`;
+    // 'step' is deliberately OMITTED here: an orphan step's own StepRow
+    // (rendered as this row's sole renderRow content) already carries
+    // `nav-step-${rawId}` on its inner div — giving the OUTER motor row the
+    // SAME testid too would make `getByTestId` match two elements at once.
+    if (kind === 'mental') return `nav-mental-node-${rawId}`;
+    if (kind === 'attachable') {
+      const att = attachables.find(a => a.id === rawId);
+      return att ? `nav-unattached-${att.type}-${att.name}` : undefined;
     }
-    setContextMenu(null);
-  }, [contextMenu, navigateToWindow, navigateToGrid, navigateToMentalNode, setWindowState, removeWindow, removeMentalNode, removeGrid]);
+    return undefined;
+  }, [attachables]);
 
-  const commitRename = useCallback(() => {
-    if (renamingItem && renameValue.trim()) {
-      if (renamingItem.kind === 'window') updateWindowTitle(renamingItem.id, renameValue.trim());
-      else if (renamingItem.kind === 'mental') updateMentalNode(renamingItem.id, { text: renameValue.trim() });
-      else if (renamingItem.kind === 'grid') updateGridTitle(renamingItem.id, renameValue.trim());
+  const itemAriaLabel = useCallback((item: EngineItem): string | undefined => {
+    const parsed = parseBridgeId(item.id);
+    if (!parsed) return undefined;
+    if (parsed.kind === 'window') {
+      const win = windows.find(w => w.id === parsed.rawId);
+      return win ? windowAriaLabel(win, win.id === activeWindowId) : undefined;
     }
-    setRenamingItem(null);
-  }, [renamingItem, renameValue, updateWindowTitle, updateMentalNode, updateGridTitle]);
-
-  const toggleMinimize = useCallback((windowId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const win = useDesktopStore.getState().windows.find(w => w.id === windowId);
-    if (win) {
-      setWindowState(windowId, win.state === 'minimized' ? 'normal' : 'minimized');
+    if (parsed.kind === 'grid') {
+      const grid = grids.find(g => g.id === parsed.rawId);
+      return grid ? `Grid: ${grid.title ?? `${grid.columns}×${grid.rows}`}` : undefined;
     }
-  }, [setWindowState]);
+    if (parsed.kind === 'flow') {
+      const frame = mentalNodes.find(n => n.id === parsed.rawId) as FrameGraphNode | undefined;
+      return frame ? `Flow: ${frame.data.title}` : undefined;
+    }
+    return undefined; // mental/step/attachable rows have no aria-label today.
+  }, [windows, grids, mentalNodes, activeWindowId]);
 
-  const handleRemove = useCallback((windowId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    removeWindow(windowId);
-  }, [removeWindow]);
+  const renameInputTestId = useCallback((item: EngineItem): string | undefined => {
+    const parsed = parseBridgeId(item.id);
+    if (!parsed) return undefined;
+    if (parsed.kind === 'window') return `nav-window-rename-input-${parsed.rawId}`;
+    if (parsed.kind === 'grid') return `nav-grid-rename-input-${parsed.rawId}`;
+    if (parsed.kind === 'mental') return `nav-mental-rename-input-${parsed.rawId}`;
+    return undefined; // step/flow/attachable never support rename.
+  }, []);
 
-  const handleDetach = useCallback((windowId: string, type: AttachableType, name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    detachFromWindow(windowId, type, name);
-  }, [detachFromWindow]);
+  const onRename = useCallback((id: string, name: string) => {
+    const parsed = parseBridgeId(id);
+    if (!parsed) return;
+    if (parsed.kind === 'window') updateWindowTitle(parsed.rawId, name);
+    else if (parsed.kind === 'grid') updateGridTitle(parsed.rawId, name);
+    else if (parsed.kind === 'mental') updateMentalNode(parsed.rawId, { text: name });
+  }, [updateWindowTitle, updateGridTitle, updateMentalNode]);
 
-  const handleRemoveAttached = useCallback((windowId: string, type: AttachableType, name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    removeAttachedItem(windowId, type, name);
-  }, [removeAttachedItem]);
+  // Domain side-effect fired AFTER the motor's own locate() pan (see
+  // ComponentsPanel's onLocate doc-comment) — this is the generic-row
+  // equivalent of what navigateToWindow/navigateToGrid/navigateToMentalNode
+  // already do for the context-menu 'locate' action above.
+  const onLocate = useCallback((item: EngineItem) => {
+    const parsed = parseBridgeId(item.id);
+    if (!parsed) return;
+    if (parsed.kind === 'window') focusWindow(parsed.rawId);
+    else if (parsed.kind === 'grid') focusGrid(parsed.rawId);
+    else if (parsed.kind === 'mental' || parsed.kind === 'step' || parsed.kind === 'flow') {
+      setSelectedMentalNodeIds([parsed.rawId]);
+    }
+    // 'attachable': no domain side-effect — matches today (Unattached rows
+    // only ever panned the canvas, never selected/focused anything).
+  }, [focusWindow, focusGrid, setSelectedMentalNodeIds]);
+
+  // Context menu for TOP-LEVEL motor rows (window/grid/mental/step). 'flow'
+  // and 'attachable' get no context menu — matches today exactly for
+  // attachables (never had one) and flows (frames never had one either); for
+  // windows, file-explorer/file-viewer rows ALSO never had a context menu
+  // (only the "Files" special-case row block, unlike Backlog/Plugins/Prompt
+  // Dev Zone's renderGroup()) — preserved via the type guard below.
+  const onContextMenuRequest = useCallback((kind: string, id: string, _worldPos: unknown, screenPos: { x: number; y: number }) => {
+    if (kind === 'window') {
+      const win = windows.find(w => w.id === id);
+      if (!win || win.type === 'file-explorer' || win.type === 'file-viewer') return;
+    }
+    if (kind !== 'window' && kind !== 'grid' && kind !== 'mental' && kind !== 'step') return;
+    engineOpenContextMenu({ targetKind: kind, targetId: id, worldPos: { x: 0, y: 0 } }, screenPos);
+  }, [windows, engineOpenContextMenu]);
 
   // Sort: active first, then by zIndex desc
   const sortedWindows = [...windows].sort((a, b) => {
@@ -338,11 +478,7 @@ export function NodeTree() {
 
   // 'Chats' group retired (chats→steps re-architecture, F0 decision 2,
   // 2026-07-10) — chat is no longer a window surface at all, and F0
-  // explicitly does not preserve it in any reduced form ("no se conserva
-  // reducido"), so this section is removed outright rather than kept as an
-  // always-empty group (renderGroup already no-ops on an empty list, but a
-  // group that can structurally never have content again is dead weight,
-  // not a harmless default).
+  // explicitly does not preserve it in any reduced form.
   const fileWindows = sortedWindows.filter(w => w.type === 'file-explorer');
   const fileViewerWindows = sortedWindows.filter(w => w.type === 'file-viewer');
   const pluginWindows = sortedWindows.filter(w => w.type === 'plugin');
@@ -352,18 +488,14 @@ export function NodeTree() {
   // Flows on the canvas — FrameGraphNodes among mentalNodes (pipeline frames).
   const frames = mentalNodes.filter((n): n is FrameGraphNode => n.type === 'frame');
   // Steps that exist on the canvas but aren't referenced by any frame's
-  // childIds — previously these rendered nowhere (Flows only showed frames'
-  // OWN children; Mental Cards leaked them in as "Untitled card" instead of
-  // giving them a real home). They get a "Steps" group inside Flows/Steps.
+  // childIds — get a "Steps" group inside Flows/Steps.
   const orphanSteps = mentalNodes.filter(
     (n): n is StepGraphNode => n.type === 'step' && !frames.some(f => f.data.childIds.includes(n.id)),
   );
-  // Mental Cards proper — plain MentalGraphNodes only. Frames and steps
-  // (frame-children AND orphans) get their own section above instead of
-  // leaking in here as a spurious "Untitled card".
+  // Mental Cards proper — plain MentalGraphNodes only.
   const cards = mentalNodes.filter((n): n is MentalGraphNode => n.type === 'mental');
 
-  const getAttachedItems = (win: typeof windows[0]) => {
+  const getAttachedItems = (win: DesktopWindow) => {
     const items: Array<{ type: AttachableType; name: string }> = [];
     if (win.roleId) items.push({ type: 'role', name: win.roleId });
     if (win.flowId) items.push({ type: 'flow', name: win.flowId });
@@ -373,140 +505,144 @@ export function NodeTree() {
     return items;
   };
 
-  const renderGroup = (label: string, items: typeof windows) => {
-    if (items.length === 0) return null;
-    return (
-      <div>
-        <div style={{
-          padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
-          textTransform: 'uppercase', letterSpacing: '0.05em',
-          color: theme.textGhost,
-        }}>
-          {label} ({items.length})
-        </div>
-        {items.map(win => {
-          const isActive = win.id === activeWindowId;
-          const isMinimized = win.state === 'minimized';
-          const connCount = connections.filter(
-            c => c.sourceWindowId === win.id || c.targetWindowId === win.id
-          ).length;
-          const attachedItems = getAttachedItems(win);
+  // ─── ComponentsPanelGroup[] — 1:1 with the groups that existed before
+  // this task (task13-decisiones.md Q8). Empty groups are simply omitted
+  // (ComponentsPanel's own `emptyState` fires when ALL groups are empty/gone
+  // — see below), matching the old appear/disappear-per-section behavior.
 
-          return (
-            <div key={win.id}>
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => navigateToWindow(win.id)}
-                onKeyDown={activateOnKey(() => navigateToWindow(win.id))}
-                onMouseEnter={() => setHoveredWindowId(win.id)}
-                onMouseLeave={() => setHoveredWindowId(null)}
-                onContextMenu={(e) => openContextMenu(e, { kind: 'window', id: win.id })}
-                aria-label={`${WINDOW_KIND_LABEL[win.type] ?? 'Component'}: ${win.title}${isActive ? ', active' : ''}`}
-                data-testid={`nav-window-${win.id}`}
-                className="nav-window-item"
-                style={{
-                  width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 12px', border: 'none', textAlign: 'left', cursor: 'pointer',
-                  background: isActive ? `${ELECTRIC_BLUE}12` : 'transparent',
-                  borderLeft: isActive ? `2px solid ${ELECTRIC_BLUE}` : '2px solid transparent',
-                  color: isMinimized ? theme.textGhost : theme.textSecondary,
-                  fontSize: 12, transition: 'background 0.1s ease, border-color 0.1s ease',
-                  opacity: isMinimized ? 0.5 : 1,
-                }}
-              >
-                <LucideIcon
-                  name={win.iconName}
-                  size={14}
-                  style={{ flexShrink: 0, opacity: 0.7 }}
-                />
-                {renamingItem?.kind === 'window' && renamingItem.id === win.id ? (
-                  <input
-                    ref={renameInputRef}
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitRename();
-                      if (e.key === 'Escape') setRenamingItem(null);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    data-testid={`nav-window-rename-input-${win.id}`}
-                    style={{
-                      flex: 1, minWidth: 0, fontSize: 12,
-                      background: 'rgba(255,255,255,0.08)',
-                      border: `1px solid ${ELECTRIC_BLUE}`,
-                      borderRadius: 4, padding: '1px 4px',
-                      color: theme.textSecondary, outline: 'none',
-                      fontWeight: isActive ? 500 : 400,
-                    }}
-                  />
-                ) : (
-                <span style={{
-                  flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap', fontWeight: isActive ? 500 : 400,
-                }}>
-                  {win.title}
-                </span>
-                )}
+  const groups: ComponentsPanelGroup[] = [];
+  if (fileWindows.length > 0 || fileViewerWindows.length > 0) {
+    groups.push({
+      id: 'files',
+      label: `Files (${fileWindows.length + fileViewerWindows.length})`,
+      itemIds: [...fileWindows, ...fileViewerWindows].map(w => `win:${w.id}`),
+    });
+  }
+  if (backlogWindows.length > 0) {
+    groups.push({ id: 'backlog', label: `Backlog (${backlogWindows.length})`, itemIds: backlogWindows.map(w => `win:${w.id}`) });
+  }
+  if (pluginWindows.length > 0) {
+    groups.push({ id: 'plugins', label: `Plugins (${pluginWindows.length})`, itemIds: pluginWindows.map(w => `win:${w.id}`) });
+  }
+  if (promptDevWindows.length > 0) {
+    groups.push({ id: 'prompt-dev-zone', label: `Prompt Dev Zone (${promptDevWindows.length})`, itemIds: promptDevWindows.map(w => `win:${w.id}`) });
+  }
+  if (frames.length > 0 || orphanSteps.length > 0) {
+    const flowsLabel = orphanSteps.length > 0
+      ? `Flows / Steps (${frames.length + orphanSteps.length})`
+      : `Flows (${frames.length})`;
+    groups.push({ id: 'flows', label: flowsLabel, itemIds: frames.map(f => `flow:${f.id}`) });
+    if (orphanSteps.length > 0) {
+      groups.push({ id: 'steps', label: `Steps (${orphanSteps.length})`, itemIds: orphanSteps.map(s => `step:${s.id}`) });
+    }
+  }
+  if (grids.length > 0) {
+    groups.push({ id: 'grids', label: `Grids (${grids.length})`, itemIds: grids.map(g => `grid:${g.id}`) });
+  }
+  if (attachables.length > 0) {
+    groups.push({ id: 'unattached', label: `Unattached (${attachables.length})`, itemIds: attachables.map(a => `att:${a.id}`) });
+  }
+  if (cards.length > 0) {
+    groups.push({ id: 'mental-cards', label: `Mental Cards (${cards.length})`, itemIds: cards.map(c => `mental:${c.id}`) });
+  }
 
-                {connCount > 0 && (
-                  <span style={{
-                    fontSize: 9, padding: '1px 5px', borderRadius: 8,
-                    background: `${ELECTRIC_BLUE}1f`,
-                    color: ELECTRIC_BLUE, flexShrink: 0,
-                  }}>
-                    {connCount}
-                  </span>
-                )}
+  // ─── renderRow — per-kind decoration ─────────────────────────────
 
-                <button
-                  onClick={(e) => toggleMinimize(win.id, e)}
-                  title={isMinimized ? 'Show' : 'Hide'}
-                  aria-label={`${isMinimized ? 'Show' : 'Minimize'} ${win.title}`}
-                  style={{
-                    background: 'none', border: 'none', color: theme.textGhost,
-                    cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                    display: 'flex', alignItems: 'center',
-                  }}
-                >
-                  <LucideIcon name={isMinimized ? 'Plus' : 'Minus'} size={10} />
-                </button>
+  const renderRow = useCallback((item: EngineItem): React.ReactNode => {
+    const parsed = parseBridgeId(item.id);
+    if (!parsed) return null;
+    const { kind, rawId } = parsed;
 
-                <button
-                  onClick={(e) => handleRemove(win.id, e)}
-                  title="Close"
-                  aria-label={`Close ${win.title}`}
-                  style={{
-                    background: 'none', border: 'none', color: theme.textGhost,
-                    cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                    display: 'flex', alignItems: 'center',
-                  }}
-                >
-                  <LucideIcon name="X" size={10} />
-                </button>
-              </div>
+    // ── Windows ──────────────────────────────────────────────────
+    if (kind === 'window') {
+      const win = windows.find(w => w.id === rawId);
+      if (!win) return null;
+      const isActive = win.id === activeWindowId;
+      const isMinimized = win.state === 'minimized';
 
-              {/* Attached children (roles, flows, mods) */}
+      const toggleMinimize = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setWindowState(win.id, win.state === 'minimized' ? 'normal' : 'minimized');
+      };
+      const handleRemove = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        removeWindow(win.id);
+      };
+
+      // Compact file-viewer row — no connCount badge, no attached-item chips
+      // (file-viewer windows never carry role/mod/flow attachments).
+      if (win.type === 'file-viewer') {
+        return (
+          <>
+            <LucideIcon name="FileCode2" size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isActive ? 500 : 400, fontSize: 11, color: isMinimized ? theme.textGhost : theme.textDim }}>
+              {win.title}
+            </span>
+            <button onClick={toggleMinimize} title={isMinimized ? 'Show' : 'Hide'} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+              <LucideIcon name={isMinimized ? 'Plus' : 'Minus'} size={10} />
+            </button>
+            <button onClick={handleRemove} title="Close" aria-label={`Close ${win.title}`} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+              <LucideIcon name="X" size={10} />
+            </button>
+          </>
+        );
+      }
+
+      const connCount = connections.filter(c => c.sourceWindowId === win.id || c.targetWindowId === win.id).length;
+      const attachedItems = getAttachedItems(win);
+      // Read-only chips (no testid/buttons) for file-explorer windows — the
+      // old "Files" block never rendered unlink/close on these; interactive
+      // chips (testid + unlink/remove) for every other window type, matching
+      // the old renderGroup() row.
+      const chipsInteractive = win.type !== 'file-explorer';
+
+      return (
+        <>
+          <LucideIcon name={win.iconName} size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+          <span style={{
+            flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            fontWeight: isActive ? 500 : 400, color: isMinimized ? theme.textGhost : theme.textSecondary,
+          }}>
+            {win.title}
+          </span>
+          {connCount > 0 && (
+            <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 8, background: `${ELECTRIC_BLUE}1f`, color: ELECTRIC_BLUE, flexShrink: 0 }}>
+              {connCount}
+            </span>
+          )}
+          <button onClick={toggleMinimize} title={isMinimized ? 'Show' : 'Hide'} aria-label={`${isMinimized ? 'Show' : 'Minimize'} ${win.title}`} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+            <LucideIcon name={isMinimized ? 'Plus' : 'Minus'} size={10} />
+          </button>
+          <button onClick={handleRemove} title="Close" aria-label={`Close ${win.title}`} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+            <LucideIcon name="X" size={10} />
+          </button>
+
+          {/* Attached children (roles, flows, mods) — NESTED inside this
+              row now (used to be siblings, see this file's header CAUTION):
+              every interactive bit below stops propagation. */}
+          {attachedItems.length > 0 && (
+            <div
+              style={{ position: 'absolute', left: 0, right: 0, top: '100%' }}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+            >
               {attachedItems.map(item => {
                 const meta = TYPE_META[item.type];
                 const winRoleColor = win.roleId && marketInventory
                   ? (() => {
-                      const r = marketInventory.roles.find((rl: any) => rl.name === win.roleId);
+                      const r = marketInventory.roles.find((rl) => rl.name === win.roleId);
                       if (!r?.color) return null;
                       return r.color.startsWith('#') ? r.color : `#${r.color}`;
                     })()
                   : null;
                 const childBorderColor = isActive ? (winRoleColor ?? ELECTRIC_BLUE) : 'transparent';
-
                 return (
                   <div
                     key={`${win.id}-${item.type}-${item.name}`}
                     className="nav-child-item"
-                    data-testid={`nav-child-${item.type}-${item.name}`}
+                    data-testid={chipsInteractive ? `nav-child-${item.type}-${item.name}` : undefined}
                     data-parent-active={isActive}
-                    onMouseEnter={() => setHoveredWindowId(win.id)}
-                    onMouseLeave={() => setHoveredWindowId(null)}
                     style={{
                       width: '100%', display: 'flex', alignItems: 'center', gap: 6,
                       padding: '4px 12px 4px 32px',
@@ -518,669 +654,265 @@ export function NodeTree() {
                       background: isActive ? `${winRoleColor ?? ELECTRIC_BLUE}08` : 'transparent',
                     }}
                   >
-                    <LucideIcon
-                      name={meta.icon}
-                      size={12}
-                      style={{ flexShrink: 0, color: meta.color, opacity: 0.8 }}
-                    />
-                    <span style={{
-                      flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap', fontSize: 11,
-                    }}>
+                    <LucideIcon name={meta.icon} size={12} style={{ flexShrink: 0, color: meta.color, opacity: 0.8 }} />
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }}>
                       {kebabToTitle(item.name)}
                     </span>
                     <span style={{
                       fontSize: 8, padding: '0px 4px', borderRadius: 3,
-                      background: `${meta.color}15`,
-                      color: meta.color,
-                      border: `1px solid ${meta.color}30`,
-                      flexShrink: 0, textTransform: 'uppercase', fontWeight: 600,
-                      letterSpacing: '0.03em',
+                      background: `${meta.color}15`, color: meta.color, border: `1px solid ${meta.color}30`,
+                      flexShrink: 0, textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.03em',
                     }}>
                       {meta.label}
                     </span>
-
-                    <button
-                      onClick={(e) => handleDetach(win.id, item.type, item.name, e)}
-                      title="Unlink"
-                      aria-label={`Unlink ${kebabToTitle(item.name)} from ${win.title}`}
-                      data-testid={`nav-child-unlink-${item.type}-${item.name}`}
-                      style={{
-                        background: 'none', border: 'none', color: theme.textGhost,
-                        cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                        display: 'flex', alignItems: 'center',
-                      }}
-                    >
-                      <LucideIcon name="Unlink" size={10} />
-                    </button>
-
-                    <button
-                      onClick={(e) => handleRemoveAttached(win.id, item.type, item.name, e)}
-                      title="Remove"
-                      aria-label={`Remove ${kebabToTitle(item.name)}`}
-                      data-testid={`nav-child-close-${item.type}-${item.name}`}
-                      style={{
-                        background: 'none', border: 'none', color: theme.textGhost,
-                        cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                        display: 'flex', alignItems: 'center',
-                      }}
-                    >
-                      <LucideIcon name="X" size={10} />
-                    </button>
+                    {chipsInteractive && (
+                      <>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); detachFromWindow(win.id, item.type, item.name); }}
+                          title="Unlink" aria-label={`Unlink ${kebabToTitle(item.name)} from ${win.title}`}
+                          data-testid={`nav-child-unlink-${item.type}-${item.name}`}
+                          style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                        >
+                          <LucideIcon name="Unlink" size={10} />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); removeAttachedItem(win.id, item.type, item.name); }}
+                          title="Remove" aria-label={`Remove ${kebabToTitle(item.name)}`}
+                          data-testid={`nav-child-close-${item.type}-${item.name}`}
+                          style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                        >
+                          <LucideIcon name="X" size={10} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 );
               })}
             </div>
-          );
-        })}
-      </div>
-    );
-  };
+          )}
+        </>
+      );
+    }
+
+    // ── Grids ────────────────────────────────────────────────────
+    if (kind === 'grid') {
+      const grid = grids.find(g => g.id === rawId);
+      if (!grid) return null;
+      const childWindowIds = Array.from(new Set(grid.cells.filter((id): id is string => Boolean(id))));
+      const childWindows = childWindowIds.map(id => windows.find(w => w.id === id)).filter((w): w is DesktopWindow => Boolean(w));
+      return (
+        <>
+          <LucideIcon name="LayoutGrid" size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {grid.title ?? `Grid ${grid.columns}×${grid.rows}`}
+          </span>
+          <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 8, background: 'rgba(120,160,255,0.1)', color: 'rgba(120,160,255,0.6)', flexShrink: 0 }}>
+            {childWindows.length}/{grid.cells.length}
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); removeGrid(grid.id); }}
+            title="Remove grid" aria-label={`Remove grid ${grid.title ?? `${grid.columns}×${grid.rows}`}`}
+            data-testid={`nav-grid-close-${grid.id}`}
+            style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+          >
+            <LucideIcon name="X" size={10} />
+          </button>
+          {childWindows.length > 0 && (
+            <div
+              style={{ position: 'absolute', left: 0, right: 0, top: '100%' }}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+            >
+              {childWindows.map(cw => (
+                <div
+                  key={cw.id}
+                  className="nav-child-item"
+                  data-testid={`nav-grid-child-${cw.id}`}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px 4px 32px', cursor: 'default', color: theme.textDim, fontSize: 11, transition: 'background 0.1s ease', borderLeft: '2px solid transparent' }}
+                >
+                  <LucideIcon name={cw.iconName} size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cw.title}</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeWindowFromCell(grid.id, cw.id); }}
+                    title="Eject from grid" aria-label={`Eject ${cw.title} from grid`}
+                    data-testid={`nav-grid-eject-${cw.id}`}
+                    style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                  >
+                    <LucideIcon name="Minimize2" size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    // ── Flows (frames) ───────────────────────────────────────────
+    if (kind === 'flow') {
+      const frame = mentalNodes.find(n => n.id === rawId) as FrameGraphNode | undefined;
+      if (!frame) return null;
+      const childSteps = frame.data.childIds
+        .map(childId => mentalNodes.find(n => n.id === childId))
+        .filter((n): n is StepGraphNode => n?.type === 'step');
+      const aggregateStatus = worstStepStatus(frame.data.childIds, stepStatuses);
+      return (
+        <>
+          <LucideIcon name="Workflow" size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{frame.data.title}</span>
+          <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 8, background: 'rgba(167,139,250,0.1)', color: '#A78BFA', flexShrink: 0 }}>
+            {frame.data.childIds.length}
+          </span>
+          <span
+            aria-label={`status: ${aggregateStatus}`} title={`status: ${aggregateStatus}`}
+            data-testid={`nav-flow-status-${frame.id}`}
+            style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: STATUS_DOT_COLOR[aggregateStatus] }}
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); removeMentalNode(frame.id); }}
+            title="Remove flow" aria-label={`Remove flow ${frame.data.title}`}
+            data-testid={`nav-flow-close-${frame.id}`}
+            style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+          >
+            <LucideIcon name="X" size={10} />
+          </button>
+          {childSteps.length > 0 && (
+            <div style={{ position: 'absolute', left: 0, right: 0, top: '100%' }}>
+              {childSteps.map(step => (
+                <StepRow
+                  key={step.id}
+                  step={step}
+                  status={stepStatuses[step.id] ?? 'idle'}
+                  onNavigate={() => navigateToMentalNode(step.id)}
+                  onContextMenuAction={(e) => openContextMenu(e, { kind: 'step', id: step.id })}
+                  testIdPrefix="nav-flow-child"
+                />
+              ))}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    // ── Steps (orphans, top-level motor row — see StepRow's own doc-comment) ──
+    if (kind === 'step') {
+      const step = mentalNodes.find(n => n.id === rawId) as StepGraphNode | undefined;
+      if (!step) return null;
+      return <StepRow step={step} status={stepStatuses[step.id] ?? 'idle'} testIdPrefix="nav-step" />;
+    }
+
+    // ── Mental Cards ─────────────────────────────────────────────
+    if (kind === 'mental') {
+      const node = mentalNodes.find(n => n.id === rawId) as MentalGraphNode | undefined;
+      if (!node) return null;
+      const nodeLabel = node.text.trim() || 'Untitled card';
+      const edgeCount = mentalEdges.filter(e => e.sourceId === node.id || e.targetId === node.id).length;
+      return (
+        <>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: node.color, flexShrink: 0, border: `1px solid ${theme.borderLight}` }} />
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }}>{nodeLabel}</span>
+          {edgeCount > 0 && (
+            <span style={{ fontSize: 8, padding: '0px 3px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA', border: '1px solid #A78BFA30', flexShrink: 0, fontWeight: 600 }}>
+              {edgeCount}
+            </span>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); removeMentalNode(node.id); }}
+            title="Remove" aria-label={`Remove mental card ${nodeLabel}`}
+            data-testid={`nav-mental-node-close-${node.id}`}
+            style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+          >
+            <LucideIcon name="X" size={10} />
+          </button>
+        </>
+      );
+    }
+
+    // ── Unattached (attachables) ─────────────────────────────────
+    if (kind === 'attachable') {
+      const att = attachables.find(a => a.id === rawId);
+      if (!att) return null;
+      const meta = TYPE_META[att.type];
+      const attachableTitle = kebabToTitle(att.name);
+      return (
+        <>
+          <LucideIcon name={meta.icon} size={12} style={{ flexShrink: 0, color: meta.color, opacity: 0.8 }} />
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }}>{attachableTitle}</span>
+          <span style={{ fontSize: 8, padding: '0px 4px', borderRadius: 3, background: `${meta.color}15`, color: meta.color, border: `1px solid ${meta.color}30`, flexShrink: 0, textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.03em' }}>
+            {meta.label}
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); removeAttachable(att.id); }}
+            title="Remove" aria-label={`Remove ${attachableTitle}`}
+            data-testid={`nav-unattached-close-${att.type}-${att.name}`}
+            style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}
+          >
+            <LucideIcon name="X" size={10} />
+          </button>
+        </>
+      );
+    }
+
+    return null;
+  }, [
+    windows, grids, mentalNodes, mentalEdges, attachables, activeWindowId, connections, marketInventory,
+    stepStatuses, setWindowState, removeWindow, detachFromWindow, removeAttachedItem, removeGrid,
+    removeWindowFromCell, removeMentalNode, removeAttachable, navigateToMentalNode, openContextMenu,
+  ]);
 
   return (
-    <div data-testid="node-tree" style={{ flex: 1, overflow: 'auto', padding: '4px 0' }}>
-      {windows.length === 0 && attachables.length === 0 && grids.length === 0 && frames.length === 0 && orphanSteps.length === 0 ? (
-        <div style={{
-          padding: '24px 16px', textAlign: 'center', color: theme.textGhost, fontSize: 12,
-        }}>
-          No components open
-        </div>
-      ) : (
-        <>
-          {/* Files group: file-explorers + file-viewer child items */}
-          {(fileWindows.length > 0 || fileViewerWindows.length > 0) && (
-            <div>
-              <div style={{
-                padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
-                textTransform: 'uppercase', letterSpacing: '0.05em',
-                color: theme.textGhost,
-              }}>
-                Files ({fileWindows.length + fileViewerWindows.length})
-              </div>
-              {fileWindows.map(win => {
-                const isActive = win.id === activeWindowId;
-                const isMinimized = win.state === 'minimized';
-                const connCount = connections.filter(
-                  c => c.sourceWindowId === win.id || c.targetWindowId === win.id
-                ).length;
-                const attachedItems = getAttachedItems(win);
-                return (
-                  <div key={win.id}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => navigateToWindow(win.id)}
-                      onKeyDown={activateOnKey(() => navigateToWindow(win.id))}
-                      onMouseEnter={() => setHoveredWindowId(win.id)}
-                      onMouseLeave={() => setHoveredWindowId(null)}
-                      aria-label={`File: ${win.title}${isActive ? ', active' : ''}`}
-                      data-testid={`nav-window-${win.id}`}
-                      className="nav-window-item"
-                      style={{
-                        width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '6px 12px', border: 'none', textAlign: 'left', cursor: 'pointer',
-                        background: isActive ? `${ELECTRIC_BLUE}12` : 'transparent',
-                        borderLeft: isActive ? `2px solid ${ELECTRIC_BLUE}` : '2px solid transparent',
-                        color: isMinimized ? theme.textGhost : theme.textSecondary,
-                        fontSize: 12, transition: 'background 0.1s ease, border-color 0.1s ease',
-                        opacity: isMinimized ? 0.5 : 1,
-                      }}
-                    >
-                      <LucideIcon name={win.iconName} size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isActive ? 500 : 400 }}>{win.title}</span>
-                      {connCount > 0 && (
-                        <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 8, background: `${ELECTRIC_BLUE}1f`, color: ELECTRIC_BLUE, flexShrink: 0 }}>{connCount}</span>
-                      )}
-                      <button onClick={(e) => toggleMinimize(win.id, e)} title={isMinimized ? 'Show' : 'Hide'} aria-label={`${isMinimized ? 'Show' : 'Minimize'} ${win.title}`} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                        <LucideIcon name={isMinimized ? 'Plus' : 'Minus'} size={10} />
-                      </button>
-                      <button onClick={(e) => handleRemove(win.id, e)} title="Close" aria-label={`Close ${win.title}`} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                        <LucideIcon name="X" size={10} />
-                      </button>
-                    </div>
-                    {attachedItems.map(item => {
-                      const meta = TYPE_META[item.type];
-                      return (
-                        <div key={`${win.id}-${item.type}-${item.name}`} className="nav-child-item" style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px 4px 32px', color: theme.textDim, fontSize: 11 }}>
-                          <LucideIcon name={meta.icon} size={12} style={{ flexShrink: 0, color: meta.color, opacity: 0.8 }} />
-                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{kebabToTitle(item.name)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-              {/* File-viewer windows (individual open files) */}
-              {fileViewerWindows.map(win => {
-                const isActive = win.id === activeWindowId;
-                const isMinimized = win.state === 'minimized';
-                return (
-                  <div
-                    key={win.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => navigateToWindow(win.id)}
-                    onKeyDown={activateOnKey(() => navigateToWindow(win.id))}
-                    onMouseEnter={() => setHoveredWindowId(win.id)}
-                    onMouseLeave={() => setHoveredWindowId(null)}
-                    aria-label={`File: ${win.title}${isActive ? ', active' : ''}`}
-                    data-testid={`nav-window-${win.id}`}
-                    className="nav-window-item"
-                    style={{
-                      width: '100%', display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '4px 12px 4px 28px', border: 'none', textAlign: 'left', cursor: 'pointer',
-                      background: isActive ? `${ELECTRIC_BLUE}12` : 'transparent',
-                      borderLeft: isActive ? `2px solid ${ELECTRIC_BLUE}` : '2px solid transparent',
-                      color: isMinimized ? theme.textGhost : theme.textDim,
-                      fontSize: 11, transition: 'background 0.1s ease, border-color 0.1s ease',
-                      opacity: isMinimized ? 0.5 : 1,
-                    }}
-                  >
-                    <LucideIcon name="FileCode2" size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isActive ? 500 : 400 }}>{win.title}</span>
-                    <button onClick={(e) => toggleMinimize(win.id, e)} title={isMinimized ? 'Show' : 'Hide'} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                      <LucideIcon name={isMinimized ? 'Plus' : 'Minus'} size={10} />
-                    </button>
-                    <button onClick={(e) => handleRemove(win.id, e)} title="Close" aria-label={`Close ${win.title}`} style={{ background: 'none', border: 'none', color: theme.textGhost, cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                      <LucideIcon name="X" size={10} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {renderGroup('Backlog', backlogWindows)}
-          {renderGroup('Plugins', pluginWindows)}
-          {renderGroup('Prompt Dev Zone', promptDevWindows)}
-
-          {/* Flows — FrameGraphNodes on the canvas, with per-flow step children,
-              plus a "Steps" group (below) for steps outside any frame. */}
-          {(frames.length > 0 || orphanSteps.length > 0) && (
-            <div>
-              <div style={{
-                padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
-                textTransform: 'uppercase', letterSpacing: '0.05em',
-                color: theme.textGhost,
-              }}>
-                {orphanSteps.length > 0
-                  ? `Flows / Steps (${frames.length + orphanSteps.length})`
-                  : `Flows (${frames.length})`}
-              </div>
-              {frames.map(frame => {
-                const childSteps = frame.data.childIds
-                  .map(childId => mentalNodes.find(n => n.id === childId))
-                  .filter((n): n is StepGraphNode => n?.type === 'step');
-                const aggregateStatus = worstStepStatus(frame.data.childIds, stepStatuses);
-                return (
-                  <div key={frame.id}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => navigateToMentalNode(frame.id)}
-                      onKeyDown={activateOnKey(() => navigateToMentalNode(frame.id))}
-                      aria-label={`Flow: ${frame.data.title}`}
-                      data-testid={`nav-flow-${frame.id}`}
-                      className="nav-window-item"
-                      style={{
-                        width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '6px 12px', border: 'none', textAlign: 'left', cursor: 'pointer',
-                        background: 'transparent',
-                        borderLeft: '2px solid transparent',
-                        color: theme.textSecondary,
-                        fontSize: 12, transition: 'background 0.1s ease, border-color 0.1s ease',
-                      }}
-                    >
-                      <LucideIcon name="Workflow" size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {frame.data.title}
-                      </span>
-                      <span style={{
-                        fontSize: 9, padding: '1px 5px', borderRadius: 8,
-                        background: 'rgba(167,139,250,0.1)',
-                        color: '#A78BFA', flexShrink: 0,
-                      }}>
-                        {frame.data.childIds.length}
-                      </span>
-                      <span
-                        aria-label={`status: ${aggregateStatus}`}
-                        title={`status: ${aggregateStatus}`}
-                        data-testid={`nav-flow-status-${frame.id}`}
-                        style={{
-                          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                          background: STATUS_DOT_COLOR[aggregateStatus],
-                        }}
-                      />
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeMentalNode(frame.id); }}
-                        title="Remove flow"
-                        aria-label={`Remove flow ${frame.data.title}`}
-                        data-testid={`nav-flow-close-${frame.id}`}
-                        style={{
-                          background: 'none', border: 'none', color: theme.textGhost,
-                          cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                          display: 'flex', alignItems: 'center',
-                        }}
-                      >
-                        <LucideIcon name="X" size={10} />
-                      </button>
-                    </div>
-                    {/* Step children of this flow */}
-                    {childSteps.map(step => (
-                      <StepRow
-                        key={step.id}
-                        step={step}
-                        status={stepStatuses[step.id] ?? 'idle'}
-                        onNavigate={() => navigateToMentalNode(step.id)}
-                        onContextMenuAction={(e) => openContextMenu(e, { kind: 'mental', id: step.id })}
-                        testIdPrefix="nav-flow-child"
-                      />
-                    ))}
-                  </div>
-                );
-              })}
-              {/* Steps group — steps that exist on the canvas but aren't in
-                  any frame's childIds (dragged out, or created standalone).
-                  Previously these rendered nowhere; now they get a home here,
-                  with the exact same row/behavior as a frame's child steps. */}
-              {orphanSteps.length > 0 && (
-                <div>
-                  <div style={{
-                    padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
-                    textTransform: 'uppercase', letterSpacing: '0.05em',
-                    color: theme.textGhost,
-                  }}>
-                    Steps ({orphanSteps.length})
-                  </div>
-                  {orphanSteps.map(step => (
-                    <StepRow
-                      key={step.id}
-                      step={step}
-                      status={stepStatuses[step.id] ?? 'idle'}
-                      onNavigate={() => navigateToMentalNode(step.id)}
-                      onContextMenuAction={(e) => openContextMenu(e, { kind: 'mental', id: step.id })}
-                      testIdPrefix="nav-step"
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Grid layouts */}
-          {grids.length > 0 && (
-            <div>
-              <div style={{
-                padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
-                textTransform: 'uppercase', letterSpacing: '0.05em',
-                color: theme.textGhost,
-              }}>
-                Grids ({grids.length})
-              </div>
-              {grids.map(grid => {
-                const childWindowIds = Array.from(new Set(
-                  grid.cells.filter((id): id is string => Boolean(id))
-                ));
-                const childWindows = childWindowIds
-                  .map(id => windows.find(w => w.id === id))
-                  .filter((w): w is typeof windows[number] => Boolean(w));
-                return (
-                  <div key={grid.id}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => navigateToGrid(grid.id)}
-                      onKeyDown={activateOnKey(() => navigateToGrid(grid.id))}
-                      onContextMenu={(e) => openContextMenu(e, { kind: 'grid', id: grid.id })}
-                      aria-label={`Grid: ${grid.title ?? `${grid.columns}×${grid.rows}`}`}
-                      data-testid={`nav-grid-${grid.id}`}
-                      className="nav-window-item"
-                      style={{
-                        width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '6px 12px', border: 'none', textAlign: 'left', cursor: 'pointer',
-                        background: 'transparent',
-                        borderLeft: '2px solid transparent',
-                        color: theme.textSecondary,
-                        fontSize: 12, transition: 'background 0.1s ease, border-color 0.1s ease',
-                      }}
-                    >
-                      <LucideIcon name="LayoutGrid" size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
-                      {renamingItem?.kind === 'grid' && renamingItem.id === grid.id ? (
-                        <input
-                          ref={renameInputRef}
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onBlur={commitRename}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') commitRename();
-                            if (e.key === 'Escape') setRenamingItem(null);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          data-testid={`nav-grid-rename-input-${grid.id}`}
-                          style={{
-                            flex: 1, minWidth: 0, fontSize: 12,
-                            background: 'rgba(255,255,255,0.08)',
-                            border: `1px solid ${ELECTRIC_BLUE}`,
-                            borderRadius: 4, padding: '1px 4px',
-                            color: theme.textSecondary, outline: 'none',
-                          }}
-                        />
-                      ) : (
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {grid.title ?? `Grid ${grid.columns}×${grid.rows}`}
-                      </span>
-                      )}
-                      <span style={{
-                        fontSize: 9, padding: '1px 5px', borderRadius: 8,
-                        background: 'rgba(120,160,255,0.1)',
-                        color: 'rgba(120,160,255,0.6)', flexShrink: 0,
-                      }}>
-                        {childWindows.length}/{grid.cells.length}
-                      </span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeGrid(grid.id); }}
-                        title="Remove grid"
-                        aria-label={`Remove grid ${grid.title ?? `${grid.columns}×${grid.rows}`}`}
-                        data-testid={`nav-grid-close-${grid.id}`}
-                        style={{
-                          background: 'none', border: 'none', color: theme.textGhost,
-                          cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                          display: 'flex', alignItems: 'center',
-                        }}
-                      >
-                        <LucideIcon name="X" size={10} />
-                      </button>
-                    </div>
-                    {/* Child windows in grid cells */}
-                    {childWindows.map(cw => (
-                      <div
-                        key={cw.id}
-                        className="nav-child-item"
-                        data-testid={`nav-grid-child-${cw.id}`}
-                        style={{
-                          width: '100%', display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '4px 12px 4px 32px',
-                          cursor: 'default',
-                          color: theme.textDim,
-                          fontSize: 11,
-                          transition: 'background 0.1s ease',
-                          borderLeft: '2px solid transparent',
-                        }}
-                      >
-                        <LucideIcon name={cw.iconName} size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {cw.title}
-                        </span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); removeWindowFromCell(grid.id, cw.id); }}
-                          title="Eject from grid"
-                          aria-label={`Eject ${cw.title} from grid`}
-                          data-testid={`nav-grid-eject-${cw.id}`}
-                          style={{
-                            background: 'none', border: 'none', color: theme.textGhost,
-                            cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                            display: 'flex', alignItems: 'center',
-                          }}
-                        >
-                          <LucideIcon name="Minimize2" size={10} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Unattached items — free-floating attachables on canvas */}
-          {attachables.length > 0 && (
-            <div>
-              <div style={{
-                padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
-                textTransform: 'uppercase', letterSpacing: '0.05em',
-                color: theme.textGhost,
-              }}>
-                Unattached ({attachables.length})
-              </div>
-              {attachables.map(att => {
-                const meta = TYPE_META[att.type];
-                const attachableTitle = kebabToTitle(att.name);
-                return (
-                  <div
-                    key={att.id}
-                    className="nav-child-item"
-                    data-testid={`nav-unattached-${att.type}-${att.name}`}
-                    style={{
-                      width: '100%', display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '4px 12px 4px 20px',
-                      cursor: 'pointer',
-                      color: theme.textDim,
-                      fontSize: 11,
-                      transition: 'background 0.1s ease',
-                      borderLeft: '2px solid transparent',
-                    }}
-                    onClick={() => {
-                      const viewportW = window.innerWidth - 280;
-                      const viewportH = window.innerHeight - 60;
-                      const centerX = -(att.position.x * canvasZoom) + (viewportW / 2) - (110 * canvasZoom);
-                      const centerY = -(att.position.y * canvasZoom) + (viewportH / 2) - (30 * canvasZoom);
-                      setCanvasPan({ x: centerX, y: centerY });
-                    }}
-                  >
-                    <LucideIcon
-                      name={meta.icon}
-                      size={12}
-                      style={{ flexShrink: 0, color: meta.color, opacity: 0.8 }}
-                    />
-                    <span style={{
-                      flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap', fontSize: 11,
-                    }}>
-                      {attachableTitle}
-                    </span>
-                    <span style={{
-                      fontSize: 8, padding: '0px 4px', borderRadius: 3,
-                      background: `${meta.color}15`,
-                      color: meta.color,
-                      border: `1px solid ${meta.color}30`,
-                      flexShrink: 0, textTransform: 'uppercase', fontWeight: 600,
-                      letterSpacing: '0.03em',
-                    }}>
-                      {meta.label}
-                    </span>
-
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeAttachable(att.id); }}
-                      title="Remove"
-                      aria-label={`Remove ${kebabToTitle(att.name)}`}
-                      data-testid={`nav-unattached-close-${att.type}-${att.name}`}
-                      style={{
-                        background: 'none', border: 'none', color: theme.textGhost,
-                        cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                        display: 'flex', alignItems: 'center',
-                      }}
-                    >
-                      <LucideIcon name="X" size={10} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Mental Cards — plain MentalGraphNodes only (type === 'mental');
-              always visible regardless of mentalMode. Frames/steps get their
-              own Flows/Steps section above instead of leaking in here. */}
-          {cards.length > 0 && (
-            <div>
-              <div style={{
-                padding: '8px 12px 4px', fontSize: 10, fontWeight: 600,
-                textTransform: 'uppercase', letterSpacing: '0.05em',
-                color: theme.textGhost,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              }}>
-                <span>Mental Cards ({cards.length})</span>
-                {mentalMode === 'off' && (
-                  <button
-                    onClick={() => setMentalMode('square')}
-                    title="Enable Mental Authoring"
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      color: theme.textMuted, fontSize: 9, padding: '0 2px',
-                      fontFamily: theme.fontMono, letterSpacing: '0.04em',
-                    }}
-                  >
-                    Enable Mental Authoring
-                  </button>
-                )}
-              </div>
-              {cards.map(node => {
-                const nodeLabel = node.text.trim() || 'Untitled card';
-                const edgeCount = mentalEdges.filter(e => e.sourceId === node.id || e.targetId === node.id).length;
-                return (
-                  <div
-                    key={node.id}
-                    className="nav-child-item"
-                    data-testid={`nav-mental-node-${node.id}`}
-                    style={{
-                      width: '100%', display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '4px 12px 4px 20px',
-                      cursor: 'pointer',
-                      color: theme.textDim,
-                      fontSize: 11,
-                      transition: 'background 0.1s ease',
-                      borderLeft: '2px solid transparent',
-                    }}
-                    onClick={() => {
-                      const viewportW = window.innerWidth - 280;
-                      const viewportH = window.innerHeight - 60;
-                      const centerX = -(node.position.x * canvasZoom) + (viewportW / 2) - ((node.width / 2) * canvasZoom);
-                      const centerY = -(node.position.y * canvasZoom) + (viewportH / 2) - ((node.height / 2) * canvasZoom);
-                      setCanvasPan({ x: centerX, y: centerY });
-                    }}
-                    onContextMenu={(e) => openContextMenu(e, { kind: 'mental', id: node.id })}
-                  >
-                    <span
-                      style={{
-                        width: 10, height: 10, borderRadius: 2,
-                        background: node.color, flexShrink: 0,
-                        border: `1px solid ${theme.borderLight}`,
-                      }}
-                    />
-                    {renamingItem?.kind === 'mental' && renamingItem.id === node.id ? (
-                      <input
-                        ref={renameInputRef}
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        onBlur={commitRename}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') commitRename();
-                          if (e.key === 'Escape') setRenamingItem(null);
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        data-testid={`nav-mental-rename-input-${node.id}`}
-                        style={{
-                          flex: 1, minWidth: 0, fontSize: 11,
-                          background: 'rgba(255,255,255,0.08)',
-                          border: `1px solid ${ELECTRIC_BLUE}`,
-                          borderRadius: 4, padding: '1px 4px',
-                          color: theme.textSecondary, outline: 'none',
-                        }}
-                      />
-                    ) : (
-                    <span style={{
-                      flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap', fontSize: 11,
-                    }}>
-                      {nodeLabel}
-                    </span>
-                    )}
-                    {edgeCount > 0 && (
-                      <span style={{
-                        fontSize: 8, padding: '0px 3px', borderRadius: 3,
-                        background: '#A78BFA15',
-                        color: '#A78BFA',
-                        border: '1px solid #A78BFA30',
-                        flexShrink: 0, fontWeight: 600,
-                      }}>
-                        {edgeCount}
-                      </span>
-                    )}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeMentalNode(node.id); }}
-                      title="Remove"
-                      aria-label={`Remove mental card ${nodeLabel}`}
-                      data-testid={`nav-mental-node-close-${node.id}`}
-                      style={{
-                        background: 'none', border: 'none', color: theme.textGhost,
-                        cursor: 'pointer', padding: 2, borderRadius: 4, flexShrink: 0,
-                        display: 'flex', alignItems: 'center',
-                      }}
-                    >
-                      <LucideIcon name="X" size={10} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-        </>
-      )}
-
-      {/* Right-click context menu for all item types */}
-      {contextMenu && (
-        <div
-          data-testid="nodetree-context-menu-backdrop"
-          style={{ position: 'fixed', inset: 0, zIndex: 10001 }}
-          onClick={() => setContextMenu(null)}
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
-        >
-          <div
-            data-testid="nodetree-context-menu"
-            style={{
-              position: 'absolute',
-              left: contextMenu.x,
-              top: contextMenu.y,
-              minWidth: 150,
-              padding: '4px 0',
-              borderRadius: 8,
-              background: 'rgba(20, 20, 20, 0.95)',
-              border: '1px solid rgba(255, 255, 255, 0.14)',
-              boxShadow: '0 8px 20px rgba(0,0,0,0.35)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {[
-              { label: 'Rename', icon: 'Pencil', action: 'rename' },
-              { label: 'Locate', icon: 'Navigation', action: 'locate' },
-              ...(contextMenu.target.kind === 'window'
-                ? [
-                  { label: 'Minimize', icon: 'Minus', action: 'minimize' },
-                  { label: 'Close window', icon: 'Trash2', action: 'delete' },
-                ]
-                : [{ label: 'Delete', icon: 'Trash2', action: 'delete' }]),
-            ].map((item) => (
-              <button
-                key={item.action}
-                data-testid={`nodetree-ctx-${item.action}`}
-                onClick={() => handleContextMenuAction(item.action)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  width: '100%', padding: '6px 12px',
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: item.action === 'delete' ? '#f87171' : '#f4f4f5',
-                  fontSize: 12, textAlign: 'left',
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none'; }}
-              >
-                <LucideIcon name={item.icon} size={13} style={{ opacity: 0.6, flexShrink: 0 }} />
-                {item.label}
-              </button>
-            ))}
+    <EngineProvider store={engineStore}>
+      <div data-testid="node-tree" style={{ flex: 1, overflow: 'auto', padding: '4px 0', position: 'relative' }}>
+        {/* "Enable Mental Authoring" used to live inline in the Mental Cards
+            group header — the motor's ComponentsPanelGroup.label is a plain
+            string (no slot for a button), so it's relocated here, above the
+            panel. A functionally-identical Dock action
+            ('mental-draw-toggle', desktop-store.ts's DEFAULT_DOCK_ITEMS)
+            already exists — this is a convenience duplicate, not the only
+            way to reach it. */}
+        {mentalMode === 'off' && cards.length > 0 && (
+          <div style={{ padding: '4px 12px', display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setMentalMode('square')}
+              title="Enable Mental Authoring"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: theme.textMuted, fontSize: 9, padding: '0 2px', fontFamily: theme.fontMono, letterSpacing: '0.04em' }}
+            >
+              Enable Mental Authoring
+            </button>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+
+        <ComponentsPanel
+          groups={groups}
+          renderRow={renderRow}
+          onRename={onRename}
+          viewport={panViewport}
+          onContextMenuRequest={onContextMenuRequest}
+          itemTestId={itemTestId}
+          itemAriaLabel={itemAriaLabel}
+          itemClassName={itemClassName}
+          onLocate={onLocate}
+          itemLabel={itemLabel}
+          renamingId={renamingItem ? namespacedId(renamingItem.kind as BridgeItemKind, renamingItem.id) : null}
+          onRenameDismiss={() => setRenamingItem(null)}
+          renameInputTestId={renameInputTestId}
+          emptyState={
+            <div style={{ padding: '24px 16px', textAlign: 'center', color: theme.textGhost, fontSize: 12 }}>
+              No components open
+            </div>
+          }
+        />
+
+        {/* Right-click context menu for all item types */}
+        <ContextMenu
+          state={contextMenuState}
+          providers={nodeTreeContextMenuProviders}
+          onClose={closeContextMenu}
+          backdropTestId="nodetree-context-menu-backdrop"
+          menuTestId="nodetree-context-menu"
+        />
+      </div>
+    </EngineProvider>
   );
 }

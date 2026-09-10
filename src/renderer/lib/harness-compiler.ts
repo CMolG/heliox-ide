@@ -8,6 +8,7 @@ import type {
   FrameGraphNode,
   MentalGraphEdge,
   MentalGraphNode,
+  PhaseGraphNode,
   StepGraphNode,
 } from '@/types/desktop';
 import {
@@ -17,6 +18,7 @@ import {
   type AgenticLoop,
   type AgenticMentalContext,
   type AgenticMod,
+  type AgenticPhase,
   type AgenticRole,
   type AgenticStep,
   type AgenticStepType,
@@ -85,6 +87,10 @@ function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
   return node.type === 'frame';
 }
 
+function isPhaseGraphNode(node: CanvasGraphNode): node is PhaseGraphNode {
+  return node.type === 'phase';
+}
+
 /**
  * Finds the Frame that visually owns `stepId` — either by listing it in
  * `childIds`, or via the step's own `parentId` pointing back at the frame.
@@ -99,6 +105,22 @@ export function findOwningFrame(stepId: string, nodes: CanvasGraphNode[]): Frame
     (n): n is FrameGraphNode =>
       isFrameGraphNode(n) && (n.data.childIds.includes(stepId) || step?.parentId === n.id),
   );
+}
+
+/**
+ * Finds the Phase node that owns `stepId` via the step's own `parentId`
+ * pointing at a PhaseGraphNode — the second nesting level (frame > phase >
+ * step, spec §3.2). Unlike findOwningFrame there is no childIds-based
+ * fallback: a step's membership in the COMPILED AgenticPhase.stepIds is
+ * authored directly on the phase node's own `data.childIds` (see the phase
+ * validation block below), not derived from this lookup — this helper is for
+ * canvas/UI consumers that need "which phase, if any, visually owns this
+ * step" (mirrors findOwningFrame's own role serving StepRunEvidence.tsx).
+ */
+export function findOwningPhase(stepId: string, nodes: CanvasGraphNode[]): PhaseGraphNode | undefined {
+  const step = nodes.find((n): n is StepGraphNode => isStepGraphNode(n) && n.id === stepId);
+  if (!step?.parentId) return undefined;
+  return nodes.find((n): n is PhaseGraphNode => isPhaseGraphNode(n) && n.id === step.parentId);
 }
 
 function stringField(record: UnknownRecord, key: string): string | null {
@@ -393,6 +415,97 @@ export function compileFlowFromCanvas(
     });
   }
 
+  // Phase membership validation + passive assembly (spec §2.3, §4). Structurally
+  // parallel to the loop-processing block above: same map reuse (stepById,
+  // nextByStepId, prevByStepId, reachableSet), same "throw HarnessCompilerError
+  // naming the offending phase(s)" discipline. Order relative to loops does
+  // not matter for correctness (independent concerns) — kept after loops to
+  // mirror the spec's own §2 (membership) → §3 (loop relationship) ordering.
+  const allStepIds = new Set(allStepNodes.map((s) => s.id));
+  const allPhaseNodes = nodes.filter(isPhaseGraphNode);
+  const phaseNodesById = new Map(allPhaseNodes.map((p) => [p.id, p]));
+
+  // Bounded-compile interaction (§4): a phase whose members are entirely REAL
+  // steps but not 100% present in THIS compile's included set is silently
+  // omitted (mirrors the loop-edge filter at the edge loop above) — its exit
+  // gate could never be satisfied over an incomplete member set, and a scoped
+  // compile is already, by design, a partial view. A phase referencing a
+  // stepId that is not a real Step node ANYWHERE on the canvas is always a
+  // hard error below, regardless of includeIds — that is a stale/authoring
+  // bug, not a scoping artifact.
+  const scopedPhaseNodes = allPhaseNodes.filter((phaseNode) => {
+    const allMembersAreRealSteps = phaseNode.data.childIds.every((stepId) => allStepIds.has(stepId));
+    if (!allMembersAreRealSteps) return true; // let the loop below throw "unknown step"
+    return phaseNode.data.childIds.every((stepId) => stepById.has(stepId));
+  });
+
+  const phases: AgenticPhase[] = [];
+  const phaseIds = new Set<string>();
+  const stepIdOwner = new Map<string, string>(); // claimed stepId -> owning phase id
+
+  for (const phaseNode of scopedPhaseNodes) {
+    const phaseId = phaseNode.id;
+    const phaseName = phaseNode.data.title;
+
+    if (phaseIds.has(phaseId)) {
+      throw new HarnessCompilerError(`Duplicate phase id "${phaseId}": phase ids must be unique within a flow.`);
+    }
+    phaseIds.add(phaseId);
+
+    if (phaseNode.data.childIds.length === 0) {
+      throw new HarnessCompilerError(`Phase "${phaseName}" (${phaseId}) has no member steps.`);
+    }
+
+    const uniqueStepIds = [...new Set(phaseNode.data.childIds)];
+    for (const stepId of uniqueStepIds) {
+      if (!stepById.has(stepId)) {
+        throw new HarnessCompilerError(`Phase "${phaseName}" (${phaseId}) references unknown step "${stepId}".`);
+      }
+    }
+
+    // Connectivity: undirected BFS (successors ∪ predecessors, restricted to
+    // this phase's own member set) must reach every declared member from any
+    // one of them — reuses the existing `reachableSet` helper.
+    const memberSet = new Set(uniqueStepIds);
+    const undirectedAdjacency = new Map<string, string[]>();
+    for (const stepId of uniqueStepIds) {
+      const neighbors = [...(nextByStepId.get(stepId) ?? []), ...(prevByStepId.get(stepId) ?? [])]
+        .filter((neighborId) => memberSet.has(neighborId));
+      undirectedAdjacency.set(stepId, neighbors);
+    }
+    const reached = reachableSet(uniqueStepIds[0], undirectedAdjacency);
+    const unreached = uniqueStepIds.filter((id) => !reached.has(id));
+    if (unreached.length > 0) {
+      throw new HarnessCompilerError(
+        `Phase "${phaseName}" (${phaseId}) is not a connected subgraph: {${[...reached].sort().join(', ')}} is disconnected from {${unreached.sort().join(', ')}}.`,
+      );
+    }
+
+    // Disjointness: no stepId claimed by more than one phase.
+    for (const stepId of uniqueStepIds) {
+      const ownerId = stepIdOwner.get(stepId);
+      if (ownerId && ownerId !== phaseId) {
+        const ownerName = phaseNodesById.get(ownerId)?.data.title ?? ownerId;
+        throw new HarnessCompilerError(
+          `Phase "${ownerName}" and phase "${phaseName}" both claim step "${stepId}" — a step may belong to at most one phase.`,
+        );
+      }
+      stepIdOwner.set(stepId, phaseId);
+    }
+
+    if (phaseNode.data.onError !== undefined && phaseNode.data.onError !== 'halt') {
+      throw new HarnessCompilerError(`Phase "${phaseName}" (${phaseId}) declares onError "${phaseNode.data.onError}" — only "halt" is supported in v1.`);
+    }
+
+    phases.push({
+      id: phaseId,
+      name: phaseName,
+      stepIds: uniqueStepIds,
+      ...(phaseNode.data.exitContract ? { exitContract: phaseNode.data.exitContract } : {}),
+      ...(phaseNode.data.onError ? { onError: phaseNode.data.onError } : {}),
+    });
+  }
+
   const rootStep = stepById.get(rootStepId)!;
   const flowName = options.name ?? rootStep.data.title ?? rootStep.text ?? 'Agentic Flow';
   const stepsRecord: Record<string, AgenticStep> = {};
@@ -459,6 +572,7 @@ export function compileFlowFromCanvas(
     ...(flowAuthor ? { author: flowAuthor } : {}),
     ...(flowVersion ? { version: flowVersion } : {}),
     ...(flowContextMode ? { contextMode: flowContextMode } : {}),
+    ...(phases.length > 0 ? { phases } : {}),
   };
 }
 

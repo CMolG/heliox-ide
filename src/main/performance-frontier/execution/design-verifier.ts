@@ -40,6 +40,20 @@ function truncate(text: string): string {
 }
 
 /**
+ * Locates the project's index.html in a VFS snapshot. Prefers the canonical
+ * /workspace/index.html path, then falls back to any path ending in
+ * /index.html (e.g. team-work's differently-rooted snapshots), then a bare
+ * index.html key.
+ */
+function findIndexHtml(snapshot: Record<string, string>): string | undefined {
+  if (snapshot['/workspace/index.html'] != null) return snapshot['/workspace/index.html'];
+  const k = Object.keys(snapshot).find((key) => key.endsWith('/index.html'));
+  if (k) return snapshot[k];
+  if (snapshot['index.html'] != null) return snapshot['index.html'];
+  return undefined;
+}
+
+/**
  * Run axe-core structural accessibility checks against the HTML string from the
  * VFS snapshot. Returns a deterministic, machine-readable result.
  *
@@ -48,7 +62,7 @@ function truncate(text: string): string {
 export async function verifyDesign(
   vfsSnapshot: Record<string, string>,
 ): Promise<A11yVerificationResult> {
-  const html = vfsSnapshot['/workspace/index.html'];
+  const html = findIndexHtml(vfsSnapshot);
   if (!html) {
     return {
       ran: false,

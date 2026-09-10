@@ -27,12 +27,23 @@
  * inside the target's rect, matching what the user visually did.
  */
 import React, { useState } from 'react';
-import { render, fireEvent, screen } from '@testing-library/react';
+import { render as rtlRender, fireEvent, screen } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DndContext, DragOverlay, PointerSensor, pointerWithin, useSensor, useSensors,
 } from '@dnd-kit/core';
 import type { DragEndEvent, CollisionDetection } from '@dnd-kit/core';
+import { EngineProvider, createEngineStore } from '@cmolg/daba-engine';
+
+// Task 13 (adoption plan #20), Fase 2: StepNode now reads
+// `engine.hoveredItemId` (unified highlight) via the motor's
+// `useHoveredItem()`, which throws outside an `<EngineProvider>` — see
+// FrameNode.test.tsx's identical wrapper for the full rationale (a fresh
+// throwaway engine store per render; this file never asserts on engine/
+// hover state, only real dnd-kit collision math).
+function render(ui: React.ReactElement) {
+  return rtlRender(<EngineProvider store={createEngineStore()}>{ui}</EngineProvider>);
+}
 
 // ── Module mocks (store + heavy leaf components only — dnd-kit stays real) ───
 

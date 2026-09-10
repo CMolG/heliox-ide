@@ -12,7 +12,7 @@
  * Those responsibilities live behind IPC handlers in `src/main/ipc-handlers.ts`.
  *
  * Startup Order:
- *  Phase -1 — Crash reporter (audit 1.8a) — synchronous, before the app is ready
+ *  Phase -1 — Crash reporter (audit 1.8a) + JS fatal handlers — synchronous, before the app is ready
  *  Phase 0 — Initialize storage (SQLite migrations → electron-store → fs roots → storage IPC)
  *  Phase 1 — Restore window geometry from settings store
  *  Phase 2 — Load renderer entrypoint
@@ -21,10 +21,16 @@
 import { app, BrowserWindow, Menu, nativeImage, session, crashReporter } from 'electron';
 import path from 'path';
 import { updateElectronApp } from 'update-electron-app';
+import { installFatalHandlers } from './fatal-log';
+import { log } from './logger';
 import { registerIpcHandlers } from './ipc-handlers';
 import { registerContextMapIpcHandlers } from './context-map';
 import { registerDevServerIpcHandlers } from './browser/dev-server-watcher';
+import { registerBacklogWatcherIpcHandlers } from './backlog/watcher';
 import { registerBrowserIpcHandlers } from './browser/browser-ipc';
+import { registerPtyIpcHandlers, disposePtySessions } from './pty/ipc-pty';
+import { registerWorktreeIpcHandlers } from './worktrees/ipc-worktrees';
+import { startHookEndpoint, stopHookEndpoint } from './cockpit/hook-endpoint';
 import { initializeStorage, shutdownStorage } from './storage';
 import { settingsGet, settingsSet } from './storage/settings-store';
 import { browserController } from './browser/browser-controller';
@@ -45,6 +51,12 @@ crashReporter.start({
   productName: 'Fluxor IDE',
   ignoreSystemCrashHandler: false,
 });
+
+// The above only catches NATIVE crashes. installFatalHandlers covers the
+// JS-level deaths that leave Crashpad empty — uncaught exceptions, unhandled
+// rejections, and renderer/child-process kills — appending them to
+// <userData>/fluxor.log without changing any crash semantics. See fatal-log.ts.
+installFatalHandlers();
 
 interface WindowState {
   x?: number;
@@ -176,8 +188,23 @@ function createWindow(): BrowserWindow {
   registerIpcHandlers(mainWindow);
   registerContextMapIpcHandlers(mainWindow);
   registerDevServerIpcHandlers(mainWindow);
+  registerBacklogWatcherIpcHandlers(mainWindow);
   // M2 — native CDP browser control (no mainWindow needed — no push events)
   registerBrowserIpcHandlers();
+  // Cockpit F1 — agent-session terminals (node-pty), pushes pty-data/pty-exit
+  registerPtyIpcHandlers(mainWindow);
+  // Cockpit F2 — per-session git worktrees + bootstrap, pushes worktree-progress
+  registerWorktreeIpcHandlers(mainWindow);
+  // Cockpit F4 — the loopback endpoint Claude Code's hooks POST to. Started
+  // AFTER the registrars because its push target is this window, and started
+  // here rather than at import time so a port that cannot be taken degrades a
+  // feature instead of failing the boot. Idempotent: macOS's `activate` calls
+  // createWindow() again once every window is closed, and the second call only
+  // re-points the push.
+  void startHookEndpoint((channel, payload) => {
+    if (mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(channel, payload);
+  });
 
   return mainWindow;
 }
@@ -224,6 +251,9 @@ app.whenReady().then(() => {
   // Crash dumps directory is only meaningful once the app is ready on every
   // platform; log it once so a user/support thread can be pointed at it.
   console.log(`[crash-reporter] local dumps: ${app.getPath('crashDumps')}`);
+  // Same rationale, for the JS-side sink: a support thread (or the next
+  // session's post-mortem) needs one path, printed once, at a predictable spot.
+  console.log(`[crash-reporter] fatal log:   ${log.filePath ?? '(unavailable)'}`);
 
   // Packaged only — see registerPackagedContentSecurityPolicy for rationale.
   // Vite's dev server (HMR eval + ws) would break under this policy.
@@ -367,5 +397,10 @@ app.on('window-all-closed', () => {
 // the headless agent window so no orphaned Chrome processes linger.
 app.on('will-quit', () => {
   browserController.disposeAll();
+  // An agent CLI is a long-lived child process: without this, quitting the IDE
+  // leaves one `claude`/`codex` per open session running against the repo.
+  disposePtySessions();
+  // Closing the listener revokes every session token with it.
+  void stopHookEndpoint();
   shutdownStorage();
 });

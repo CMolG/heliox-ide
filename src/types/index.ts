@@ -362,9 +362,73 @@ export interface FluxorAPI {
     projectName: string;
   }>>;
   initBacklog: (projectPath: string) => Promise<{ success: boolean; backlogPath?: string; error?: string }>;
-  updateBacklogCardStatus: (backlogDir: string, filename: string, newStatus: string) => Promise<{ success: boolean; error?: string }>;
-  updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number }>) => Promise<{ success: boolean; error?: string }>;
+  updateBacklogCardStatus: (backlogDir: string, filename: string, newStatus?: string, newOrder?: number, newRunState?: string) => Promise<{ success: boolean; error?: string }>;
+  updateBacklogCards: (backlogDir: string, updates: Array<{ filename: string; status?: string; order?: number; runState?: string }>) => Promise<{ success: boolean; error?: string }>;
+  /** F2 Task 9 — the modal's edit-save and comment-submit path (title/description overwrite; a `newComment` appends). */
+  updateBacklogCardContent: (
+    backlogDir: string,
+    filename: string,
+    changes: { title?: string; description?: string; newComment?: { author: string; text: string } },
+  ) => Promise<{ success: boolean; error?: string }>;
   readBacklogDir: (backlogDir: string) => Promise<import('./market').BacklogCard[]>;
+  watchBacklogDir: (backlogDir: string, projectRoot: string) => Promise<{ success: boolean; error?: string }>;
+  unwatchBacklogDir: (backlogDir: string) => Promise<{ success: boolean; error?: string }>;
+  onBacklogChanged: (callback: (payload: { backlogDir: string; cards: import('./market').BacklogCard[] }) => void) => () => void;
+
+  // ── Agent sessions — PTY terminals (Cockpit F1) ────────────────
+  /**
+   * Spawns the vendor CLI for one session. Resolves to the live `PtyInfo`, or
+   * to a `{ error: 'vendor_not_found' }` VALUE when that CLI is not installed —
+   * the expected failure of this feature, so it is answered rather than thrown.
+   */
+  ptySpawn: (payload: import('../main/pty/ipc-pty').PtySpawnPayload)
+    => Promise<import('../main/pty/ipc-pty').PtySpawnResult>;
+  ptyWrite: (sessionId: string, data: string) => Promise<{ success: boolean }>;
+  ptyResize: (sessionId: string, cols: number, rows: number) => Promise<{ success: boolean }>;
+  ptyKill: (sessionId: string, signal?: string) => Promise<{ success: boolean }>;
+  /** The sessions with a LIVE process right now — how a rehydrated window learns it is dead. */
+  ptyList: () => Promise<import('../main/pty/pty-manager').PtyInfo[]>;
+  /** Which project each live session belongs to, and whether it holds the main tree. */
+  ptyLiveSessions: () => Promise<import('../main/pty/ipc-pty').LiveSessionEntry[]>;
+  detectAgents: () => Promise<import('../main/pty/vendors').VendorAvailability[]>;
+  onPtyData: (callback: (payload: import('../main/pty/pty-manager').PtyDataEvent) => void) => () => void;
+  onPtyExit: (callback: (payload: import('../main/pty/pty-manager').PtyExitEvent) => void) => () => void;
+  /**
+   * Cockpit F4 — one channel for every session's hook events; the window
+   * filters by sessionId. Present only when the loopback endpoint bound a
+   * port, which is why the caller must tolerate it being absent (an older
+   * preload bundle has no such channel).
+   */
+  onAgentHookEvent: (callback: (payload: import('../main/cockpit/hook-endpoint').AgentHookEvent) => void) => () => void;
+
+  // ── Session worktrees + bootstrap (Cockpit F2) ─────────────────
+  /**
+   * Every one of these answers a git failure as a `{ error: 'git_failed' }`
+   * VALUE rather than by rejecting: a branch that exists elsewhere, a missing
+   * network, a worktree deleted by hand — all ordinary, all explainable in the
+   * window, none of them an exception the renderer can do anything with.
+   */
+  worktreeList: (projectRoot: string) => Promise<import('../main/worktrees/ipc-worktrees').WorktreeListResult>;
+  worktreeCreate: (req: { projectRoot: string; name: string; branch: string })
+    => Promise<import('../main/worktrees/ipc-worktrees').WorktreeCreateResult>;
+  worktreeSpent: (worktreePath: string) => Promise<import('../main/worktrees/ipc-worktrees').WorktreeSpentResult>;
+  worktreeRemove: (worktreePath: string, force?: boolean)
+    => Promise<import('../main/worktrees/ipc-worktrees').WorktreeRemoveResult>;
+  /**
+   * Cockpit F5 — copies `<backlogDir>/<filename>` into
+   * `<worktreePath>/.backlog/` when the worktree does not already have it. A
+   * worktree is cut from `origin/main`, so a card written this session is
+   * absent from it and the launch prompt points at nothing. Never overwrites.
+   */
+  worktreeSeedCard: (worktreePath: string, backlogDir: string, filename: string)
+    => Promise<import('../main/worktrees/ipc-worktrees').WorktreeSeedCardResult>;
+  bootstrapDetect: (projectRoot: string) => Promise<import('../main/worktrees/bootstrap').BootstrapResolution>;
+  bootstrapSet: (projectRoot: string, command: string | null) => Promise<{ success: boolean }>;
+  bootstrapRun: (worktreePath: string, projectRoot: string)
+    => Promise<import('../main/worktrees/ipc-worktrees').BootstrapRunIpcResult>;
+  onWorktreeProgress: (callback: (payload: import('../main/worktrees/ipc-worktrees').WorktreeProgressEvent) => void) => () => void;
+  /** Reveals a path in the OS file manager (a session's PTY log, today). */
+  revealPath: (targetPath: string) => Promise<boolean>;
   approveDiff: (diffId: string) => Promise<IpcResult>;
   rejectDiff: (diffId: string, feedback: string) => Promise<IpcResult>;
   shutdown: () => Promise<IpcResult>;

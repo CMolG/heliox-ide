@@ -18,6 +18,7 @@ When this modifier is active, all generated UI elements must meet WCAG 2.1 Level
    - Use **semantic headings** (`<h1>`–`<h6>`), never `role="heading"` on a `<div>`.
    - Avoid `role="application"` unless you fully reimplement browser keyboard semantics; it traps assistive-tech navigation otherwise.
    - Every ARIA state you style in CSS must actually be set in JS — no dead `aria-*` rules.
+10. **Landmark uniqueness.** Exactly one `<main>` per page, and one top-level banner `<header>` / `contentinfo` `<footer>`. When an app shell already renders the `<main>` (or header/footer) landmark, page components render `<section>`s INSIDE it — never nest a second `<main>` or emit a duplicate top-level `<header>`, which breaks landmark navigation and the skip-link target. Exactly one `<h1>` per page.
 
 ## Behavioral Overrides
 

@@ -28,7 +28,7 @@ const SUITE_JUDGE_INSTRUCTIONS: Partial<Record<PFSuite, string[]>> = {
   ],
   'from-scratch': [
     'IMPORTANTE — anula cualquier instruccion previa sobre "zero-build" o "index.html puro": la suite from-scratch construye un PROYECTO REAL multi-archivo CON build (React 19 + Vite + TypeScript + Tailwind v4 + shadcn/ui). NO penalices la existencia de package.json, TSX, bundler ni build step; aqui son obligatorios. outputQuality mide la calidad global del proyecto, no de un HTML suelto.',
-    'Esta suite encadena 6 steps (scaffold-structure -> landing-page -> auth-pages -> write-failing-tests -> implement-to-green -> review-diff) ejecutados por roles distintos con mods apilados. pipelineCohesion debe medir la INTEGRACION entre steps: reutilizaron landing y auth el scaffold (design tokens, componentes shadcn, catalogos i18n) o alucinaron estructuras nuevas e inconsistentes?',
+    'Esta suite encadena 9 steps (scaffold-structure -> landing-page -> seo-head -> auth-pages -> i18n-source-en -> i18n-translate-es -> write-failing-tests -> implement-to-green -> review-diff) ejecutados por roles distintos con mods apilados. pipelineCohesion debe medir la INTEGRACION entre steps: reutilizaron landing y auth el scaffold (design tokens, componentes shadcn, catalogos i18n) o alucinaron estructuras nuevas e inconsistentes?',
     'Evalua ADEMAS uxUiFidelity: 0-20, reinterpretado como ADHERENCIA DE LOS MODS DE UI: design-system shadcn coherente, responsive mobile-first (sin anchos fijos en px), theming light/dark por tokens/CSS variables, head SEO completo (title/meta/canonical/OpenGraph/Twitter), JSON-LD Schema.org valido y alineado al copy visible, y presupuesto Core Web Vitals (dimensiones en media, lazy-load, sin layout shift). En themeViolations lista cada mod de UI ignorado o token inventado.',
     'Evalua ADEMAS accessibilityScore: 0-20, cubriendo WCAG (landmarks, un solo h1, labels asociadas, aria-*, manejo de foco) Y la internacionalizacion: TODOS los strings de UI deben estar externalizados a los catalogos i18n (en/es), sin copy hardcodeado. En a11yViolations lista cada fallo WCAG y cada string hardcodeado.',
     'Evalua ADEMAS algorithmicAccuracy: 0-20 como DISCIPLINA TDD: el step 4 debia escribir tests que FALLAN y el step 5 implementarlos a verde con logica GENERAL (no hardcodeada) cubriendo casos limite del esquema de auth (email, fuerza de password, confirmacion) y del resolutor i18n (clave faltante, fallback, ICU). Penaliza si no hay tests reales, si se implemento antes de testear, o si se hardcodearon respuestas. Usa edgeCasesCovered y edgeCasesMissed.',
@@ -174,7 +174,7 @@ export function buildJudgePrompts(input: PFJudgeInput): { system: string; prompt
       `<run_id>${input.runId}</run_id>`,
       `<case_id>${input.caseId}</case_id>`,
       `<suite>${input.suite}</suite>`,
-      `<model_under_test>${input.modelUnderTest}</model_under_test>`,
+      `<model_under_test>anonymous</model_under_test>`,
       '',
       '<evaluation_user_prompt>',
       input.userPrompt,

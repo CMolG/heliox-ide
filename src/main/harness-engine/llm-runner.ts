@@ -233,7 +233,15 @@ export function resolveHarnessModel(
     if (!apiKey) {
       throw new Error('OPENROUTER_API_KEY is required for openrouter harness models.');
     }
-    return createOpenAI({
+    // Optional reasoning-effort cap for OpenRouter reasoning models (e.g.
+    // Kimi K3), whose reasoning tokens are NOT bounded by max_tokens and
+    // can stream for minutes without ever producing content. OpenRouter
+    // accepts a top-level `reasoning` object on /chat/completions, but the
+    // AI SDK's OpenAI provider doesn't surface it — so inject it into the
+    // request body via a fetch wrapper. Opt-in and off by default:
+    // FLUXOR_OPENROUTER_REASONING_EFFORT=low|medium|high.
+    const reasoningEffort = readBrandEnv('FLUXOR_OPENROUTER_REASONING_EFFORT');
+    const openrouter = createOpenAI({
       apiKey,
       baseURL: 'https://openrouter.ai/api/v1',
       name: 'openrouter',
@@ -243,7 +251,28 @@ export function resolveHarnessModel(
         'HTTP-Referer': process.env.OPENROUTER_APP_URL ?? 'https://fluxoride.com',
         'X-Title': process.env.OPENROUTER_APP_TITLE ?? 'Fluxor Arena',
       },
-    })(modelName);
+      ...(reasoningEffort
+        ? {
+            fetch: (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+              if (init && typeof init.body === 'string') {
+                try {
+                  const body = JSON.parse(init.body);
+                  body.reasoning = { effort: reasoningEffort };
+                  return fetch(input, { ...init, body: JSON.stringify(body) });
+                } catch {
+                  // Non-JSON body (unexpected) — pass through untouched.
+                }
+              }
+              return fetch(input, init);
+            }) as typeof fetch,
+          }
+        : {}),
+    });
+    // OpenRouter's canonical endpoint is /chat/completions. The bare
+    // createOpenAI(id) default targets the OpenAI *Responses* API
+    // (/responses), which OpenRouter rejects with a misleading
+    // 401 "User not found." Use .chat() — mirrors the mimo branch below.
+    return openrouter.chat(modelName);
   }
 
   if (provider === 'mimo' || provider === 'xiaomi-token-plan-ams') {

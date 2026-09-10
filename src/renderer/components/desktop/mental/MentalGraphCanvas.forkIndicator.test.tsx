@@ -17,8 +17,19 @@
  *      (guard against partial injection).
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render as rtlRender, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EngineProvider, createEngineStore } from '@cmolg/daba-engine';
+
+// Task 13 (adoption plan #20), Fase 2: StepNode now reads
+// `engine.hoveredItemId` (unified highlight — see StepNode.tsx's own
+// doc-comment) via the motor's `useHoveredItem()`, which throws outside an
+// `<EngineProvider>` — see FrameNode.test.tsx's identical wrapper for the
+// full rationale (a fresh throwaway engine store per render; this file
+// never asserts on engine/hover state, only the fork-indicator badge).
+function render(ui: React.ReactElement) {
+  return rtlRender(<EngineProvider store={createEngineStore()}>{ui}</EngineProvider>);
+}
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 

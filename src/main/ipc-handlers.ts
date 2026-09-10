@@ -10,7 +10,7 @@
  *  - Side effects remain in main process; renderer receives normalized events
  *  - Event names are mapped through `EVENT_TYPE_MAP` to keep UI contracts stable
  */
-import { ipcMain, BrowserWindow, dialog, app, Notification } from 'electron';
+import { ipcMain, BrowserWindow, dialog, app, Notification, shell } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 import { AgentManager } from './agent-manager';
 import { Flow, FileEntry, CliStatus, RunAgentParams, errMsg } from '../types';
@@ -43,6 +43,8 @@ import { registerCheckpointIpcHandlers } from './harness-engine/checkpoint-ipc';
 import { registerMcpCommandPolicyIpcHandlers } from './harness-engine/mcp-command-policy';
 import { registerScorecardIpc, registerArenaIpc } from './performance-frontier/ipc';
 import { registerTelemetryIpcHandlers } from './telemetry-ping';
+import { parseBacklogCard, renderBody, serializeBacklogCard } from './backlog/frontmatter';
+import type { BacklogCard } from '../types/market';
 
 const execFileAsync = promisify(execFile);
 
@@ -67,7 +69,16 @@ const IGNORED_DIRS = new Set([
 
 const MARKET_PROMPT_CATEGORIES = new Set(['flows', 'roles', 'mods', 'steps']);
 
-function getProjectConfigDir(projectPath: string): string {
+/**
+ * Where a project's Fluxor-owned config lives — in userData, keyed by a hash of
+ * its path, never inside the project itself.
+ *
+ * Exported since Cockpit F2: `ipc-worktrees.ts` reads and writes `cockpit.json`
+ * (the per-project bootstrap override) through the same directory the
+ * `read-project-config`/`write-project-config` handlers below use, so the two
+ * cannot end up pointing at two different places.
+ */
+export function getProjectConfigDir(projectPath: string): string {
   const hash = createHash('md5').update(projectPath).digest('hex').slice(0, 12);
   const safeName = basename(projectPath);
   return join(app.getPath('userData'), 'projects', `${safeName}-${hash}`);
@@ -846,6 +857,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
+  // Reveal a file or directory in the OS file manager. Introduced by the
+  // agent-session window's "Log" control (Cockpit F1) — a session's PTY
+  // transcript lives outside the tree, under userData/sessions/, so a path
+  // string alone is useless to the user. Generic on purpose: it lives here
+  // with the other shell/fs handlers rather than in the pty module, because
+  // nothing about it is specific to terminals.
+  ipcMain.handle('fluxor:reveal-path', async (_event, targetPath: string): Promise<boolean> => {
+    try {
+      shell.showItemInFolder(targetPath);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   // Full git diff output (includes both staged and unstaged changes)
   const gitDiff = async (cwd: string, extra: string[] = []): Promise<string> => {
     try {
@@ -957,52 +983,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // ─── Backlog Cards ─────────────────────────────────────────────
 
   ipcMain.handle('fluxor:read-backlog', async (_event, projectPath: string) => {
+    const backlogDir = join(projectPath, '.backlog');
     try {
-      const backlogDir = join(projectPath, '.backlog');
       const entries = await readdir(backlogDir);
-      const cards: Array<{
-        filename: string;
-        taskId: string;
-        targetAgent: string;
-        targetModule: string;
-        priority: string;
-        status: string;
-        order: number;
-        title: string;
-        body: string;
-      }> = [];
-
+      const cards: BacklogCard[] = [];
       for (const entry of entries) {
         if (!entry.endsWith('.md')) continue;
         try {
-          const content = await readFile(join(backlogDir, entry), 'utf-8');
-          const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-          if (!frontmatterMatch) continue;
-
-          const fm = frontmatterMatch[1];
-          const parseField = (key: string): string => {
-            const match = fm.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-            return match?.[1]?.trim() ?? '';
-          };
-
-          const body = content.slice(frontmatterMatch[0].length).trim();
-          const firstLine = body.split('\n')[0] ?? '';
-          const title = firstLine.replace(/^#+\s*/, '') || entry.replace('.md', '');
-
-          cards.push({
-            filename: entry,
-            taskId: parseField('task_id'),
-            targetAgent: parseField('target_agent'),
-            targetModule: parseField('target_module'),
-            priority: parseField('priority') || 'medium',
-            status: parseField('status') || 'pending',
-            order: parseInt(parseField('order'), 10) || 0,
-            title,
-            body,
-          });
+          const filePath = join(backlogDir, entry);
+          const content = await readFile(filePath, 'utf-8');
+          const card = await parseBacklogCard(filePath, content, { projectRoot: projectPath });
+          if (card) cards.push(card);
         } catch { /* skip unreadable cards */ }
       }
-
       cards.sort((a, b) => a.order - b.order);
       return cards;
     } catch {
@@ -1114,8 +1107,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     _event,
     backlogDir: string,
     filename: string,
-    newStatus: string,
+    newStatus?: string,
     newOrder?: number,
+    newRunState?: string,
   ) => {
     try {
       const filePath = join(backlogDir, filename);
@@ -1126,20 +1120,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       let fm = frontmatterMatch[1];
       const rest = content.slice(frontmatterMatch[0].length);
 
-      // Replace or add status field
-      if (/^status:\s*.+$/m.test(fm)) {
-        fm = fm.replace(/^status:\s*.+$/m, `status: ${newStatus}`);
-      } else {
-        fm = fm.trimEnd() + `\nstatus: ${newStatus}`;
+      if (newStatus !== undefined) {
+        fm = /^status:\s*.+$/m.test(fm)
+          ? fm.replace(/^status:\s*.+$/m, `status: ${newStatus}`)
+          : fm.trimEnd() + `\nstatus: ${newStatus}`;
       }
-
-      // Replace or add order field when provided
       if (newOrder !== undefined) {
-        if (/^order:\s*.+$/m.test(fm)) {
-          fm = fm.replace(/^order:\s*.+$/m, `order: ${newOrder}`);
-        } else {
-          fm = fm.trimEnd() + `\norder: ${newOrder}`;
-        }
+        fm = /^order:\s*.+$/m.test(fm)
+          ? fm.replace(/^order:\s*.+$/m, `order: ${newOrder}`)
+          : fm.trimEnd() + `\norder: ${newOrder}`;
+      }
+      if (newRunState !== undefined) {
+        fm = /^runState:\s*.+$/m.test(fm)
+          ? fm.replace(/^runState:\s*.+$/m, `runState: ${newRunState}`)
+          : fm.trimEnd() + `\nrunState: ${newRunState}`;
       }
 
       const updatedContent = `---\n${fm}\n---${rest}`;
@@ -1150,54 +1144,64 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
+  // ─── Update Backlog Card Content (title/description/new comment) ──
+  //
+  // F2 Task 9 — the modal's edit-save and comment-submit both funnel through
+  // this one generalized read-modify-write path (mirrors
+  // update-backlog-card-status's file-read-modify-write shape, but rebuilds
+  // the whole body via the v2 serializer instead of a frontmatter-only regex
+  // patch, since title/description/comments all live in the body, not
+  // frontmatter). New comments append at the end (F0 spec §1.2).
+  ipcMain.handle('fluxor:update-backlog-card-content', async (
+    _event,
+    backlogDir: string,
+    filename: string,
+    changes: { title?: string; description?: string; newComment?: { author: string; text: string } },
+  ) => {
+    try {
+      const filePath = join(backlogDir, filename);
+      const content = await readFile(filePath, 'utf-8');
+      const card = await parseBacklogCard(filePath, content, { projectRoot: backlogDir });
+      if (!card) return { success: false, error: 'Could not parse card' };
+
+      const nextTitle = changes.title ?? card.title;
+      const nextDescription = changes.description ?? card.description;
+      const nextComments = changes.newComment
+        ? [...card.comments, { author: changes.newComment.author, date: new Date().toISOString(), text: changes.newComment.text }]
+        : card.comments;
+
+      const updatedCard: BacklogCard = {
+        ...card,
+        title: nextTitle,
+        description: nextDescription,
+        comments: nextComments,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const body = renderBody(nextTitle, nextDescription, nextComments, card.attachments);
+      const updatedContent = serializeBacklogCard(updatedCard, body);
+      await writeFile(filePath, updatedContent, 'utf-8');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errMsg(err) };
+    }
+  });
+
   // ─── Read Backlog from Specific Directory ────────────────────────
 
-  ipcMain.handle('fluxor:read-backlog-dir', async (_event, backlogDir: string) => {
+  ipcMain.handle('fluxor:read-backlog-dir', async (_event, backlogDir: string, projectRoot?: string) => {
     try {
       const entries = await readdir(backlogDir);
-      const cards: Array<{
-        filename: string;
-        taskId: string;
-        targetAgent: string;
-        targetModule: string;
-        priority: string;
-        status: string;
-        order: number;
-        title: string;
-        body: string;
-      }> = [];
-
+      const cards: BacklogCard[] = [];
       for (const entry of entries) {
         if (!entry.endsWith('.md')) continue;
         try {
-          const content = await readFile(join(backlogDir, entry), 'utf-8');
-          const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-          if (!frontmatterMatch) continue;
-
-          const fm = frontmatterMatch[1];
-          const parseField = (key: string): string => {
-            const match = fm.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-            return match?.[1]?.trim() ?? '';
-          };
-
-          const body = content.slice(frontmatterMatch[0].length).trim();
-          const firstLine = body.split('\n')[0] ?? '';
-          const title = firstLine.replace(/^#+\s*/, '') || entry.replace('.md', '');
-
-          cards.push({
-            filename: entry,
-            taskId: parseField('task_id'),
-            targetAgent: parseField('target_agent'),
-            targetModule: parseField('target_module'),
-            priority: parseField('priority') || 'medium',
-            status: parseField('status') || 'pending',
-            order: parseInt(parseField('order'), 10) || 0,
-            title,
-            body,
-          });
+          const filePath = join(backlogDir, entry);
+          const content = await readFile(filePath, 'utf-8');
+          const card = await parseBacklogCard(filePath, content, { projectRoot: projectRoot ?? backlogDir });
+          if (card) cards.push(card);
         } catch { /* skip unreadable cards */ }
       }
-
       cards.sort((a, b) => a.order - b.order);
       return cards;
     } catch {
@@ -1210,7 +1214,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('fluxor:update-backlog-cards', async (
     _event,
     backlogDir: string,
-    updates: Array<{ filename: string; status?: string; order?: number }>,
+    updates: Array<{ filename: string; status?: string; order?: number; runState?: string }>,
   ) => {
     try {
       for (const update of updates) {
@@ -1235,6 +1239,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
             fm = fm.replace(/^order:\s*.+$/m, `order: ${update.order}`);
           } else {
             fm = fm.trimEnd() + `\norder: ${update.order}`;
+          }
+        }
+
+        if (update.runState !== undefined) {
+          if (/^runState:\s*.+$/m.test(fm)) {
+            fm = fm.replace(/^runState:\s*.+$/m, `runState: ${update.runState}`);
+          } else {
+            fm = fm.trimEnd() + `\nrunState: ${update.runState}`;
           }
         }
 

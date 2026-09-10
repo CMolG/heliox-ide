@@ -1,5 +1,6 @@
 import React, { useCallback } from 'react';
 import type { NodeProps } from '@xyflow/react';
+import { useHoveredItem } from '@cmolg/daba-engine';
 import type { FrameNodeData, StepGraphNode } from '@/types/desktop';
 import type { AgenticExecutionStatus } from '@/types/harness';
 import type { ModelPolicy, SelectionStrategy } from '@/types/ipc-events';
@@ -218,6 +219,14 @@ export const FrameNode = React.memo(function FrameNode({ id, data }: NodeProps) 
 
   const runAccentStyle = STATUS_RUN_ACCENTS[executionStatus];
 
+  // Task 13 (adoption plan #20), Fase 2: unified highlight — see
+  // MentalNode.tsx's identical wiring (and its doc-comment on why the
+  // `flow:` prefix is inlined rather than imported from engine-bridge.ts)
+  // for the full mechanism; compares against `flow:<id>`. See index.css's
+  // `.pipeline-frame-node[data-daba-highlighted]` for the resulting outline.
+  const { hoveredItemId } = useHoveredItem();
+  const isHighlighted = hoveredItemId === `flow:${id}`;
+
   // Frames intentionally render NO connection handles — frame edges have no
   // compile semantics (`compileFlowFromCanvas` in harness-compiler.ts only
   // wires step↔step; a frame edge would resolve to a dashed "attachment"
@@ -228,6 +237,7 @@ export const FrameNode = React.memo(function FrameNode({ id, data }: NodeProps) 
     <section
       className="pipeline-frame-node"
       data-testid={`pipeline-frame-${id}`}
+      data-daba-highlighted={isHighlighted ? 'true' : undefined}
       aria-label={`Pipeline frame ${frameData.title}`}
       onPointerDownCapture={() => bringMentalToFront(id)}
     >

@@ -77,6 +77,25 @@ export interface StepContract {
   requireDeclaredDependencies?: boolean;
   /** Override the default verify-and-retry attempt budget for this step. */
   maxAttempts?: number;
+  /**
+   * When true, a contract breach after all attempts HALTS the flow (throws)
+   * instead of logging and continuing to the next step.
+   */
+  haltOnBreach?: boolean;
+  /**
+   * Assert an i18n catalog file defines EVERY key used via t('...') across the
+   * workspace (and, when requireTranslated, that its values differ from the
+   * source catalog — i.e. actually translated). Model-agnostic invariant.
+   */
+  localeCoverage?: Array<{
+    description: string;
+    /** RegExp string matching the catalog file to check (e.g. 'src/i18n/es\\.ts$'). */
+    catalogPathPattern: string;
+    /** RegExp string matching the source catalog to compare against (for requireTranslated). */
+    sourcePathPattern?: string;
+    /** When true, flag keys whose catalog value equals the source value (untranslated). */
+    requireTranslated?: boolean;
+  }>;
 }
 
 export interface AgenticStep {
@@ -183,6 +202,70 @@ export function topoSortAgenticSteps(steps: AgenticStep[]): AgenticStep[] {
   return sorted;
 }
 
+/**
+ * A named, explicitly-declared grouping of steps that carries BLOCK-level
+ * semantics — behavior that is redundant or impossible to express step by
+ * step: a completion gate evaluated once for the whole group, and a resumable
+ * boundary on checkpoints. Read-only with respect to loop bodies: a phase's
+ * `stepIds` MAY coincide with a loop body's derived step set (making the
+ * phase a named, visible projection of that body), but a phase never carries
+ * `maxIterations` and never re-triggers execution — `AgenticLoop` (via its
+ * loop-back edge) remains the sole carrier of repetition semantics in v1.
+ *
+ * Capa 1 ONLY — see spec docs/superpowers/specs/2026-07-21-agentic-phase-model.md.
+ * Capa 2 (conditional exit, skip, block retry, rollback, phase timeout) is
+ * explicitly NOT modeled here and must not be inferred from this shape.
+ */
+export interface AgenticPhase {
+  /**
+   * Unique, flow-scoped phase identifier. Referenced by checkpoint
+   * phase-boundary markers (Checkpoint.phaseBoundary.phaseId) and by exit-gate
+   * breach messages — must be unique across `flow.phases` (compiler-validated)
+   * since both consumers resolve a phase BY this id alone.
+   */
+  id: string;
+  /**
+   * Human-facing name. Surfaced verbatim in exit-gate breach feedback
+   * ("Phase <name> breached its exit contract…"), in checkpoint
+   * phase-boundary markers (frozen at checkpoint-creation time), and on the
+   * canvas (F2). Purely descriptive; never consulted for control flow.
+   */
+  name: string;
+  /**
+   * Member step ids, declared DIRECTLY — unlike a loop body, which is
+   * DERIVED from a loop-back edge, a phase has no edge to derive from. Must
+   * satisfy the membership invariants: non-empty, no duplicates, every id
+   * resolves to a real step, and the SET forms one connected component of
+   * the forward graph. Compiler-validated for canvas-authored flows
+   * (harness-compiler.ts) and defensively re-validated for hand-built/
+   * imported flows (validateFlow, executor.ts).
+   */
+  stepIds: string[];
+  /**
+   * Optional aggregate completion contract for the WHOLE phase, evaluated
+   * EXACTLY ONCE — when the phase's last instance completes — by reusing
+   * guardrails.ts's `verifyStepContract` UNCHANGED against a workspace
+   * snapshot pair scoped to the phase's own execution window. Absent ⇒ zero
+   * extra snapshots, zero extra verification calls, identical cost to a step
+   * with no `contract`. `maxAttempts` (inherited from StepContract's shape)
+   * is meaningless here and is silently ignored — the exit gate never
+   * retries (see `onError`).
+   */
+  exitContract?: StepContract;
+  /**
+   * How this phase responds to an unrecoverable condition — an uncaught
+   * error thrown by a step inside it, OR an `exitContract` breach. v1
+   * supports ONLY 'halt': abort the run, reusing the executor's EXISTING
+   * throw → emit-error-event → rethrow path (the same path any uncaught
+   * step error already takes today, phase or no phase). Optional because
+   * 'halt' is also the only sane default — it is ALREADY every flow's
+   * ambient behavior for an uncaught step error — so omitting this field
+   * changes nothing observable. Any value other than 'halt' (or absent) is a
+   * compiler/executor validation error, not a silent feature.
+   */
+  onError?: 'halt';
+}
+
 export interface AgenticFlow {
   id: string;
   name: string;
@@ -221,4 +304,17 @@ export interface AgenticFlow {
    * `<flow_awareness>` block.
    */
   contextMode?: 'blind' | 'feedback';
+  /**
+   * Optional named groupings of steps with block-level semantics (an exit
+   * gate + a resumable checkpoint boundary) — see AgenticPhase and spec
+   * docs/superpowers/specs/2026-07-21-agentic-phase-model.md. Additive,
+   * following the exact precedent of `loops` and `contextMode`: omitted when
+   * the flow has no phases, and a runtime that does not know this field
+   * exists (an older TS build, or the Java/Python SDKs in v1) executes
+   * byte-identically — `phases` is never consulted by loop-plan.ts, never
+   * changes stepsRecord/rootStepId/the forward graph, and only ever adds NEW
+   * code paths (the exit gate, the checkpoint marker) that a runtime
+   * ignoring this field simply never runs.
+   */
+  phases?: AgenticPhase[];
 }

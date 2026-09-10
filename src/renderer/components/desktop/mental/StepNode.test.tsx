@@ -21,8 +21,19 @@
  *      StepNode uses to restore focus when the context menu closes.
  */
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EngineProvider, createEngineStore } from '@cmolg/daba-engine';
+
+// Task 13 (adoption plan #20), Fase 2: StepNode now reads
+// `engine.hoveredItemId` (unified highlight — see StepNode.tsx's own
+// doc-comment) via the motor's `useHoveredItem()`, which throws outside an
+// `<EngineProvider>` — see FrameNode.test.tsx's identical wrapper for the
+// full rationale (a fresh throwaway engine store per render; this file
+// never asserts on engine/hover state).
+function render(ui: React.ReactElement) {
+  return rtlRender(<EngineProvider store={createEngineStore()}>{ui}</EngineProvider>);
+}
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -395,5 +406,39 @@ describe('StepNode — mods list with state', () => {
     render(<StepNode {...makeNodeProps('step-mods2', { mods: [MOD_A] })} />);
     expect(screen.getByText('Strict Linting')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove Strict Linting' })).toBeInTheDocument();
+  });
+});
+
+// ── Task 13 (adoption plan #20), Fase 2: unified highlight ─────────────────
+// Hovering this step's row in NodeTree sets engine.hoveredItemId to
+// `step:<id>` — StepNode reads it directly (see StepNode.tsx's own
+// doc-comment). Uses a store with a PRE-SET hoveredItemId (this file's
+// shared `render()` wrapper always creates a fresh, empty one) via a direct
+// EngineProvider mount instead.
+
+describe('StepNode — Task 13 unified highlight', () => {
+  it('sets data-daba-highlighted="true" when engine.hoveredItemId matches this step', () => {
+    const store = createEngineStore({ initialState: { hoveredItemId: 'step:step-hl' } });
+    rtlRender(
+      <EngineProvider store={store}>
+        <StepNode {...makeNodeProps('step-hl')} />
+      </EngineProvider>,
+    );
+    expect(screen.getByTestId('step-node-step-hl')).toHaveAttribute('data-daba-highlighted', 'true');
+  });
+
+  it('omits the attribute entirely when a DIFFERENT item is hovered', () => {
+    const store = createEngineStore({ initialState: { hoveredItemId: 'step:some-other-step' } });
+    rtlRender(
+      <EngineProvider store={store}>
+        <StepNode {...makeNodeProps('step-hl2')} />
+      </EngineProvider>,
+    );
+    expect(screen.getByTestId('step-node-step-hl2')).not.toHaveAttribute('data-daba-highlighted');
+  });
+
+  it('omits the attribute when nothing is hovered', () => {
+    render(<StepNode {...makeNodeProps('step-hl3')} />);
+    expect(screen.getByTestId('step-node-step-hl3')).not.toHaveAttribute('data-daba-highlighted');
   });
 });

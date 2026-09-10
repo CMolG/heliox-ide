@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { PipelineAssembly } from '@/types/meta-agent';
 import { LOOP_DEFAULT_MAX_ITERATIONS, LOOP_MAX_ITERATIONS_CAP } from '@/types/harness';
+import type { BacklogCard } from '@/types/market';
 import { useDesktopStore, getStepMentalAttachments } from '../store/desktop-store';
 import { compileFlowFromCanvas } from '../lib/harness-compiler';
 
@@ -181,7 +182,10 @@ describe('Persisted dock migrations', () => {
     const actions = migrated.dockItems.map((item: { action: string }) => item.action);
 
     // v3→v4 inserts backlog + mental-draw-toggle; v15 removes the grid action;
-    // v16 inserts new-step + new-flow between mental-draw-toggle and marketplace.
+    // v16 inserts new-step + new-flow between mental-draw-toggle and marketplace;
+    // v21 inserts new-agent-session right after new-flow (Cockpit F1);
+    // v23 inserts cockpit right after new-agent-session (Cockpit F4) — the
+    // preset sits next to the session it arranges.
     expect(actions).toEqual([
       'new-chat',
       'file-explorer',
@@ -189,6 +193,8 @@ describe('Persisted dock migrations', () => {
       'mental-draw-toggle',
       'new-step',
       'new-flow',
+      'new-agent-session',
+      'cockpit',
       'marketplace',
     ]);
     // v15 migration also clears the grids array
@@ -1487,6 +1493,121 @@ describe('updateFrameData', () => {
   });
 });
 
+// ─── Phase grouping (Capa 1 spike) ─────────────────────────────────
+
+describe('Phase grouping (Capa 1 spike)', () => {
+  it('addPhaseNode creates a PhaseGraphNode owned by the given frame', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId,
+      position: { x: 20, y: 20 },
+      width: 360,
+      height: 220,
+      title: 'Setup',
+      childIds: [stepId],
+    });
+
+    const nodes = useDesktopStore.getState().mentalNodes;
+    const phase = nodes.find((n) => n.id === phaseId);
+    expect(phase?.type).toBe('phase');
+    expect((phase as never as { parentId: string }).parentId).toBe(frameId);
+    expect((phase as never as { data: { childIds: string[] } }).data.childIds).toEqual([stepId]);
+  });
+
+  it('addPhaseNode re-parents its named child steps from the frame to the new phase', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup', childIds: [stepId],
+    });
+
+    const step = useDesktopStore.getState().mentalNodes.find((n) => n.id === stepId);
+    expect((step as never as { parentId: string }).parentId).toBe(phaseId);
+  });
+
+  it('splices the phase after its frame but before its child steps (React Flow parent-ordering invariant)', () => {
+    // React Flow resolves `parentId` positionally: a parent must precede its
+    // children in the nodes array. Appending the phase would place it after
+    // the very steps it now parents, and they would render detached.
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup', childIds: [stepId],
+    });
+
+    const ids = useDesktopStore.getState().mentalNodes.map((n) => n.id);
+    expect(ids.indexOf(frameId)).toBeLessThan(ids.indexOf(phaseId));
+    expect(ids.indexOf(phaseId)).toBeLessThan(ids.indexOf(stepId));
+  });
+
+  it('updatePhaseData patches title/description on the phase node only', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const phaseId = store.addPhaseNode({ parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup' });
+
+    useDesktopStore.getState().updatePhaseData(phaseId, { title: 'Renamed Phase' });
+
+    const phase = useDesktopStore.getState().mentalNodes.find((n) => n.id === phaseId);
+    expect((phase as never as { data: { title: string } }).data.title).toBe('Renamed Phase');
+  });
+
+  it('removeMentalNode on a phase re-parents its children to the owning frame instead of deleting them', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup', childIds: [stepId],
+    });
+
+    useDesktopStore.getState().removeMentalNode(phaseId);
+
+    const nodes = useDesktopStore.getState().mentalNodes;
+    expect(nodes.find((n) => n.id === phaseId)).toBeUndefined();
+    const step = nodes.find((n) => n.id === stepId);
+    expect(step).toBeDefined();
+    expect((step as never as { parentId: string }).parentId).toBe(frameId);
+  });
+
+  it('removeMentalNode on a frame cascade-deletes transitively through a phase, leaving no dangling parentId', () => {
+    // The frame cascade walks `parentId`, and addStepNode never registers the
+    // step in the frame's own childIds — so once addPhaseNode re-parents a
+    // step (frame > phase > step), a single-level scan would delete the phase
+    // and strand its steps pointing at a node that no longer exists.
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+    const phaseId = useDesktopStore.getState().addPhaseNode({
+      parentId: frameId, position: { x: 0, y: 0 }, width: 360, height: 220, title: 'Setup', childIds: [stepId],
+    });
+
+    useDesktopStore.getState().removeMentalNode(frameId);
+
+    const nodes = useDesktopStore.getState().mentalNodes;
+    expect(nodes.find((n) => n.id === frameId)).toBeUndefined();
+    expect(nodes.find((n) => n.id === phaseId)).toBeUndefined();
+    expect(nodes.find((n) => n.id === stepId)).toBeUndefined();
+  });
+
+  it('removeMentalNode on a frame still cascade-deletes its children (regression: Frame behavior unchanged)', () => {
+    const store = useDesktopStore.getState();
+    const frameId = store.addFrameNode({ position: { x: 0, y: 0 }, width: 400, height: 300, title: 'Flow' });
+    const stepId = store.addStepNode({ parentId: frameId, title: 'Step A' });
+
+    useDesktopStore.getState().removeMentalNode(frameId);
+
+    const nodes = useDesktopStore.getState().mentalNodes;
+    expect(nodes.find((n) => n.id === frameId)).toBeUndefined();
+    expect(nodes.find((n) => n.id === stepId)).toBeUndefined();
+  });
+});
+
 // ─── Loop-back edges (bounded refinement) ──────────────────────────
 
 describe('Loop-back edges (bounded refinement)', () => {
@@ -2001,7 +2122,7 @@ describe('resizeHudWidget', () => {
     expect(widget?.size).toEqual({ width: 500, height: 400 });
   });
 
-  it('clamps below the 216x144 minimum (grid-aligned — see hud-grid.ts MIN_WIDGET_WIDTH/HEIGHT)', () => {
+  it('clamps below the 216x144 minimum (grid-aligned — see hud-widget-policy.ts MIN_WIDGET_WIDTH/HEIGHT)', () => {
     useDesktopStore.getState().resizeHudWidget('notifications', { width: 50, height: 30 });
     const widget = useDesktopStore.getState().hudWidgets.find(w => w.type === 'notifications');
     expect(widget?.size).toEqual({ width: 216, height: 144 });
@@ -2556,5 +2677,93 @@ describe('Boards — v18 migration (boards + persisted canvasZoom)', () => {
     expect(migrated.canvasZoom).toBe(1);
     expect(migrated.boards).toEqual([expect.objectContaining({ id: 'board-1' })]);
     expect(migrated.activeBoardId).toBe('board-1');
+  });
+});
+
+// ─── Backlog — F4 card<->run correlation + watcher merge ─────────
+
+function makeBacklogCard(overrides: Partial<BacklogCard> = {}): BacklogCard {
+  return {
+    filename: 'card.md', taskId: 'T1', targetAgent: '', targetModule: '',
+    priority: 'medium', status: 'todo', runState: 'idle', order: 0,
+    tags: [], estimate: 0, assignees: [], related: [],
+    createdAt: '2026-07-08T00:00:00.000Z', updatedAt: '2026-07-08T00:00:00.000Z',
+    title: 'A card', description: 'Desc', comments: [], attachments: [],
+    ...overrides,
+  };
+}
+
+describe('mergeBacklogCards (F4 — watcher push)', () => {
+  it('replaces backlogCards wholesale', () => {
+    const before = [makeBacklogCard({ filename: 'a.md', taskId: 'A' })];
+    const after = [makeBacklogCard({ filename: 'b.md', taskId: 'B' }), makeBacklogCard({ filename: 'c.md', taskId: 'C' })];
+    useDesktopStore.setState({ backlogCards: before });
+    useDesktopStore.getState().mergeBacklogCards(after);
+    expect(useDesktopStore.getState().backlogCards).toEqual(after);
+  });
+
+  it('live-patches an open canvasModalCard in place when it is one of the updated cards', () => {
+    const openCard = makeBacklogCard({ filename: 'open.md', taskId: 'OPEN', status: 'todo' });
+    useDesktopStore.setState({ backlogCards: [openCard], canvasModalCard: openCard });
+
+    const updated = { ...openCard, status: 'doing' as const, runState: 'running' as const };
+    useDesktopStore.getState().mergeBacklogCards([updated]);
+
+    expect(useDesktopStore.getState().canvasModalCard).toEqual(updated);
+  });
+
+  it('leaves a non-matching canvasModalCard alone (no surprise auto-close) when its card disappeared from the fresh set', () => {
+    const openCard = makeBacklogCard({ filename: 'open.md', taskId: 'OPEN' });
+    useDesktopStore.setState({ backlogCards: [openCard], canvasModalCard: openCard });
+
+    const other = makeBacklogCard({ filename: 'other.md', taskId: 'OTHER' });
+    useDesktopStore.getState().mergeBacklogCards([other]);
+
+    expect(useDesktopStore.getState().canvasModalCard).toBe(openCard);
+    expect(useDesktopStore.getState().backlogCards).toEqual([other]);
+  });
+
+  it('is a no-op for canvasModalCard when no modal is open', () => {
+    useDesktopStore.getState().mergeBacklogCards([makeBacklogCard()]);
+    expect(useDesktopStore.getState().canvasModalCard).toBeNull();
+  });
+});
+
+describe('backlogRunCorrelation (F4 — card<->run correlation map)', () => {
+  it('starts empty', () => {
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({});
+  });
+
+  it('registerBacklogRunStep adds an entry keyed by stepId', () => {
+    useDesktopStore.getState().registerBacklogRunStep('step-1', '/proj/.backlog', 'card.md');
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      'step-1': { backlogDir: '/proj/.backlog', filename: 'card.md' },
+    });
+  });
+
+  it('registerBacklogRunStep accumulates multiple entries without clobbering existing ones', () => {
+    useDesktopStore.getState().registerBacklogRunStep('step-1', '/proj/.backlog', 'a.md');
+    useDesktopStore.getState().registerBacklogRunStep('step-2', '/proj/.backlog', 'b.md');
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      'step-1': { backlogDir: '/proj/.backlog', filename: 'a.md' },
+      'step-2': { backlogDir: '/proj/.backlog', filename: 'b.md' },
+    });
+  });
+
+  it('clearBacklogRunStep removes only the targeted entry', () => {
+    useDesktopStore.getState().registerBacklogRunStep('step-1', '/proj/.backlog', 'a.md');
+    useDesktopStore.getState().registerBacklogRunStep('step-2', '/proj/.backlog', 'b.md');
+    useDesktopStore.getState().clearBacklogRunStep('step-1');
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      'step-2': { backlogDir: '/proj/.backlog', filename: 'b.md' },
+    });
+  });
+
+  it('clearBacklogRunStep is a no-op for an unknown stepId', () => {
+    useDesktopStore.getState().registerBacklogRunStep('step-1', '/proj/.backlog', 'a.md');
+    useDesktopStore.getState().clearBacklogRunStep('does-not-exist');
+    expect(useDesktopStore.getState().backlogRunCorrelation).toEqual({
+      'step-1': { backlogDir: '/proj/.backlog', filename: 'a.md' },
+    });
   });
 });

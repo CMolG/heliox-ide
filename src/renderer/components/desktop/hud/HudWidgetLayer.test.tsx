@@ -27,10 +27,12 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-// Real (unmocked) hud-grid — Phase 4 tests assert against the actual
+// Real (unmocked) hud-widget-policy — Phase 4 tests assert against the actual
 // SAFE_ZONE/rectsOverlap so they don't silently pass if the wiring below
-// stops calling the real resolver.
-import { SAFE_ZONE, rectsOverlap } from '../../../logic/hud-grid';
+// stops calling the real resolver. The generic grid math these compose over
+// now lives in @cmolg/daba-engine (adoption plan #20, Task 10); SAFE_ZONE/
+// rectsOverlap are Fluxor's own policy, still local — see logic/hud-widget-policy.ts.
+import { SAFE_ZONE, rectsOverlap } from '../../../logic/hud-widget-policy';
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -41,6 +43,7 @@ const mockDesktop = vi.hoisted(() => ({
     position: { x: number; y: number };
     size?: { width: number; height: number };
   }>,
+  settings: { showInspector: false },
   setHudWidgetVisible: vi.fn(),
   moveHudWidget: vi.fn(),
   resizeHudWidget: vi.fn(),
@@ -68,6 +71,7 @@ vi.mock('../../atoms/widgets/NotificationsWidget', () => ({
 
 // ── Import after mocks ───────────────────────────────────────────────────────
 
+import { useFluxorStore } from '../../../store';
 import { HudWidgetLayer } from './HudWidgetLayer';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,6 +82,8 @@ function setWidgets(widgets: typeof mockDesktop.hudWidgets) {
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  useFluxorStore.setState({ showSidebar: false });
+  mockDesktop.settings = { showInspector: false };
   setWidgets([{ type: 'agent-sessions', visible: true, position: { x: 900, y: 80 } }]);
   mockDesktop.setHudWidgetVisible.mockClear();
   mockDesktop.moveHudWidget.mockClear();

@@ -13,6 +13,7 @@ import {
   INPUT_CONTEXT_MAX_CHARS,
   OUTPUT_MAX_CHARS,
   SqliteCheckpointStore,
+  findPhaseStartCheckpoint,
   getCheckpoint,
   listCheckpoints,
   saveCheckpoint,
@@ -581,5 +582,129 @@ describe('SqliteCheckpointStore (mock database) — context_file_path/context_fi
 
     const [listed] = store.list('run-ctx-sql3');
     expect(listed.contextFileSnapshot).toEqual({ path: 'p', content: 'c' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// phaseBoundary — Capa 1 phase checkpoints
+// (spec docs/superpowers/specs/2026-07-21-agentic-phase-model.md §5.3)
+// ---------------------------------------------------------------------------
+
+describe('phaseBoundary (Capa 1 phase checkpoints)', () => {
+  it('stores phaseBoundary when provided', () => {
+    const checkpoint = saveCheckpoint({
+      runId: 'run-1', stepId: 'step-a', inputContext: 'in', output: 'out', completedStepIds: ['step-a'],
+      phaseBoundary: { phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['start', 'end'] },
+    });
+
+    expect(checkpoint.phaseBoundary).toEqual({ phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['start', 'end'] });
+  });
+
+  it('omits the phaseBoundary key entirely when not provided, rather than storing it as undefined', () => {
+    const checkpoint = saveCheckpoint({
+      runId: 'run-1', stepId: 'step-a', inputContext: 'in', output: 'out', completedStepIds: ['step-a'],
+    });
+
+    expect('phaseBoundary' in checkpoint).toBe(false);
+  });
+
+  it('does not disturb the existing shape (iteration/contextFileSnapshot) when phaseBoundary is also present', () => {
+    const checkpoint = saveCheckpoint({
+      runId: 'run-1', stepId: 'step-a', iteration: 2, inputContext: 'in', output: 'out', completedStepIds: ['step-a'],
+      contextFileSnapshot: { path: 'a.md', content: 'hi' },
+      phaseBoundary: { phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['end'] },
+    });
+
+    expect(checkpoint.iteration).toBe(2);
+    expect(checkpoint.contextFileSnapshot).toEqual({ path: 'a.md', content: 'hi' });
+    expect(checkpoint.phaseBoundary).toEqual({ phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['end'] });
+  });
+});
+
+describe('SqliteCheckpointStore (mock database) — phase_boundary', () => {
+  // Locally-scoped mock-DB builder per new field, matching this file's
+  // established convention (see buildMockDbWithContextColumns above) rather
+  // than a shared helper every pre-existing test would then depend on.
+  function buildMockDbWithPhaseBoundaryColumn() {
+    const rows = new Map<string, Record<string, unknown>>();
+
+    return {
+      exec: (_sql: string): void => {},
+      prepare: (sql: string) => ({
+        run: (...args: unknown[]) => {
+          if (sql.trim().toLowerCase().startsWith('insert')) {
+            // Column order mirrors the real INSERT in checkpoints.ts, with
+            // phase_boundary appended after context_file_content.
+            const [
+              id, runId, stepId, iteration, inputContext, output,
+              completedStepIds, modelId, timestamp, contextFilePath, contextFileContent,
+              phaseBoundary,
+            ] = args;
+            rows.set(String(id), {
+              id, run_id: runId, step_id: stepId, iteration, input_context: inputContext, output,
+              completed_step_ids: completedStepIds, model_id: modelId, timestamp,
+              context_file_path: contextFilePath, context_file_content: contextFileContent,
+              phase_boundary: phaseBoundary,
+            });
+          }
+        },
+        get: (...args: unknown[]) => rows.get(String(args[0])),
+        all: (...args: unknown[]) => {
+          const runId = String(args[0]);
+          return [...rows.values()].filter((r) => String(r.run_id) === runId).sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+        },
+      }),
+    };
+  }
+
+  it('round-trips phaseBoundary through the mock database', () => {
+    const store = new SqliteCheckpointStore(buildMockDbWithPhaseBoundaryColumn() as any);
+    store.save({
+      id: 'ckpt-1', runId: 'run-1', stepId: 'step-a', inputContext: 'in', output: 'out',
+      completedStepIds: ['step-a'], modelId: undefined, timestamp: 1,
+      phaseBoundary: { phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['start'] },
+    });
+
+    expect(store.get('ckpt-1')?.phaseBoundary).toEqual({ phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['start'] });
+  });
+
+  it('omits phaseBoundary (rather than a null-filled object) when the column is null', () => {
+    const store = new SqliteCheckpointStore(buildMockDbWithPhaseBoundaryColumn() as any);
+    store.save({
+      id: 'ckpt-1', runId: 'run-1', stepId: 'step-a', inputContext: 'in', output: 'out',
+      completedStepIds: ['step-a'], modelId: undefined, timestamp: 1,
+    });
+
+    expect('phaseBoundary' in (store.get('ckpt-1') ?? {})).toBe(false);
+  });
+});
+
+describe('findPhaseStartCheckpoint', () => {
+  it("returns the checkpoint whose phaseBoundary marks this phase's start", () => {
+    saveCheckpoint({ runId: 'run-2', stepId: 'a', inputContext: '', output: '', completedStepIds: ['a'],
+      phaseBoundary: { phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['start'] } });
+    saveCheckpoint({ runId: 'run-2', stepId: 'b', inputContext: '', output: '', completedStepIds: ['a', 'b'],
+      phaseBoundary: { phaseId: 'phase-1', phaseName: 'Setup', boundaries: ['end'] } });
+
+    const found = findPhaseStartCheckpoint('run-2', 'phase-1');
+    expect(found?.stepId).toBe('a');
+  });
+
+  it('returns undefined when the phase never ran in this run', () => {
+    expect(findPhaseStartCheckpoint('run-2', 'nonexistent-phase')).toBeUndefined();
+  });
+
+  it('returns the single checkpoint for a single-instance phase (boundaries: ["start","end"])', () => {
+    saveCheckpoint({ runId: 'run-3', stepId: 'solo', inputContext: '', output: '', completedStepIds: ['solo'],
+      phaseBoundary: { phaseId: 'phase-solo', phaseName: 'Solo', boundaries: ['start', 'end'] } });
+
+    expect(findPhaseStartCheckpoint('run-3', 'phase-solo')?.stepId).toBe('solo');
+  });
+
+  it('does not match a checkpoint from a DIFFERENT phase in the same run', () => {
+    saveCheckpoint({ runId: 'run-4', stepId: 'a', inputContext: '', output: '', completedStepIds: ['a'],
+      phaseBoundary: { phaseId: 'phase-x', phaseName: 'X', boundaries: ['start', 'end'] } });
+
+    expect(findPhaseStartCheckpoint('run-4', 'phase-y')).toBeUndefined();
   });
 });

@@ -184,21 +184,72 @@ export interface MarketInventory {
   steps?: MarketStep[];
 }
 
-// ─── Backlog Cards (parsed from .backlog/*.md YAML frontmatter) ──
+// ─── Backlog Cards (legacy, parsed from .backlog/*.md YAML frontmatter v1) ──
+// Superseded by the v2 BacklogCard below (F2 Task 1 cutover, 2026-07-22).
+// Retained under Legacy*-prefixed names for any remaining read-compat use —
+// nothing live constructs these anymore; the old kanban quintet that
+// consumed them was deleted in the same cutover.
 
-export type BacklogPriority = 'critical' | 'high' | 'medium' | 'low';
-export type BacklogStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type LegacyBacklogPriority = 'critical' | 'high' | 'medium' | 'low';
+export type LegacyBacklogStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
-export interface BacklogCard {
+export interface LegacyBacklogCard {
   filename: string;
   taskId: string;
   targetAgent: string;
   targetModule: string;
-  priority: BacklogPriority;
-  status: BacklogStatus;
+  priority: LegacyBacklogPriority;
+  status: LegacyBacklogStatus;
   order: number;
   title: string;
   body: string;
+}
+
+// ─── Backlog Cards v2 (frontmatter schema v2 — see
+// docs/superpowers/specs/2026-07-21-backlog-schema-v2-f0.md). Promoted to
+// the canonical unsuffixed names by the F2 Task 1 cutover (2026-07-22): the
+// live read-backlog/read-backlog-dir IPC handlers and the new bento widget
+// consume these; the v1 shape above lives on only as Legacy*.
+export type BacklogStatus = 'refine' | 'todo' | 'ready' | 'doing' | 'review' | 'deploy';
+export type BacklogPriority = 'superHigh' | 'high' | 'medium' | 'low' | 'superLow';
+export type BacklogRunState = 'idle' | 'running' | 'completed' | 'failed';
+
+export interface BacklogComment {
+  author: string;
+  date: string; // ISO-8601
+  text: string;
+}
+
+export interface BacklogAttachment {
+  path: string;
+  name: string;
+  /** Resolved hot via fs.stat at read time — never persisted (F0 spec §1.2). Undefined when the stat fails (moved/deleted file); UI renders "—". */
+  size?: string;
+}
+
+export interface BacklogCard {
+  filename: string;
+  taskId: string;
+  /** Vestigial under v2 — retained for read-compat only (F0 spec §1.1). */
+  targetAgent: string;
+  /** Vestigial under v2 — retained for read-compat only (F0 spec §1.1). */
+  targetModule: string;
+  priority: BacklogPriority;
+  status: BacklogStatus;
+  runState: BacklogRunState;
+  order: number;
+  epic?: string;
+  tags: string[];
+  estimate: number;
+  assignees: string[];
+  /** task_id values of OTHER cards, resolved against the loaded backlog — not file paths. */
+  related: string[];
+  createdAt: string; // ISO-8601
+  updatedAt: string; // ISO-8601
+  title: string;
+  description: string;
+  comments: BacklogComment[];
+  attachments: BacklogAttachment[];
 }
 
 // ─── Connector State ─────────────────────────────────────────────

@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.fluxor.sdk.engine.DagTelemetry.NodeExecutionRecord;
 import io.fluxor.sdk.flow.StepConfig;
 import io.fluxor.sdk.internal.Json;
+import io.fluxor.sdk.mod.ModContext;
+import io.fluxor.sdk.mod.ModOverlay;
+import io.fluxor.sdk.mod.StepMod;
+import io.fluxor.sdk.mod.builtin.ProvideToolsMod;
 import io.fluxor.sdk.provider.ChatMessage;
 import io.fluxor.sdk.provider.LlmProvider;
 import io.fluxor.sdk.provider.LlmRequest;
@@ -44,6 +48,18 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@link AtomicLong} counters. One {@link NodeExecutionRecord} is published per node via
  * {@code whenComplete}, which fires on both the success and failure paths. The 2- and 3-argument
  * overloads delegate to the 4-argument forms with {@link DagTelemetry#NOOP}.
+ *
+ * <h3>Mods (on-demand overlay)</h3>
+ * The 5-argument overloads of {@link #executeStep} and the 4-argument overload of
+ * {@link #executeStepText} additionally accept a {@link ModOverlay}. It is resolved once, for
+ * this step's id, into a {@code List<StepMod>} (see {@link ModOverlay#resolve(String)}); every
+ * mod's {@link StepMod#onRequest} is applied — in order — immediately before every provider
+ * call made for this step ({@link #runToolLoop}, so it runs on every tool-loop turn and every
+ * schema-validation retry), and every mod's {@link StepMod#onResponseText} is applied — in
+ * order — to the model's raw text before it is parsed/validated (typed steps) or returned
+ * (text steps). All overloads without a {@link ModOverlay} argument delegate to
+ * {@link ModOverlay#EMPTY}, which resolves to an empty mod list for every step id — a step run
+ * without an overlay sees an identical request/response pipeline to before mods existed.
  */
 public final class StepExecutor {
 
@@ -78,7 +94,8 @@ public final class StepExecutor {
 
     /**
      * Execute a step whose output must deserialize into {@code expectedType}.
-     * Telemetry is discarded (delegates to {@link DagTelemetry#NOOP}).
+     * Telemetry is discarded (delegates to {@link DagTelemetry#NOOP}); no mods are applied
+     * (delegates to {@link ModOverlay#EMPTY}).
      */
     public <T> CompletableFuture<T> executeStep(StepConfig step, Class<T> expectedType, int maxRetries) {
         return executeStep(step, expectedType, maxRetries, DagTelemetry.NOOP);
@@ -86,7 +103,8 @@ public final class StepExecutor {
 
     /**
      * Execute a step whose output must deserialize into {@code expectedType}, reporting
-     * per-node timing, validation latency, and retry count to {@code telemetry}.
+     * per-node timing, validation latency, and retry count to {@code telemetry}. No mods are
+     * applied (delegates to {@link ModOverlay#EMPTY}).
      *
      * <p>Exactly one {@link NodeExecutionRecord} for {@code step.id()} is published to
      * {@code telemetry} when the node terminates — on both success and failure.
@@ -101,8 +119,30 @@ public final class StepExecutor {
      */
     public <T> CompletableFuture<T> executeStep(StepConfig step, Class<T> expectedType,
                                                  int maxRetries, DagTelemetry telemetry) {
+        return executeStep(step, expectedType, maxRetries, telemetry, ModOverlay.EMPTY);
+    }
+
+    /**
+     * Execute a step whose output must deserialize into {@code expectedType}, reporting
+     * per-node metrics to {@code telemetry} and applying {@code mods} (see this class's
+     * "Mods" section above for exactly when {@link StepMod#onRequest}/{@link StepMod#onResponseText}
+     * run).
+     *
+     * @param step        the step configuration to execute
+     * @param expectedType the expected Java type of the deserialized output
+     * @param maxRetries  maximum number of schema-validation retries
+     * @param telemetry   collector for the node's execution metrics; use
+     *                    {@link DagTelemetry#NOOP} to discard
+     * @param mods        the on-demand overlay to resolve for this step; {@link ModOverlay#EMPTY} for none
+     * @param <T>         the output type
+     * @return a future that resolves to the typed result
+     */
+    public <T> CompletableFuture<T> executeStep(StepConfig step, Class<T> expectedType,
+                                                 int maxRetries, DagTelemetry telemetry, ModOverlay mods) {
         JsonSchema schema = schemaExtractor.extract(expectedType);
         List<ChatMessage> history = seedTypedMessages(step, schema);
+        List<StepMod> resolvedMods = (mods == null ? ModOverlay.EMPTY : mods).resolve(step.id());
+        ModContext modContext = new ModContext(step.id(), step.context());
 
         // Per-node accumulators — captured in closures, never shared across nodes.
         AtomicLong inferenceNs = new AtomicLong(0L);
@@ -112,7 +152,7 @@ public final class StepExecutor {
 
         CompletableFuture<T> result = attempt(
                 history, schema, expectedType, maxRetries,
-                inferenceNs, validationNs, attemptCount, lastResponse);
+                inferenceNs, validationNs, attemptCount, lastResponse, resolvedMods, modContext);
 
         return result.whenComplete((value, error) -> {
             String status = error == null ? "ok" : "failed";
@@ -132,7 +172,8 @@ public final class StepExecutor {
 
     /**
      * Execute a step for its free-form text output (used by intermediate DAG nodes).
-     * Telemetry is discarded (delegates to {@link DagTelemetry#NOOP}).
+     * Telemetry is discarded (delegates to {@link DagTelemetry#NOOP}); no mods are applied
+     * (delegates to {@link ModOverlay#EMPTY}).
      */
     public CompletableFuture<String> executeStepText(StepConfig step, int maxRetries) {
         return executeStepText(step, maxRetries, DagTelemetry.NOOP);
@@ -141,21 +182,43 @@ public final class StepExecutor {
     /**
      * Execute a step for its free-form text output, reporting per-node timing to
      * {@code telemetry}. For text nodes there is no schema validation, so
-     * {@code schemaValidationMs} is always 0 and {@code attempts} is always 1.
+     * {@code schemaValidationMs} is always 0 and {@code attempts} is always 1. No mods are
+     * applied (delegates to {@link ModOverlay#EMPTY}).
      *
      * @param step       the step configuration to execute
      * @param maxRetries maximum number of schema-validation retries (passed through
      *                   for consistency; text nodes do not validate)
-     * @param telemetry  collector for the node's execution metrics
+     * @param telemetry  collector for per-node execution metrics
      * @return a future that resolves to the model's text output
      */
     public CompletableFuture<String> executeStepText(StepConfig step, int maxRetries, DagTelemetry telemetry) {
+        return executeStepText(step, maxRetries, telemetry, ModOverlay.EMPTY);
+    }
+
+    /**
+     * Execute a step for its free-form text output, reporting per-node timing to
+     * {@code telemetry} and applying {@code mods} — including {@link StepMod#onResponseText} on
+     * the final text, since for a text step "the response" already IS the step's result.
+     *
+     * @param step       the step configuration to execute
+     * @param maxRetries maximum number of schema-validation retries (passed through
+     *                   for consistency; text nodes do not validate)
+     * @param telemetry  collector for per-node execution metrics
+     * @param mods       the on-demand overlay to resolve for this step; {@link ModOverlay#EMPTY} for none
+     * @return a future that resolves to the model's (mod-transformed) text output
+     */
+    public CompletableFuture<String> executeStepText(StepConfig step, int maxRetries, DagTelemetry telemetry,
+                                                       ModOverlay mods) {
+        List<StepMod> resolvedMods = (mods == null ? ModOverlay.EMPTY : mods).resolve(step.id());
+        ModContext modContext = new ModContext(step.id(), step.context());
+
         AtomicLong inferenceNs = new AtomicLong(0L);
         AtomicReference<LlmResponse> lastResponse = new AtomicReference<>();
 
         CompletableFuture<String> result =
-                runToolLoop(seedTextMessages(step), null, DEFAULT_TOOL_BUDGET, inferenceNs, lastResponse)
-                        .thenApply(ConversationResult::finalText);
+                runToolLoop(seedTextMessages(step), null, DEFAULT_TOOL_BUDGET, inferenceNs, lastResponse,
+                        resolvedMods, modContext)
+                        .thenApply(conversation -> applyResponseMods(conversation.finalText(), resolvedMods, modContext));
 
         return result.whenComplete((value, error) -> {
             String status = error == null ? "ok" : "failed";
@@ -175,11 +238,16 @@ public final class StepExecutor {
                                               int retriesLeft,
                                               AtomicLong inferenceNs, AtomicLong validationNs,
                                               AtomicInteger attemptCount,
-                                              AtomicReference<LlmResponse> lastResponse) {
+                                              AtomicReference<LlmResponse> lastResponse,
+                                              List<StepMod> mods, ModContext modContext) {
         attemptCount.incrementAndGet();
-        return runToolLoop(history, schema, DEFAULT_TOOL_BUDGET, inferenceNs, lastResponse)
+        return runToolLoop(history, schema, DEFAULT_TOOL_BUDGET, inferenceNs, lastResponse, mods, modContext)
                 .thenCompose(conversation -> {
-                    String jsonText = extractJson(conversation.finalText());
+                    // onResponseText runs before extraction/parsing/validation — and thus before
+                    // any retry — so a post-process mod that fixes up the model's raw text can
+                    // rescue an attempt that would otherwise fail schema validation.
+                    String rawText = applyResponseMods(conversation.finalText(), mods, modContext);
+                    String jsonText = extractJson(rawText);
 
                     JsonNode parsed;
                     try {
@@ -187,7 +255,7 @@ public final class StepExecutor {
                     } catch (Exception e) {
                         return retryOrFail("El contenido no es JSON válido (" + e.getMessage() + ")",
                                 conversation, schema, type, retriesLeft, null,
-                                inferenceNs, validationNs, attemptCount, lastResponse);
+                                inferenceNs, validationNs, attemptCount, lastResponse, mods, modContext);
                     }
 
                     long validationStart = System.nanoTime();
@@ -196,7 +264,7 @@ public final class StepExecutor {
 
                     if (!result.valid()) {
                         return retryOrFail(result.toPromptMessage(), conversation, schema, type, retriesLeft, result,
-                                inferenceNs, validationNs, attemptCount, lastResponse);
+                                inferenceNs, validationNs, attemptCount, lastResponse, mods, modContext);
                     }
 
                     try {
@@ -204,7 +272,7 @@ public final class StepExecutor {
                     } catch (Exception e) {
                         return retryOrFail("La deserialización falló (" + e.getMessage() + ")",
                                 conversation, schema, type, retriesLeft, result,
-                                inferenceNs, validationNs, attemptCount, lastResponse);
+                                inferenceNs, validationNs, attemptCount, lastResponse, mods, modContext);
                     }
                 });
     }
@@ -213,7 +281,8 @@ public final class StepExecutor {
                                                   Class<T> type, int retriesLeft, ValidationResult result,
                                                   AtomicLong inferenceNs, AtomicLong validationNs,
                                                   AtomicInteger attemptCount,
-                                                  AtomicReference<LlmResponse> lastResponse) {
+                                                  AtomicReference<LlmResponse> lastResponse,
+                                                  List<StepMod> mods, ModContext modContext) {
         if (retriesLeft <= 0) {
             ValidationResult finalResult = result != null
                 ? result
@@ -224,8 +293,10 @@ public final class StepExecutor {
         List<ChatMessage> next = append(conversation.history(), ChatMessage.system(
             "El JSON falló en estos campos: " + detail
                 + ". Corrige los errores y devuelve ÚNICAMENTE un JSON válido que cumpla el esquema."));
+        // Recurses into attempt(), which calls runToolLoop() fresh — mods.onRequest/onResponseText
+        // are therefore re-applied on this retry exactly as they were on the first attempt.
         return attempt(next, schema, type, retriesLeft - 1,
-                inferenceNs, validationNs, attemptCount, lastResponse);
+                inferenceNs, validationNs, attemptCount, lastResponse, mods, modContext);
     }
 
     // =========================================================================
@@ -241,13 +312,22 @@ public final class StepExecutor {
      * snapshots; the elapsed nanoseconds are accumulated into {@code inferenceNs}.
      * {@code lastResponse} is updated with every provider response so the caller can extract
      * token counts from the final turn.
+     *
+     * <p>{@code mods}' {@link StepMod#onRequest} is applied to the freshly-built request on
+     * <em>every</em> invocation of this method — i.e. every turn of the tool-calling loop,
+     * including follow-up turns after a tool call. Because {@code history} here never itself
+     * contains a mod's injected content (mods rebuild it from the overlay every time, never by
+     * mutating the accumulating conversation), a mod like a system-prompt injection is applied
+     * exactly once per outgoing request, never compounding across turns.
      */
     private CompletableFuture<ConversationResult> runToolLoop(List<ChatMessage> history, JsonSchema schema,
                                                                int toolBudget,
                                                                AtomicLong inferenceNs,
-                                                               AtomicReference<LlmResponse> lastResponse) {
+                                                               AtomicReference<LlmResponse> lastResponse,
+                                                               List<StepMod> mods, ModContext modContext) {
         long callStart = System.nanoTime();
-        LlmRequest request = new LlmRequest(history, schema, model, 0.0, toolRegistry.specs());
+        LlmRequest baseRequest = new LlmRequest(history, schema, model, 0.0, toolRegistry.specs());
+        LlmRequest request = applyRequestMods(baseRequest, mods, modContext);
         return provider.complete(request).thenCompose(response -> {
             inferenceNs.addAndGet(System.nanoTime() - callStart);
             lastResponse.set(response);
@@ -258,9 +338,9 @@ public final class StepExecutor {
             List<ChatMessage> withAssistant = append(history, assistantMessage);
 
             if (response.hasToolCalls() && toolBudget > 0) {
-                return executeToolCalls(response.toolCalls()).thenCompose(toolMessages ->
+                return executeToolCalls(response.toolCalls(), mods).thenCompose(toolMessages ->
                     runToolLoop(concat(withAssistant, toolMessages), schema, toolBudget - 1,
-                            inferenceNs, lastResponse));
+                            inferenceNs, lastResponse, mods, modContext));
             }
             return CompletableFuture.completedFuture(new ConversationResult(withAssistant, response.content()));
         });
@@ -270,10 +350,10 @@ public final class StepExecutor {
     // Internal — tool invocation
     // =========================================================================
 
-    private CompletableFuture<List<ChatMessage>> executeToolCalls(List<ToolCall> calls) {
+    private CompletableFuture<List<ChatMessage>> executeToolCalls(List<ToolCall> calls, List<StepMod> mods) {
         List<CompletableFuture<ChatMessage>> futures = new ArrayList<>(calls.size());
         for (ToolCall call : calls) {
-            futures.add(toolRegistry.invoke(call.name(), call.argumentsJson())
+            futures.add(invokeTool(call, mods)
                 .handle((result, error) -> ChatMessage.tool(call.id(),
                     error == null
                         ? result
@@ -281,6 +361,49 @@ public final class StepExecutor {
         }
         return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
             .thenApply(ignored -> futures.stream().map(CompletableFuture::join).toList());
+    }
+
+    /**
+     * Resolves a tool call against the executor's shared {@link ToolRegistry} first; if the
+     * name isn't registered there, falls back to any {@link ProvideToolsMod} present in the
+     * step's resolved mods (first match wins), so an on-demand, mod-provided tool is actually
+     * dispatchable — not merely advertised — exactly like a permanently-registered one.
+     */
+    private CompletableFuture<String> invokeTool(ToolCall call, List<StepMod> mods) {
+        if (!isRegistered(call.name())) {
+            for (StepMod mod : mods) {
+                if (mod instanceof ProvideToolsMod toolProvider && toolProvider.provides(call.name())) {
+                    return toolProvider.invoke(call.name(), call.argumentsJson());
+                }
+            }
+        }
+        return toolRegistry.invoke(call.name(), call.argumentsJson());
+    }
+
+    private boolean isRegistered(String toolName) {
+        return toolRegistry.specs().stream().anyMatch(spec -> spec.name().equals(toolName));
+    }
+
+    // =========================================================================
+    // Internal — mod application
+    // =========================================================================
+
+    /** Applies every mod's {@link StepMod#onRequest}, in order; a no-op {@code mods} list returns {@code request} unchanged. */
+    private static LlmRequest applyRequestMods(LlmRequest request, List<StepMod> mods, ModContext ctx) {
+        LlmRequest current = request;
+        for (StepMod mod : mods) {
+            current = mod.onRequest(current, ctx);
+        }
+        return current;
+    }
+
+    /** Applies every mod's {@link StepMod#onResponseText}, in order; a no-op {@code mods} list returns {@code text} unchanged. */
+    private static String applyResponseMods(String text, List<StepMod> mods, ModContext ctx) {
+        String current = text;
+        for (StepMod mod : mods) {
+            current = mod.onResponseText(current, ctx);
+        }
+        return current;
     }
 
     // =========================================================================

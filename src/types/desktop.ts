@@ -6,8 +6,8 @@
  * explicit intent, clear boundaries, and behavior-preserving structure.
  */
 // src/types/desktop.ts — Types for the seamless desktop window system
-import type { MarketMod, MarketRole } from './market';
-import type { AgenticStepType } from './harness';
+import type { BacklogStatus, MarketMod, MarketRole } from './market';
+import type { AgenticStepType, StepContract } from './harness';
 
 // ─── OpenCode Provider Theming ───────────────────────────────────
 //
@@ -68,7 +68,7 @@ export interface DesktopWindow {
    * notification) before they ever reach this type, so no live window can
    * have this shape — see the migrate() comment for the full contract.
    */
-  type: 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena';
+  type: 'plugin' | 'file-explorer' | 'backlog' | 'file-viewer' | 'diff-viewer' | 'prompt-dev-zone' | 'web-preview' | 'arena' | 'agent-session' | 'session-list';
   title: string;
   /** Lucide icon name (e.g. 'MessageSquare', 'Terminal') */
   iconName: string;
@@ -122,6 +122,141 @@ export interface DesktopWindow {
    * at send-time".
    */
   mentalAttachments?: MentalAttachment[];
+  /**
+   * For 'agent-session' windows — everything the Cockpit knows about the
+   * vendor CLI running in this window's terminal. Additive and optional, so a
+   * board persisted before F1 rehydrates untouched (no store migration).
+   *
+   * NOT to be confused with the vestigial `sessionId`/`cliProvider`/
+   * `childProjectPath` above: those are dead fields from the retired 'chat'
+   * type and stay dead — an agent session's identity lives in here.
+   */
+  agentSession?: AgentSessionMeta;
+}
+
+// ─── Agent sessions (Cockpit F1) ─────────────────────────────────
+
+/** The four vendor CLIs an agent session can host. Mirrors `src/main/pty/vendors.ts`. */
+export type AgentVendorId = 'claude' | 'codex' | 'opencode' | 'gemini';
+
+/**
+ * What the session window is doing, in a word. Rendered as TEXT, never as
+ * colour alone — a badge whose only channel is hue says nothing to a colour
+ * blind reader and nothing at all in a screenshot.
+ *
+ *  - 'preparing'    — F2: creating the git worktree and its branch
+ *  - 'bootstrapping'— F2: installing dependencies inside that worktree
+ *  - 'starting'     — spawned, no output yet
+ *  - 'running'      — producing output
+ *  - 'waiting'      — F4: it needs a person. `attentionReason` says what for,
+ *                     and the badge prints both ('waiting · permission')
+ *  - 'ended'        — the process exited; `exitCode` says how
+ */
+export type AgentSessionAttention =
+  | 'preparing' | 'bootstrapping' | 'starting' | 'running' | 'waiting' | 'ended';
+
+/**
+ * WHY a session is waiting (Cockpit F4).
+ *
+ * It lives here rather than beside the transition table in
+ * `src/renderer/lib/attention-machine.ts` because it is persisted on the
+ * window, and a persisted shape belongs with the rest of the window's shape.
+ * The machine imports it; nothing in `src/types` imports the machine.
+ *
+ * 'silent' is the odd one out on purpose: the other four are things the CLI
+ * said, and it is the one the Cockpit GUESSED from a quiet terminal. A guess
+ * that reads like a report is worse than no badge.
+ */
+export type AgentSessionAttentionReason =
+  | 'permission' | 'idle' | 'input' | 'stopped' | 'silent';
+
+export interface AgentSessionMeta {
+  /** Correlates the window with its PTY in the main process, and names its log file. */
+  sessionId: string;
+  vendor: AgentVendorId;
+  /**
+   * Working directory the CLI is spawned in. For an attached session this is
+   * `projectRoot`; for a worktree session it becomes the worktree's path once
+   * the worktree exists.
+   */
+  cwd: string;
+  /**
+   * The PROJECT this session belongs to, whatever directory it ends up running
+   * in. Required: the "one attached session per project" rule is counted per
+   * project, and a session that cannot say which project it is in cannot be
+   * counted. Windows persisted by F1 get `projectRoot = cwd` in the v21 → v22
+   * migration, which is exactly right for them — F1 only opened attached
+   * sessions.
+   */
+  projectRoot: string;
+  /** 'attached' = the main tree; 'worktree' = a dedicated git worktree (F2). */
+  mode: 'attached' | 'worktree';
+  // ── F2 (worktrees) fills these ──
+  worktreePath?: string;
+  /** Directory name under `.claude/worktrees/`, kept so a retry rebuilds the same one. */
+  worktreeName?: string;
+  branch?: string;
+  /** The ref the branch was actually cut from — `origin/main`, or a local fallback. */
+  baseRef?: string;
+  /** True once the worktree exists AND its bootstrap is settled: the gate the PTY waits on. */
+  worktreeReady?: boolean;
+  /** `0` clean, non-zero failed, `null`/absent not run. Not the AGENT's exit code. */
+  bootstrapExitCode?: number | null;
+  // ── F3 (card → session) fills these ──
+  cardId?: string;
+  /** The backlog the card was launched from — always the MAIN tree's directory. */
+  backlogDir?: string;
+  cardFilename?: string;
+  /**
+   * The backlog lives in the IDE's config directory, not in the repository. A
+   * worktree therefore has no copy of the card to write to, which is why such a
+   * session is forced to `attached` (card-writeback.ts's file rule).
+   */
+  isExternalBacklog?: boolean;
+  /**
+   * Worktree mode only: the `status` the card carries INSIDE the worktree, as
+   * the session's own watcher last saw it. The main-tree card is not written in
+   * worktree mode, so this is the only thing that can tell the board an agent
+   * has already moved its card to `review` on a branch.
+   */
+  mirroredStatus?: BacklogStatus;
+  /** First prompt handed to the agent (by argv or typed — see the vendor registry). */
+  prompt?: string;
+  launchedAt: number;
+  /**
+   * True once a PTY has been spawned for this window. It is the single guard
+   * against a double spawn under React 19 StrictMode's double mount and under
+   * HMR, and it is also why a REHYDRATED window (persisted, app restarted)
+   * reads `true` with no live PTY: the component reconciles that against
+   * `ptyList()` on mount and renders the ended state.
+   */
+  ptyStarted: boolean;
+  exitCode?: number | null;
+  logPath?: string;
+  attention: AgentSessionAttention;
+  // ── F4 (attention) fills these ──
+  /** Why it is waiting. Only ever set together with `attention: 'waiting'`. */
+  attentionReason?: AgentSessionAttentionReason;
+  /**
+   * True when this session was spawned with its hook listeners armed — today
+   * `claude`, and only while the loopback endpoint is up.
+   *
+   * It changes how the window reads its own terminal: with hooks answering,
+   * output is no longer taken as proof the agent is working (see
+   * `attention-machine.ts`). Persisted because a rehydrated window must not
+   * silently fall back to the heuristic on a session that has hooks.
+   */
+  hooksArmed?: boolean;
+  /**
+   * True once ANY hook event has actually arrived. Armed is a claim; this is
+   * the evidence, and the gap between the two is what the window's dim
+   * "hooks: no event yet" hint exists to show.
+   */
+  hookSeen?: boolean;
+  /** Where Claude Code is writing this session's own transcript, per its hooks. */
+  transcriptPath?: string;
+  /** The agent's last line (truncated) — the badge's tooltip, not a transcript. */
+  lastMessage?: string;
 }
 
 export interface MentalAttachment {
@@ -171,7 +306,9 @@ export interface DockItem {
     | 'grid'
     | 'arena'
     | 'new-step'
-    | 'new-flow';
+    | 'new-flow'
+    | 'new-agent-session'
+    | 'cockpit';
   /** For plugin items — the plugin ID to spawn */
   pluginId?: string;
 }
@@ -310,7 +447,41 @@ export interface FrameGraphNode {
   createdAt: number;
 }
 
-export type CanvasGraphNode = MentalGraphNode | StepGraphNode | FrameGraphNode;
+/**
+ * Canvas data for a Phase node — the second nesting level, frame > phase >
+ * step (spec docs/superpowers/specs/2026-07-21-agentic-phase-model.md §3.2).
+ * `exitContract`/`onError` mirror AgenticPhase 1:1 but have no dedicated
+ * visual editor yet in this spike (F2) — same status quo as AgenticStep's
+ * own `contract` field, which also has no canvas UI today; both are
+ * authorable via import/programmatic construction and simply travel through
+ * this shape once set.
+ */
+export interface PhaseNodeData {
+  title: string;
+  description?: string;
+  exitContract?: StepContract;
+  onError?: 'halt';
+  /** Member step ids — mirrors FrameNodeData.childIds; the authoritative membership list the compiler reads (Task 4), not derived from scanning every step's parentId. */
+  childIds: string[];
+  [key: string]: unknown;
+}
+
+export interface PhaseGraphNode {
+  id: string;
+  type: 'phase';
+  /** The owning Frame — SIEMPRE presente, a phase never floats (spec §3.2). */
+  parentId: string;
+  position: { x: number; y: number };
+  width: number;
+  height: number;
+  text: string;
+  color: string;
+  shape: MentalShape;
+  data: PhaseNodeData;
+  createdAt: number;
+}
+
+export type CanvasGraphNode = MentalGraphNode | StepGraphNode | FrameGraphNode | PhaseGraphNode;
 
 export interface MentalGraphEdge {
   id: string;

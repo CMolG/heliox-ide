@@ -17,6 +17,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
+import { useHoveredItem } from '@cmolg/daba-engine';
 import { useDesktopStore } from '../../../store/desktop-store';
 import { DockPopover } from '../DockPopover';
 import { getHueFromHex, getMentalTextContrastColor, mentalHueToHex } from '../../../logic/mental-colors';
@@ -168,6 +169,26 @@ export const MentalNode = React.memo(function MentalNode({ id, data }: NodeProps
 
   const isEditing = mentalEditingNodeId === id;
 
+  // Task 13 (adoption plan #20), Fase 2: unified highlight — hovering this
+  // node's row in the Components panel (NodeTree) sets
+  // `engine.hoveredItemId` to `mental:<id>` (ComponentsPanelRow, motor-
+  // owned); MentalNode is mounted inside the canvas's own <EngineProvider>
+  // (SeamlessCanvas.tsx), so it reads that directly — no store round-trip
+  // needed (unlike windows, see engine-bridge.ts's hover-mirror doc-comment
+  // for why those DO need one). See index.css's
+  // `.mental-card[data-daba-highlighted]` for the resulting outline.
+  //
+  // The `mental:` prefix is inlined (not imported from engine-bridge.ts's
+  // `namespacedId`) deliberately — that module reads `useDesktopStore
+  // .getState()` at its own top-level load time, which crashes against the
+  // simplified `useDesktopStore` mocks StepNode.test.tsx/FrameNode.test.tsx
+  // use (a plain selector function, no `.getState`/`.setState` statics);
+  // importing anything from engine-bridge.ts here would transitively pull
+  // that whole module's side effects into every test that renders these
+  // canvas nodes. Keep in sync with `BRIDGE_ID_PREFIX.mental` there.
+  const { hoveredItemId } = useHoveredItem();
+  const isHighlighted = hoveredItemId === `mental:${id}`;
+
   useEffect(() => {
     setHue(getHueFromHex(color));
   }, [color]);
@@ -204,6 +225,7 @@ export const MentalNode = React.memo(function MentalNode({ id, data }: NodeProps
       {/* Outer wrapper — the draggable surface */}
       <div
         data-testid={`mental-graph-node-${id}`}
+        data-daba-highlighted={isHighlighted ? 'true' : undefined}
         className={`mental-card mental-shape-${shape}`}
         style={{ width, height, position: 'relative' }}
         onPointerDownCapture={() => bringMentalToFront(id)}

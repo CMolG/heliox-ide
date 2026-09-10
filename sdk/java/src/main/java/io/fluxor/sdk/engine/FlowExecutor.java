@@ -3,6 +3,7 @@ package io.fluxor.sdk.engine;
 import io.fluxor.sdk.flow.FlowDefinition;
 import io.fluxor.sdk.flow.LoopConfig;
 import io.fluxor.sdk.flow.StepConfig;
+import io.fluxor.sdk.mod.ModOverlay;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -62,7 +63,7 @@ public final class FlowExecutor {
 
     /**
      * Executes a flow with a single sink, returning a typed result and forwarding per-node
-     * metrics to {@code telemetry}.
+     * metrics to {@code telemetry}. No mods are applied (delegates to {@link ModOverlay#EMPTY}).
      *
      * @param flow         the flow definition to execute
      * @param expectedType the Java type of the terminal node's output
@@ -74,23 +75,44 @@ public final class FlowExecutor {
      */
     public <T> CompletableFuture<T> execute(FlowDefinition flow, Class<T> expectedType, int maxRetries,
                                             Map<String, Object> seedContext, DagTelemetry telemetry) {
+        return execute(flow, expectedType, maxRetries, seedContext, telemetry, ModOverlay.EMPTY);
+    }
+
+    /**
+     * Executes a flow with a single sink, returning a typed result, forwarding per-node metrics
+     * to {@code telemetry} and applying {@code mods} to every step it resolves to (see
+     * {@link ModOverlay#resolve(String)} — flow-wide mods first, then step-specific ones).
+     *
+     * @param flow         the flow definition to execute
+     * @param expectedType the Java type of the terminal node's output
+     * @param maxRetries   schema-validation retry budget per step
+     * @param seedContext  optional key/value pairs injected into every step's context
+     * @param telemetry    collector for per-node execution metrics
+     * @param mods         the on-demand overlay to apply; {@link ModOverlay#EMPTY} for none
+     * @param <T>          the output type
+     * @return a future that resolves to the terminal node's typed result
+     */
+    public <T> CompletableFuture<T> execute(FlowDefinition flow, Class<T> expectedType, int maxRetries,
+                                            Map<String, Object> seedContext, DagTelemetry telemetry,
+                                            ModOverlay mods) {
         Map<String, StepConfig> byId = index(flow);
         validateDependencies(byId);
         List<StepConfig> order = topologicalOrder(byId); // throws on cycle
         String terminalId = resolveTerminal(byId);
 
         Map<String, Object> seed = seedContext == null ? Map.of() : seedContext;
+        ModOverlay overlay = mods == null ? ModOverlay.EMPTY : mods;
         ConcurrentHashMap<String, String> results = new ConcurrentHashMap<>();
         Map<String, CompletableFuture<String>> textFutures = new HashMap<>();
 
         // Wire every non-terminal node as a text future (single-threaded, topological order).
-        scheduleNonSinkNodes(order, Set.of(terminalId), textFutures, results, seed, maxRetries, telemetry);
+        scheduleNonSinkNodes(order, Set.of(terminalId), textFutures, results, seed, maxRetries, telemetry, overlay);
 
         // The terminal node carries the flow's typed, schema-enforced output.
         StepConfig terminal = byId.get(terminalId);
         return gate(parentFutures(terminal, textFutures)).thenCompose(ignored -> {
             StepConfig effective = withParentResults(terminal, seed, results);
-            return stepExecutor.executeStep(effective, expectedType, maxRetries, telemetry);
+            return stepExecutor.executeStep(effective, expectedType, maxRetries, telemetry, overlay);
         });
     }
 
@@ -134,7 +156,8 @@ public final class FlowExecutor {
 
     /**
      * Executes a flow that has multiple sink nodes, returning one typed result per declared sink
-     * and forwarding per-node metrics to {@code telemetry}.
+     * and forwarding per-node metrics to {@code telemetry}. No mods are applied (delegates to
+     * {@link ModOverlay#EMPTY}).
      *
      * @param flow        the flow definition to execute
      * @param sinkTypes   map of sink step-id → expected output type
@@ -148,6 +171,28 @@ public final class FlowExecutor {
                                                                    int maxRetries,
                                                                    Map<String, Object> seedContext,
                                                                    DagTelemetry telemetry) {
+        return executeMultiSink(flow, sinkTypes, maxRetries, seedContext, telemetry, ModOverlay.EMPTY);
+    }
+
+    /**
+     * Executes a flow that has multiple sink nodes, returning one typed result per declared sink,
+     * forwarding per-node metrics to {@code telemetry} and applying {@code mods} to every step it
+     * resolves to (see {@link ModOverlay#resolve(String)}).
+     *
+     * @param flow        the flow definition to execute
+     * @param sinkTypes   map of sink step-id → expected output type
+     * @param maxRetries  schema-validation retry budget per step
+     * @param seedContext optional key/value pairs injected into every step's context
+     * @param telemetry   collector for per-node execution metrics
+     * @param mods        the on-demand overlay to apply; {@link ModOverlay#EMPTY} for none
+     * @return a future that resolves to a {@link LinkedHashMap} of sinkId → typed result
+     */
+    public CompletableFuture<Map<String, Object>> executeMultiSink(FlowDefinition flow,
+                                                                   Map<String, Class<?>> sinkTypes,
+                                                                   int maxRetries,
+                                                                   Map<String, Object> seedContext,
+                                                                   DagTelemetry telemetry,
+                                                                   ModOverlay mods) {
         Map<String, StepConfig> byId = index(flow);
         validateDependencies(byId);
         List<StepConfig> order = topologicalOrder(byId); // throws on cycle
@@ -176,11 +221,12 @@ public final class FlowExecutor {
         }
 
         Map<String, Object> seed = seedContext == null ? Map.of() : seedContext;
+        ModOverlay overlay = mods == null ? ModOverlay.EMPTY : mods;
         ConcurrentHashMap<String, String> results = new ConcurrentHashMap<>();
         Map<String, CompletableFuture<String>> textFutures = new HashMap<>();
 
         // Wire all non-sink nodes as text futures (sinks are excluded to prevent double-execution).
-        scheduleNonSinkNodes(order, resolvedSinkSet, textFutures, results, seed, maxRetries, telemetry);
+        scheduleNonSinkNodes(order, resolvedSinkSet, textFutures, results, seed, maxRetries, telemetry, overlay);
 
         // Wire each sink as a typed future, gated on its own parents.
         List<String> sinkIds = new ArrayList<>(sinkTypes.keySet());
@@ -193,7 +239,7 @@ public final class FlowExecutor {
             final Class<?> sinkType = sinkTypes.get(sinkId);
             sinkFutures[i] = gate(parentFutures(sinkNode, textFutures)).thenCompose(ignored -> {
                 StepConfig effective = withParentResults(sinkNode, seed, results);
-                return stepExecutor.executeStep(effective, sinkType, maxRetries, telemetry)
+                return stepExecutor.executeStep(effective, sinkType, maxRetries, telemetry, overlay)
                     .thenApply(typed -> (Object) typed);
             });
         }
@@ -258,8 +304,9 @@ public final class FlowExecutor {
         ConcurrentHashMap<String, String> results = new ConcurrentHashMap<>();
         Map<String, CompletableFuture<String>> textFutures = new HashMap<>();
 
-        // Schedule every node — including the sink — as a text future.
-        scheduleNonSinkNodes(order, Set.of(), textFutures, results, seed, maxRetries, telemetry);
+        // Schedule every node — including the sink — as a text future. executeAllText has no
+        // mods parameter (it is not reachable from FlowExecution#withMods) — always EMPTY.
+        scheduleNonSinkNodes(order, Set.of(), textFutures, results, seed, maxRetries, telemetry, ModOverlay.EMPTY);
 
         // All futures are already wired; combine them in topological order.
         List<CompletableFuture<String>> allFutures = order.stream()
@@ -392,13 +439,14 @@ public final class FlowExecutor {
                                       Set<String> sinkIds,
                                       Map<String, CompletableFuture<String>> textFutures,
                                       ConcurrentHashMap<String, String> results,
-                                      Map<String, Object> seed, int maxRetries, DagTelemetry telemetry) {
+                                      Map<String, Object> seed, int maxRetries, DagTelemetry telemetry,
+                                      ModOverlay mods) {
         for (StepConfig node : order) {
             if (sinkIds.contains(node.id())) {
                 continue; // sink — will be wired as a typed future by the caller
             }
             textFutures.put(node.id(),
-                    scheduleTextNode(node, textFutures, results, seed, maxRetries, telemetry));
+                    scheduleTextNode(node, textFutures, results, seed, maxRetries, telemetry, mods));
         }
     }
 
@@ -406,10 +454,10 @@ public final class FlowExecutor {
                                                        Map<String, CompletableFuture<String>> textFutures,
                                                        ConcurrentHashMap<String, String> results,
                                                        Map<String, Object> seed, int maxRetries,
-                                                       DagTelemetry telemetry) {
+                                                       DagTelemetry telemetry, ModOverlay mods) {
         return gate(parentFutures(node, textFutures)).thenCompose(ignored -> {
             StepConfig effective = withParentResults(node, seed, results);
-            return stepExecutor.executeStepText(effective, maxRetries, telemetry)
+            return stepExecutor.executeStepText(effective, maxRetries, telemetry, mods)
                 .thenApply(text -> {
                     results.put(node.id(), text); // disjoint key; published before this future completes
                     return text;
@@ -450,11 +498,11 @@ public final class FlowExecutor {
                 context.put(dependency, result);
             }
         }
-        // contract/model are carry-opaque — preserve them on the effective copy too, so a
+        // contract/model/mods are carry-opaque — preserve them on the effective copy too, so a
         // caller reading them off the step actually being executed still sees the declared
-        // value (the pre-existing 5-arg constructor silently defaulted both to null here).
+        // value (the pre-existing 5-arg constructor silently defaulted all three to null here).
         return new StepConfig(node.id(), node.systemPrompt(), node.promptTemplate(), context,
-            node.dependencies(), node.contract(), node.model());
+            node.dependencies(), node.contract(), node.model(), node.mods());
     }
 
     private Map<String, StepConfig> index(FlowDefinition flow) {

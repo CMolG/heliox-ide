@@ -31,6 +31,51 @@
   --font-lexend: 'Atkinson Hyperlegible', 'Inter', 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
 }
 
+/* ─── @cmolg/daba-engine tokens — Fluxor's palette (adoption plan #20) ───
+   The motor's chrome (ContextMenu today; Dock/HUD/etc as later Tasks adopt
+   them) is styled entirely through these --daba-* custom properties —
+   tokens.css ships neutral defaults, this block maps them onto Fluxor's
+   existing dark IDE palette so the adoption is iso-visual (same look, no
+   redesign). Values sourced from logic/theme.ts (surfaceCard/borderLight/
+   textSecondary/danger) and the z-index/radius/blur the 3 pre-adoption
+   context menus already agreed on (z-index 10001; menus differed slightly
+   on radius 8-10px and blur 0-16px — consolidated to one value each, the
+   INTENDED effect of unifying 3 implementations into the motor's one). */
+:root {
+  --daba-surface: #1a1a1a;
+  --daba-surface-muted: #222222;
+  --daba-border: rgba(63, 63, 70, 0.15);
+  --daba-text: #d6d3d1;
+  --daba-text-muted: #8a8a8a;
+  --daba-danger: #F02525;
+  --daba-radius-sm: 4px;
+  --daba-radius-md: 8px;
+  --daba-chrome-blur: 16px;
+  --daba-chrome-surface: rgba(26, 26, 26, 0.95);
+  --daba-chrome-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --daba-z-menu: 10001;
+  /* Task 13 (adoption plan #20), Fase 2, Q7: ComponentsPanel's row
+     highlight (`.daba-components-panel__row[data-daba-highlighted]`) and
+     any other --daba-accent/--daba-highlight consumer now map onto Fluxor's
+     existing selection-ring blue (#4285F4, already hardcoded throughout
+     index.css for window active/highlighted states — see
+     `.desktop-window-shell[data-highlighted]` etc. below) instead of the
+     motor's cyan/indigo defaults. --daba-marquee-fill/border mirror the
+     EXACT rgba(66,133,244,…) values `.selection-rect` already uses, so if
+     the motor's own (currently-unused-by-Fluxor) marquee overlay is ever
+     adopted later it inherits the same blue with zero extra mapping.
+     --daba-guide-color and --cli-accent-rgb are DELIBERATELY untouched —
+     alignment guides are not migrated onto the motor this task (Q5), and
+     unifying the three separate "accent" color systems is out of scope
+     (flagged for the human in this task's report, not fixed here). */
+  --daba-accent: #4285F4;
+  --daba-highlight: #4285F4;
+  --daba-accent-contrast: #ffffff;
+  --daba-radius-lg: 12px;
+  --daba-marquee-fill: rgba(66, 133, 244, 0.08);
+  --daba-marquee-border: rgba(66, 133, 244, 0.6);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -860,7 +905,14 @@ body {
    all window text on the pixel grid for native subpixel anti-aliasing.
    scale() is added by JS only when canvasZoom !== 1.
    will-change: transform is set only during active pan/zoom so the GPU
-   compositing layer is not promoted at rest — text stays crisp at 100%. */
+   compositing layer is not promoted at rest — text stays crisp at 100%.
+   Task 12 (daba-engine adoption): this div is now rendered by <DabaCanvas>
+   itself (panLayerClassName="desktop-pan-layer" adds this class to the
+   motor's own .daba-pan-layer) — SeamlessCanvas.tsx no longer owns this
+   element directly, so `data-zooming` (still SeamlessCanvas's own state,
+   driven by its ctrl/cmd+wheel handler) can only be attached to the ROOT
+   (.desktop-canvas, via DabaCanvas's rootProps), not to this div — hence the
+   descendant selector below instead of the old compound one. */
 .desktop-pan-layer {
   position: absolute;
   inset: 0;
@@ -868,7 +920,7 @@ body {
   will-change: auto;
 }
 .desktop-canvas[data-panning="true"] .desktop-pan-layer,
-.desktop-pan-layer[data-zooming] {
+.desktop-canvas[data-zooming] .desktop-pan-layer {
   will-change: transform;
 }
 
@@ -1493,6 +1545,29 @@ body {
   flex-shrink: 0;
   color: #3d3d3d;
 }
+/* The engine's `.daba-dock__item[aria-pressed='true']` (class + attribute =
+   same specificity as two classes, 0-2-0) would otherwise beat this file's
+   plain `.dock-item-active` (0-1-0, below) for background/color whenever the
+   mental toggle is active. --daba-accent/--daba-accent-contrast ARE mapped
+   in this app's :root (index.tsx imports the engine's tokens.css + engine.css
+   BEFORE index.css specifically so this file's :root block wins by source
+   order — see that file's own comment), so the engine rule doesn't compute
+   to garbage; it resolves to a perfectly valid color, just the WRONG one:
+   --daba-accent is Fluxor's selection-ring blue (#4285F4, shared with
+   ComponentsPanel highlight/marquee/window-active elsewhere), while the
+   Dock's mental-mode toggle has always been purple (#4c1d95 / rgba(109,40,
+   217,…), below) — a distinct semantic the shared accent token doesn't
+   carry. Match the engine selector's specificity here so Fluxor's purple
+   keeps winning over the engine's blue default for this one control.
+   Placed BEFORE .dock-item:hover so hovering an active item still shows the
+   hover look first — unchanged from before the engine adoption, where
+   :hover's own 0-2-0 already beat .dock-item-active's 0-1-0 outright. */
+.dock-item.dock-item-active {
+  background: rgba(109, 40, 217, 0.14);
+  border-color: rgba(109, 40, 217, 0.38);
+  box-shadow: 0 1px 8px rgba(109, 40, 217, 0.2);
+  color: #4c1d95;
+}
 .dock-item:hover {
   background: rgba(0, 0, 0, 0.09);
   border-color: rgba(0, 0, 0, 0.12);
@@ -1590,12 +1665,35 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.95);
 }
 
+/* The engine's popover wrapper only carries "daba-dock-popover" (its own
+   shell, mapped to this app's DARK --daba-chrome-* tokens) — not this file's
+   own .dock-popover-shell, which MentalNode.tsx's picker (still on Fluxor's
+   own <DockPopover>) keeps using. So this rule now also owns the mental
+   menu's card look, duplicated from .dock-popover-shell (above) rather than
+   inheriting it, to keep its distinct light card look (equal 0-1-0
+   specificity to .daba-dock-popover, wins on source order — this file loads
+   after engine.css). Declaration order matters here: `padding` before
+   `padding-bottom` reproduces the original .dock-popover-shell + .dock-
+   mental-menu combo (7px all round, 12px on the bottom) exactly. */
 .dock-mental-menu {
   position: absolute;
   bottom: calc(100% + 10px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 210;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px;
+  border-radius: 12px;
+  background: rgba(249, 249, 251, 0.96);
+  border: 1px solid rgba(0, 0, 0, 0.11);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
   padding-bottom: 12px;
 }
 
@@ -1679,6 +1777,44 @@ body {
   height: 48px;
   color: var(--cli-accent, #555);
   opacity: 0.9;
+}
+
+/* Engine-rendered drag-out ghost for the main dock items (the attachables
+   strip above still renders its own .dock-drag-ghost, untouched). The
+   engine positions this at the raw cursor coordinates with no offset, and
+   reuses the item's `icon` node as-is — there's no separate "ghost icon" in
+   its DockItemSpec contract, so this is the same LucideIcon (size 20,
+   .dock-icon) the live button renders, not a dedicated size-28 one. This
+   rule reproduces .dock-drag-ghost's card look (same declarations,
+   duplicated rather than shared — the engine hardcodes "daba-dock__ghost"
+   with no className passthrough, so there's no class to hang a shared rule
+   off), restores the -22px cursor offset the old dedicated ghost got from
+   its inline style, and bumps the reused icon back up to that ghost's
+   original 28px. Color is explicit white (not .dock-drag-ghost's own
+   var(--cli-accent, #555)) to match what this specific ghost actually
+   rendered before — its LucideIcon carried an extra "text-white" utility
+   class that only existed on that call site, not in .dock-drag-ghost's own
+   rule (the attachable ghost below never had it, hence the two ghosts'
+   different icon color even before this change). */
+.daba-dock__ghost {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--cli-accent-rgb), 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  color: #fff;
+  opacity: 0.9;
+  z-index: 9999;
+  transform: translate(-22px, -22px);
+}
+.daba-dock__ghost svg {
+  width: 28px;
+  height: 28px;
 }
 
 /* Dock separator */
@@ -1814,6 +1950,18 @@ body {
   border: 1.5px solid rgba(109, 40, 217, 0.3);
   box-shadow: 0 4px 14px rgba(109, 40, 217, 0.14);
   overflow: visible;
+}
+
+/* Task 13 (adoption plan #20), Fase 2: unified highlight — see the
+   equivalent `.step-node-shell[data-daba-highlighted]` rule's comment
+   (index.css:2681 block) for the full mechanism; MentalNode reads
+   `engine.hoveredItemId` the same way, comparing against `mental:<id>`.
+   Mental cards have no pre-existing :hover outline of their own to layer
+   against (unlike step/frame nodes), so this is the first outline state
+   this class gains. */
+.mental-card[data-daba-highlighted="true"] {
+  outline: 2px solid var(--daba-highlight);
+  outline-offset: -2px;
 }
 
 .mental-card-color-chip {
@@ -2188,6 +2336,19 @@ body {
   border-style: solid;
 }
 
+/* Task 13 (adoption plan #20), Fase 2: unified highlight — see the
+   equivalent `.step-node-shell[data-daba-highlighted]` rule's comment
+   above (index.css:2681 block) for the full mechanism; FrameNode reads
+   `engine.hoveredItemId` the same way, comparing against `flow:<id>`. An
+   outline (not border-color, unlike :hover above) so it layers cleanly
+   without fighting the dashed/solid hover state — same non-fighting
+   rationale `.step-node-shell`'s own comment gives for using outline over
+   border-color. */
+.pipeline-frame-node[data-daba-highlighted="true"] {
+  outline: 2px solid var(--daba-highlight);
+  outline-offset: -2px;
+}
+
 .pipeline-frame-title {
   position: absolute;
   left: 18px;
@@ -2420,6 +2581,104 @@ body {
   max-width: 100%;
 }
 
+/* ─── Pipeline Phase Nodes (Capa 1 spike) ────────────────────── */
+/* The second nesting level, frame > phase > step (spec
+   docs/superpowers/specs/2026-07-21-agentic-phase-model.md §3.2). Deliberately
+   the SAME grammar as .pipeline-frame-node above — fills its node box, dashed
+   border, dashed→solid as the non-color state cue — but subordinated on every
+   axis a reader scans first: violet instead of neutral white, tighter radius,
+   no backdrop blur or drop shadow, and a smaller title chip. Two groupers that
+   share a canvas must never read as peers, or the hierarchy becomes a guess. */
+
+.pipeline-phase-node {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  border-radius: 6px;
+  border: 1px dashed rgba(167, 139, 250, 0.34);
+  background: rgba(124, 58, 237, 0.055);
+  cursor: grab;
+  transition: border-color 0.15s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pipeline-phase-node {
+    transition: none;
+  }
+}
+
+.pipeline-phase-node:active {
+  cursor: grabbing;
+}
+
+.pipeline-phase-node:hover,
+.pipeline-phase-node:focus-within,
+.react-flow__node.selected .pipeline-phase-node {
+  border-color: rgba(167, 139, 250, 0.85);
+  border-style: solid;
+}
+
+.pipeline-phase-title {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  max-width: calc(100% - 24px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(10, 10, 10, 0.5);
+  border: 1px solid rgba(167, 139, 250, 0.16);
+  color: rgba(167, 139, 250, 0.82);
+}
+
+/* Inline rename. Borderless until focused so the chip stays quiet at rest —
+   the field is the label, not a form control competing with the frame's. */
+.pipeline-phase-title-input {
+  min-width: 0;
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  color: #f4f4f5;
+  font-family: var(--font-display);
+  font-size: 11px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+}
+
+.pipeline-phase-title-input:focus-visible {
+  color: #ffffff;
+}
+
+.pipeline-phase-count {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+  color: rgba(161, 161, 170, 0.45);
+  white-space: nowrap;
+}
+
+.pipeline-phase-desc {
+  position: absolute;
+  left: 12px;
+  top: 38px;
+  max-width: calc(100% - 24px);
+  margin: 0;
+  font-family: var(--font-manrope);
+  font-size: 10px;
+  line-height: 1.3;
+  color: rgba(161, 161, 170, 0.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ─── Meta Compiler Chat ─────────────────────────────────────── */
 
 .meta-chat-shell {
@@ -2598,6 +2857,21 @@ body {
 .step-node-shell:focus-within,
 .react-flow__node.selected .step-node-shell {
   outline: 2px solid #4285F4;
+  outline-offset: -2px;
+}
+
+/* Task 13 (adoption plan #20), Fase 2: unified highlight — hovering this
+   step's row in the Components panel (NodeTree) sets `engine.hoveredItemId`
+   to `step:<id>`; StepNode reads it directly (mounted inside the canvas's
+   own <EngineProvider>, see SeamlessCanvas.tsx) and sets this data attribute
+   itself, no store round-trip needed (unlike windows — see
+   engine-bridge.ts's hover-mirror doc-comment for why those DO need one).
+   Same outline treatment as :hover above, `var(--daba-highlight)` instead of
+   the hardcoded hex so it stays in lockstep with ComponentsPanel's OWN row
+   highlight (`.daba-components-panel__row[data-daba-highlighted]`), both
+   mapped to Fluxor's blue in :root (Q7). */
+.step-node-shell[data-daba-highlighted="true"] {
+  outline: 2px solid var(--daba-highlight);
   outline-offset: -2px;
 }
 
@@ -3849,8 +4123,13 @@ body {
    ancestor dependency on `.step-config-panel`), so reusing them here keeps
    the Inspector visually identical to the evidence panel with zero new CSS
    for the parts that are already covered. Only the genuinely new surfaces
-   (header/chrome, the editable title input, the description textarea, and
-   the destructive multi-select delete button) get dedicated classes below. */
+   (the editable title input, the description textarea, and the destructive
+   multi-select delete button) get dedicated classes below — header/chrome
+   (label, collapse button) moved to the motor's `.daba-side-toolbar__*`
+   (SideToolbar, engine.css) in Task 13 Fase 2; `.inspector-header`/
+   `.inspector-header-label`/`.inspector-collapse-btn`/`.inspector-body` were
+   that hand-rolled chrome and are gone along with it — see
+   InspectorPanel.tsx's `<SideToolbar className="inspector-panel …">`. */
 
 .inspector-panel {
   height: 100%;
@@ -3858,51 +4137,6 @@ body {
   flex-direction: column;
   background: #0f0f0f;
   overflow: hidden;
-}
-
-.inspector-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(63, 63, 70, 0.15);
-  color: #a1a1aa;
-  flex-shrink: 0;
-}
-
-.inspector-header-label {
-  flex: 1;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.inspector-collapse-btn {
-  background: none;
-  border: none;
-  color: #525252;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-
-.inspector-collapse-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #e4e4e7;
-}
-
-.inspector-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 12px 14px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 /* ── Step identity (title/description) — sits above the embedded
@@ -4003,7 +4237,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .inspector-collapse-btn,
   .inspector-title-input,
   .inspector-delete-all-btn {
     transition: none;
@@ -4267,14 +4500,14 @@ body {
    mirror each other bottom-left/bottom-right. The inspector one moved to
    top-right — it was overlapping the HUD widget field at the bottom edge,
    and top-right is now a protected 72x72 SAFE_ZONE reserved specifically
-   for it (see `logic/hud-grid.ts`'s `SAFE_ZONE`, Phase 4). Sidebar stays
+   for it (see `logic/hud-widget-policy.ts`'s `SAFE_ZONE`, Phase 4). Sidebar stays
    bottom-left, unchanged. Position (bottom/left vs. top/right) no longer
    shared, so the recipe below only keeps the geometry-independent parts;
    .notification-bell (above) looks similar but is still NOT grouped in — it
    omits the color transition/hover (background-only change), so folding it
    into this rule would alter its computed style. */
 .expand-sidebar-btn,
-.expand-inspector-btn {
+.inspector-side-toolbar.daba-side-toolbar__expand {
   position: fixed;
   width: 36px;
   height: 36px;
@@ -4297,12 +4530,21 @@ body {
    `.fluxor-topbar` only sets grid placement), so this is computed from
    TopBar.tsx's Tailwind utility classes, not measured live. 53px + 12px
    margin = 65px. The button's footprint (right: 20px, 36×36 → x:[w-56,w-20],
-   y:[65,101]) is fully contained by hud-grid.ts's SAFE_ZONE, which is sized
+   y:[65,101]) is fully contained by hud-widget-policy.ts's SAFE_ZONE, which is sized
    72×120 precisely to reserve this corner from HUD widgets — keep this
-   button's position and SAFE_ZONE's dimensions in sync. */
-.expand-inspector-btn { top: 65px; right: 20px; }
+   button's position and SAFE_ZONE's dimensions in sync.
+   Task 13 (adoption plan #20), Fase 2: ExpandInspectorButton.tsx (a
+   standalone sibling component) is deleted — InspectorPanel.tsx now mounts
+   `<SideToolbar className="inspector-side-toolbar" .../>`, whose OWN
+   collapsed-state button (`.daba-side-toolbar__expand`, motor-owned markup/
+   icon glyph, see engine.css) is targeted here by the COMBINED selector so
+   it keeps landing in this exact fixed corner regardless of its new parent
+   (`.fluxor-inspector`, which can be width:0 while collapsed — position:fixed
+   escapes that; see App.tsx's own comment on why opacity no longer
+   toggles there). */
+.inspector-side-toolbar.daba-side-toolbar__expand { top: 65px; right: 20px; }
 .expand-sidebar-btn:hover,
-.expand-inspector-btn:hover {
+.inspector-side-toolbar.daba-side-toolbar__expand:hover {
   background: #222;
   color: #e4e4e7;
 }
@@ -4472,606 +4714,6 @@ body {
 }
 .backlog-card-animate-in > * {
   animation: backlog-card-enter 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-}
-
-/* ─── FlowDeck Kanban Theme ──────────────────────────────────── */
-.fd-app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  background: #050509;
-  color: #f5f5f7;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial;
-}
-
-.fd-top {
-  padding: 12px 14px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.fd-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.fd-logo {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 230, 118, 0.16);
-  border: 1px solid rgba(0, 230, 118, 0.25);
-  box-shadow: 0 0 0 4px rgba(0, 230, 118, 0.06);
-  color: #00e676;
-}
-
-.fd-title {
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.1;
-}
-
-.fd-subtitle {
-  margin-top: 2px;
-  font-size: 11px;
-  color: rgba(245, 245, 247, 0.62);
-}
-
-.fd-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.fd-btn {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(245, 245, 247, 0.92);
-  padding: 6px 10px;
-  border-radius: 10px;
-  font-weight: 600;
-  font-size: 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
-}
-.fd-btn:hover {
-  transform: translateY(-1px);
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.08);
-}
-.fd-ghost { background: transparent; }
-.fd-btn.fd-accent {
-  border-color: rgba(0, 230, 118, 0.3);
-  background: rgba(0, 230, 118, 0.08);
-  color: #00e676;
-}
-.fd-btn.fd-accent:hover {
-  border-color: rgba(0, 230, 118, 0.5);
-  background: rgba(0, 230, 118, 0.14);
-}
-
-.fd-error {
-  padding: 8px 14px;
-  color: #f87171;
-  font-size: 12px;
-}
-
-.fd-loading {
-  padding: 24px 14px;
-  text-align: center;
-  color: rgba(245, 245, 247, 0.62);
-  font-size: 12px;
-}
-
-.fd-empty {
-  padding: 24px 14px;
-  text-align: center;
-  color: rgba(245, 245, 247, 0.55);
-  font-size: 12px;
-}
-
-/* Picker */
-.fd-picker {
-  flex: 1;
-  overflow: auto;
-  padding: 12px;
-}
-
-.fd-section-label {
-  font-size: 11px;
-  color: rgba(245, 245, 247, 0.55);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 8px;
-}
-
-.fd-picker-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  color: #f5f5f7;
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
-  transition: border-color 0.15s, background 0.15s;
-}
-.fd-picker-btn:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.fd-picker-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-}
-
-.fd-picker-name { font-size: 13px; font-weight: 500; }
-.fd-picker-meta { font-size: 11px; color: rgba(245, 245, 247, 0.55); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.fd-count {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid #e0e0e0;
-  background: #f5f5f5;
-  color: #555;
-}
-
-/* Board */
-.fd-boardWrap {
-  flex: 1;
-  padding: 4px 14px 14px;
-  min-height: 0;
-}
-
-.fd-board {
-  height: 100%;
-  display: flex;
-  gap: 10px;
-  overflow: auto;
-  padding: 6px 2px 8px;
-  scroll-snap-type: x mandatory;
-}
-
-.fd-board::-webkit-scrollbar { height: 8px; }
-.fd-board::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.14); border-radius: 999px; }
-.fd-board::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.04); border-radius: 999px; }
-
-/* Lane */
-.fd-lane {
-  min-width: 220px;
-  flex: 1 1 0;
-  background: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 14px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  scroll-snap-align: start;
-  transition: background 0.2s, border-color 0.2s;
-}
-.fd-lane.fd-drop-hint {
-  outline: 2px dashed #00e676;
-  background: rgba(0, 230, 118, 0.06);
-}
-
-.fd-laneTop {
-  padding: 10px 10px 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid #e8e8e8;
-  background: #fafafa;
-}
-
-.fd-laneTitle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.fd-laneTitle h2 {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  color: #1a1a1a;
-}
-
-.fd-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
-}
-
-.fd-laneMeta { display: flex; align-items: center; }
-
-/* Lane body — vertical scroll */
-.fd-laneBody {
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 80px;
-  flex: 1;
-  background: #f7f7f7;
-}
-.fd-laneBody::-webkit-scrollbar { width: 6px; }
-.fd-laneBody::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.14); border-radius: 999px; }
-
-/* Card */
-.fd-card {
-  border-radius: 12px;
-  border: 1px solid #e0e0e0;
-  background: #ffffff;
-  padding: 10px;
-  cursor: grab;
-  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
-  overflow: hidden;
-  word-break: break-word;
-}
-.fd-card:hover {
-  transform: translateY(-2px);
-  border-color: #00e676;
-  box-shadow: 0 4px 16px rgba(0, 230, 118, 0.12);
-}
-.fd-card:active { cursor: grabbing; }
-
-.fd-cardTopRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.fd-badge {
-  font-size: 11px;
-  font-weight: 800;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid #e0e0e0;
-  background: #f5f5f5;
-  color: #333;
-}
-.fd-badge.high { border-color: rgba(255, 99, 132, 0.5); color: #e53935; }
-.fd-badge.med { border-color: rgba(255, 200, 87, 0.5); color: #f57f17; }
-.fd-badge.low { border-color: rgba(0, 230, 118, 0.4); color: #00c853; }
-
-.fd-del {
-  border: none;
-  background: transparent;
-  color: #999;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 3px 5px;
-  border-radius: 8px;
-  transition: background 0.14s ease, color 0.14s ease;
-}
-.fd-del:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: #333;
-}
-
-.fd-exec {
-  border: none;
-  background: transparent;
-  color: #00c853;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  padding: 3px 5px;
-  border-radius: 8px;
-  transition: background 0.14s ease, color 0.14s ease, transform 0.14s ease;
-}
-.fd-exec:hover {
-  background: rgba(0, 200, 83, 0.1);
-  color: #00e676;
-  transform: scale(1.15);
-}
-.fd-exec:active {
-  transform: scale(0.95);
-}
-
-.fd-card h3 {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-  color: #1a1a1a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.fd-card p {
-  margin-top: 4px;
-  font-size: 11px;
-  color: #666;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.fd-cardFooter {
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: #888;
-  font-size: 11px;
-  overflow: hidden;
-}
-.fd-cardFooter span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 48%;
-}
-
-.fd-cardExpanded {
-  padding-top: 8px;
-  margin-top: 8px;
-  border-top: 1px solid #e8e8e8;
-}
-
-.fd-cardBody {
-  font-size: 11px;
-  color: #555;
-  line-height: 1.4;
-  margin-bottom: 8px;
-}
-
-.fd-cardFlows {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-/* Drag overlay card */
-.fd-dragOverlay {
-  border-radius: 12px;
-  border: 1px solid #00e676;
-  background: #ffffff;
-  padding: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
-  max-width: 240px;
-  pointer-events: none;
-  overflow: hidden;
-}
-.fd-dragOverlay h3 {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1a1a1a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.fd-dragOverlay .fd-badge { font-size: 9px; padding: 2px 6px; }
-.fd-dragOverlay .fd-cardFooter { font-size: 10px; margin-top: 6px; }
-
-/* ── Drag handle ─────────────────────────────────────────── */
-.fd-drag-handle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  cursor: grab;
-  color: rgba(255,255,255,0.2);
-  flex-shrink: 0;
-  transition: color 0.15s ease;
-}
-.fd-drag-handle:hover { color: rgba(255,255,255,0.5); }
-.fd-drag-handle:active { cursor: grabbing; }
-
-/* ── Selected card state ─────────────────────────────────── */
-.fd-card.fd-selected {
-  outline: 2px solid rgba(129, 140, 248, 0.6);
-  outline-offset: -2px;
-  background: rgba(129, 140, 248, 0.06);
-}
-
-/* ── Multi-drag count badge ──────────────────────────────── */
-.fd-multi-drag-count {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 20px;
-  height: 20px;
-  border-radius: 10px;
-  background: #818cf8;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10;
-}
-
-/* ── Card with drag handle layout ────────────────────────── */
-.fd-card-draggable {
-  display: flex;
-  gap: 4px;
-  align-items: stretch;
-}
-
-/* Card detail modal overlay */
-.fd-modalBackdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: fd-fadeIn 0.15s ease;
-}
-@keyframes fd-fadeIn { from { opacity: 0 } to { opacity: 1 } }
-
-.fd-modal {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 20px;
-  padding: 24px 28px;
-  max-width: 520px;
-  width: 90%;
-  max-height: 70vh;
-  overflow-y: auto;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.15), 0 4px 16px rgba(0, 0, 0, 0.08);
-  animation: fd-slideUp 0.2s ease;
-  color: #1a1a1a;
-}
-@keyframes fd-slideUp { from { transform: translateY(16px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
-
-.fd-modal h2 {
-  font-size: 18px;
-  font-weight: 700;
-  margin-bottom: 12px;
-  color: #111;
-  font-family: var(--font-grotesk);
-}
-.fd-modalMeta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
-  align-items: center;
-}
-.fd-modalMeta .fd-badge { font-size: 11px; }
-.fd-modalMeta span {
-  font-size: 11px;
-  color: rgba(0, 0, 0, 0.45);
-}
-.fd-modalBody {
-  font-size: 13px;
-  color: #333;
-  line-height: 1.65;
-  margin-bottom: 16px;
-}
-.fd-modalBody h1, .fd-modalBody h2, .fd-modalBody h3 {
-  font-weight: 700;
-  color: #111;
-  margin: 16px 0 8px;
-  font-family: var(--font-grotesk);
-}
-.fd-modalBody h1 { font-size: 17px; }
-.fd-modalBody h2 { font-size: 15px; }
-.fd-modalBody h3 { font-size: 14px; }
-.fd-modalBody p { margin: 0 0 10px; }
-.fd-modalBody ul, .fd-modalBody ol {
-  padding-left: 20px;
-  margin: 0 0 10px;
-}
-.fd-modalBody li { margin-bottom: 4px; }
-.fd-modalBody code {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
-  padding: 1px 5px;
-  color: #d946ef;
-}
-.fd-modalBody pre {
-  background: #f8f9fa;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 12px 14px;
-  overflow-x: auto;
-  margin: 0 0 12px;
-}
-.fd-modalBody pre code {
-  background: none;
-  border: none;
-  padding: 0;
-  color: #1a1a1a;
-}
-.fd-modalBody blockquote {
-  border-left: 3px solid #00e676;
-  padding-left: 14px;
-  margin: 0 0 12px;
-  color: #555;
-  font-style: italic;
-}
-.fd-modalBody hr {
-  border: none;
-  border-top: 1px solid #e5e7eb;
-  margin: 14px 0;
-}
-.fd-modalBody a {
-  color: #00b0ff;
-  text-decoration: none;
-}
-.fd-modalBody a:hover { text-decoration: underline; }
-.fd-modalBody strong { font-weight: 700; color: #111; }
-.fd-modalActions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding-top: 12px;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-}
-.fd-modalClose {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  border: none;
-  background: transparent;
-  color: rgba(0, 0, 0, 0.35);
-  cursor: pointer;
-  font-size: 18px;
-  padding: 4px 8px;
-  border-radius: 8px;
-  transition: background 0.14s;
-}
-.fd-modalClose:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: rgba(0, 0, 0, 0.7);
-}
-
-.fd-modalFooter {
-  display: flex;
-  gap: 16px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-
-.fd-modalLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: rgba(0, 0, 0, 0.35);
-  font-family: 'JetBrains Mono', monospace;
 }
 
 /* Screen-reader only utility */

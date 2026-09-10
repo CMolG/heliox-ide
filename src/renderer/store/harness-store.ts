@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand';
 import type { AgenticExecutionStatus, AgenticFlow } from '@/types/harness';
+import type { FrameGraphNode } from '@/types/desktop';
 import type {
   HarnessEventPayload,
   ScorecardResult,
@@ -172,6 +173,15 @@ interface HarnessStore {
    * dispatching. Unknown `stepId` fails softly, same as `runStep`.
    */
   runFromStep: (stepId: string) => Promise<void>;
+  /**
+   * Compiles the Step nodes owned by `frameId` (via `includeIds`, root
+   * auto-inferred), prepends `contextText` to the compiled flow's root step
+   * prompt (a clone — the live canvas is never mutated), and dispatches through
+   * the same `executeFlow` path every other run uses. Used by the backlog
+   * "run on existing flow" launcher to inject a card's title+description
+   * without creating any canvas node (no materialization).
+   */
+  runFrameWithContext: (frameId: string, contextText: string) => Promise<void>;
   stopExecution: () => void;
   setStepStatus: (stepId: string | null, status?: AgenticExecutionStatus) => void;
   handleHarnessEvent: (event: HarnessEventPayload) => void;
@@ -414,6 +424,54 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
     await executeFlow(flow);
   },
 
+  runFrameWithContext: async (frameId, contextText) => {
+    const { mentalNodes, mentalEdges } = useDesktopStore.getState();
+    const frame = mentalNodes.find((n): n is FrameGraphNode => n.type === 'frame' && n.id === frameId);
+    if (!frame) {
+      set((state) => ({
+        executionStatus: 'error',
+        executionLogs: appendLog(state.executionLogs, `Cannot run frame "${frameId}": not found on canvas.`),
+      }));
+      return;
+    }
+
+    let flow: AgenticFlow;
+    try {
+      flow = compileFlowFromCanvas(mentalNodes, mentalEdges, { includeIds: new Set(frame.data.childIds) });
+    } catch (error) {
+      set((state) => ({
+        executionStatus: 'error',
+        executionLogs: appendLog(state.executionLogs, `Cannot compile frame "${frameId}": ${getErrorMessage(error)}`),
+      }));
+      return;
+    }
+
+    // Clone — never mutate the compiled object's nested records in place.
+    const contextualFlow: AgenticFlow = {
+      ...flow,
+      stepsRecord: {
+        ...flow.stepsRecord,
+        [flow.rootStepId]: {
+          ...flow.stepsRecord[flow.rootStepId],
+          prompt: `${contextText}\n\n---\n\n${flow.stepsRecord[flow.rootStepId].prompt}`,
+        },
+      },
+    };
+
+    set((state) => ({
+      activeFlow: contextualFlow,
+      currentStepId: null,
+      stepStatuses: {},
+      stepIterations: {},
+      stepModels: {},
+      modStatuses: {},
+      stepThinkings: {},
+      executionLogs: appendLog(state.executionLogs, `Compiled frame "${frameId}" with injected context.`),
+    }));
+
+    await executeFlow(contextualFlow);
+  },
+
   stopExecution: () => {
     set((state) => ({
       executionStatus: 'idle',
@@ -453,7 +511,7 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
         }));
         return;
 
-      case 'StepStatusChanged':
+      case 'StepStatusChanged': {
         set((state) => ({
           executionStatus: event.status === 'error' ? 'error' : state.executionStatus === 'completed' ? 'completed' : 'running',
           currentStepId: event.status === 'running' ? event.stepId : state.currentStepId,
@@ -487,7 +545,33 @@ export const useHarnessStore = create<HarnessStore>((set, get) => {
             : state.stepModels,
           executionLogs: event.logs ? appendLog(state.executionLogs, event.logs) : state.executionLogs,
         }));
+
+        // F4 — card write-back (F0 spec §3.4). Per-step is sufficient for
+        // every launcher mode (a flow can't complete without its step(s)
+        // reporting a terminal status first) — no separate FlowCompleted
+        // handling is added (would double-write).
+        const correlation = useDesktopStore.getState().backlogRunCorrelation[event.stepId];
+        if (correlation) {
+          const { backlogDir, filename } = correlation;
+          const patch = event.status === 'running'
+            ? { status: 'doing' as const, runState: 'running' as const }
+            : event.status === 'completed'
+              ? { status: 'review' as const, runState: 'completed' as const }
+              : { status: 'refine' as const, runState: 'failed' as const }; // 'error'
+
+          void window.fluxorAPI?.updateBacklogCardStatus(backlogDir, filename, patch.status, undefined, patch.runState);
+
+          useDesktopStore.setState((s) => ({
+            backlogCards: s.backlogCards.map((c) => (c.filename === filename ? { ...c, ...patch } : c)),
+            canvasModalCard: s.canvasModalCard?.filename === filename ? { ...s.canvasModalCard, ...patch } : s.canvasModalCard,
+          }));
+
+          if (event.status === 'completed' || event.status === 'error') {
+            useDesktopStore.getState().clearBacklogRunStep(event.stepId);
+          }
+        }
         return;
+      }
 
       case 'ModExecutionEvent':
         set((state) => ({

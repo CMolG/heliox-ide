@@ -108,7 +108,7 @@ export class SignalExtractor {
     polarity: MemoryPolarity,
     context?: string,
   ): MemorySignal {
-    const combinedText = `${card.title} ${card.body}`;
+    const combinedText = `${card.title} ${card.description}`;
 
     return {
       id: `sig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -124,7 +124,7 @@ export class SignalExtractor {
         targetAgent: card.targetAgent,
         targetModule: card.targetModule,
         priority: card.priority,
-        complexity: SignalExtractor.estimateComplexity(card.body),
+        complexity: SignalExtractor.estimateComplexity(card.description),
       },
       context,
     };

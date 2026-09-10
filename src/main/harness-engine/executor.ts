@@ -6,7 +6,7 @@
  */
 import { mkdir as nodeMkdir, readdir as nodeReaddir, readFile as nodeReadFile, stat as nodeStat, writeFile as nodeWriteFile } from 'fs/promises';
 import { posix, resolve as resolvePath } from 'path';
-import type { AgenticFlow, AgenticMod, AgenticStep, StepContract } from '../../types/harness';
+import type { AgenticFlow, AgenticMod, AgenticPhase, AgenticStep, StepContract } from '../../types/harness';
 import { harnessEventBus } from './event-bus';
 import { buildStepContext, type FlowAwarenessInput } from './context-builder';
 import { createLocalMcpToolSet, type LocalMcpOptions, type McpFileSystem } from './mcp-adapter';
@@ -14,10 +14,10 @@ import { getMcpClientModToolSet } from './mcp-client-mod';
 import { createBrowserToolSet } from './browser-toolset';
 import { runLLMStep, type LLMStepResult, type RunLLMStepInput } from './llm-runner';
 import type { LLMStepTelemetryEvent } from '../performance-frontier/telemetry/collector';
-import { saveCheckpoint } from './checkpoints';
+import { saveCheckpoint, type PhaseBoundaryMarker } from './checkpoints';
 import { retrieve, type EmbedFn } from './retriever';
 import type { VectorStore } from './knowledge/vector-store';
-import { buildExecutionPlan, type StepInstance } from './loop-plan';
+import { buildExecutionPlan, type ExecutionPlan, type StepInstance } from './loop-plan';
 import {
   snapshotWorkspace,
   verifyStepContract,
@@ -238,6 +238,26 @@ function getStep(flow: AgenticFlow, stepId: string): AgenticStep {
   return step;
 }
 
+/**
+ * Undirected BFS, inclusive of `start` — a local copy for phase connectivity
+ * re-validation. Mirrors loop-plan.ts's own independent copy of the same shape
+ * rather than importing harness-compiler.ts's across the main/renderer
+ * boundary, following the precedent already set in this engine.
+ */
+function reachableSetUndirected(start: string, adjacency: Map<string, string[]>): Set<string> {
+  const visited = new Set<string>([start]);
+  const queue: string[] = [start];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const next of adjacency.get(current) ?? []) {
+      if (visited.has(next)) continue;
+      visited.add(next);
+      queue.push(next);
+    }
+  }
+  return visited;
+}
+
 function validateFlow(flow: AgenticFlow): AgenticStep {
   if (!flow.rootStepId || !flow.stepsRecord[flow.rootStepId]) {
     throw new Error(`AgenticFlow "${flow.id}" has an invalid rootStepId "${flow.rootStepId}".`);
@@ -264,6 +284,58 @@ function validateFlow(flow: AgenticFlow): AgenticStep {
     }
     if (!Number.isFinite(loop.maxIterations)) {
       throw new Error(`AgenticFlow "${flow.id}" loop "${loop.id}" has a non-finite maxIterations (${loop.maxIterations}).`);
+    }
+  }
+
+  // Phase sanity checks: unique ids, resolvable stepIds, connected subgraph,
+  // pairwise disjoint, onError restricted to 'halt' — the same defensive
+  // re-validation discipline loops get above, necessary because an
+  // AgenticFlow can reach the executor without ever passing through
+  // compileFlowFromCanvas (hand-built, imported, or SDK-constructed). A flow
+  // that declares no phases skips this loop entirely.
+  const phaseStepIdOwner = new Map<string, string>();
+  const seenPhaseIds = new Set<string>();
+  for (const phase of flow.phases ?? []) {
+    if (seenPhaseIds.has(phase.id)) {
+      throw new Error(`AgenticFlow "${flow.id}" has a duplicate phase id "${phase.id}".`);
+    }
+    seenPhaseIds.add(phase.id);
+
+    if (phase.stepIds.length === 0) {
+      throw new Error(`AgenticFlow "${flow.id}" phase "${phase.id}" has no member steps.`);
+    }
+
+    const uniqueStepIds = [...new Set(phase.stepIds)];
+    for (const stepId of uniqueStepIds) {
+      getStep(flow, stepId); // throws "references missing step" if unresolved
+    }
+
+    const memberSet = new Set(uniqueStepIds);
+    const undirectedAdjacency = new Map<string, string[]>();
+    for (const stepId of uniqueStepIds) {
+      const step = flow.stepsRecord[stepId];
+      undirectedAdjacency.set(stepId, [...step.nextStepIds, ...step.prevStepIds].filter((id) => memberSet.has(id)));
+    }
+    const reached = reachableSetUndirected(uniqueStepIds[0], undirectedAdjacency);
+    const unreached = uniqueStepIds.filter((id) => !reached.has(id));
+    if (unreached.length > 0) {
+      throw new Error(
+        `AgenticFlow "${flow.id}" phase "${phase.id}" is not a connected subgraph: {${[...reached].sort().join(', ')}} is disconnected from {${unreached.sort().join(', ')}}.`,
+      );
+    }
+
+    for (const stepId of uniqueStepIds) {
+      const ownerId = phaseStepIdOwner.get(stepId);
+      if (ownerId && ownerId !== phase.id) {
+        throw new Error(
+          `AgenticFlow "${flow.id}" phases "${ownerId}" and "${phase.id}" both claim step "${stepId}" — a step may belong to at most one phase.`,
+        );
+      }
+      phaseStepIdOwner.set(stepId, phase.id);
+    }
+
+    if (phase.onError !== undefined && phase.onError !== 'halt') {
+      throw new Error(`AgenticFlow "${flow.id}" phase "${phase.id}" declares onError "${phase.onError}" — only "halt" is supported in v1.`);
     }
   }
 
@@ -598,20 +670,25 @@ async function executeStep(
       const stalled = signature === prevFindingSignature; // identical gaps as last attempt → no progress
       prevFindingSignature = signature;
 
-      if (attempt < maxAttempts && !stalled) {
-        corrective = buildCorrectivePrompt(findings);
-        emit('running', `[guardrail] attempt ${attempt}/${maxAttempts} breached contract (${summary}); retrying with corrective feedback.`);
+      // Never surrender early on a stall: escalate the corrective feedback and
+      // keep retrying — a weaker model gets a blunter instruction instead of the
+      // loop giving up with attempts still on the table. Only true exhaustion
+      // (attempt === maxAttempts) ends the loop.
+      if (attempt < maxAttempts) {
+        corrective = buildCorrectivePrompt(findings, { escalate: stalled });
+        emit('running', `[guardrail] step "${step.id}" attempt ${attempt}/${maxAttempts} unmet (${summary})${stalled ? ' — escalating' : ''}; retrying.`);
         console.warn(`[guardrail] step "${step.id}" attempt ${attempt}/${maxAttempts} unmet: ${summary}`);
         continue;
       }
 
-      // Stop retrying: budget spent, or the model made zero progress versus the
-      // previous attempt (re-running would only burn tokens). Surface the breach.
-      const reason = stalled && attempt < maxAttempts
-        ? `no progress after attempt ${attempt}/${maxAttempts}`
-        : `after ${maxAttempts} attempts`;
-      emit('running', `[guardrail] step "${step.id}" breached contract ${reason} (${summary}).`);
-      console.warn(`[guardrail] step "${step.id}" BREACHED contract ${reason}: ${findings.map((finding) => finding.detail).join(' | ')}`);
+      // attempt === maxAttempts → truly exhausted. Surface the breach and, for
+      // a hard invariant (haltOnBreach), halt the flow instead of continuing
+      // to build on a broken foundation.
+      emit('running', `[guardrail] step "${step.id}" BREACHED contract after ${maxAttempts} attempts (${summary}).`);
+      console.warn(`[guardrail] step "${step.id}" BREACHED contract after ${maxAttempts} attempts: ${findings.map((finding) => finding.detail).join(' | ')}`);
+      if (contract!.haltOnBreach) {
+        throw new Error(`Step "${step.id}" breached a hard invariant after ${maxAttempts} attempts: ${findings.map((finding) => finding.detail).join(' | ')}`);
+      }
       break;
     }
 
@@ -641,6 +718,39 @@ async function executeStep(
     // Close MCP connections after every step (success or failure).
     await mcpModToolSet?.close();
   }
+}
+
+/** Capa-1 phase exit-gate + boundary-marker bookkeeping, computed once per run (spec §5.1-5.2). */
+interface PhaseRuntimeState {
+  phase: AgenticPhase;
+  /** Counts down from this phase's total instance count to 0 at its last completed instance. */
+  remainingInstances: number;
+  /** Set once, the first time any instance of this phase is about to run — the phase's lazy `before` snapshot. */
+  before?: Record<string, string>;
+  /** Whether the 'start' boundary has already been attached to a checkpoint. */
+  startAttached: boolean;
+}
+
+/**
+ * Builds a stepId -> PhaseRuntimeState map (membership is disjoint per
+ * validateFlow, so this is a safe 1:1 lookup) and each phase's expected
+ * instance count from the ALREADY-EXPANDED plan — reads loop-plan.ts's
+ * output, never touches loop-plan.ts itself. That is what makes "evaluate the
+ * gate once, at the phase's LAST instance" correct for a phase spanning a
+ * loop body: the count is of instances, not of steps.
+ */
+function buildPhaseRuntimeState(flow: AgenticFlow, plan: ExecutionPlan): Map<string, PhaseRuntimeState> {
+  const phaseByStepId = new Map<string, PhaseRuntimeState>();
+  for (const phase of flow.phases ?? []) {
+    const memberIds = new Set(phase.stepIds);
+    let total = 0;
+    for (const instance of plan.instances.values()) {
+      if (memberIds.has(instance.stepId)) total += 1;
+    }
+    const state: PhaseRuntimeState = { phase, remainingInstances: total, startAttached: false };
+    for (const stepId of phase.stepIds) phaseByStepId.set(stepId, state);
+  }
+  return phaseByStepId;
 }
 
 export async function executeAgenticFlow(
@@ -718,6 +828,8 @@ export async function executeAgenticFlow(
       leaderboardEntries.filter((entry) => entry.status === 'completed').map((entry) => entry.modelId),
     );
 
+    const phaseByStepId = buildPhaseRuntimeState(flow, plan);
+
     while (readyQueue.length > 0) {
       const key = readyQueue.shift()!;
       if (completedInstanceKeys.has(key)) continue;
@@ -744,10 +856,69 @@ export async function executeAgenticFlow(
       }
       const effectiveModelId = routing.modelId ?? options.modelId;
 
+      // Lazy `before` snapshot for this instance's phase (spec §5.1) — taken
+      // once, the first time the executor is ABOUT to run any instance in the
+      // phase, and only when the phase actually declares an exitContract. A
+      // phase without one costs exactly zero extra snapshots.
+      const phaseState = phaseByStepId.get(instance.stepId);
+      if (phaseState?.phase.exitContract && phaseState.before === undefined) {
+        const gateFileSystem = runContext ? runContext.fileSystem : options.fileSystem;
+        const gateRootDir = runContext ? effectiveRootDir : options.rootDir;
+        // Mirrors executeStep's own `guardrailActive = Boolean(contract) &&
+        // Boolean(effectiveGuardrailFileSystem)` gate for the PER-STEP
+        // contract: without a fileSystem there is nothing to snapshot. See the
+        // after-snapshot block below for why this guard is load-bearing.
+        if (gateFileSystem) {
+          phaseState.before = await snapshotWorkspace(gateFileSystem, gateRootDir);
+        }
+      }
+
       const result = await executeStep(flow, step, options, effectiveRootDir, instance, routing, sealedIds, runContext);
       stepOutputs[instance.stepId] = result.text; // final pass wins
       completedInstanceKeys.add(key);
       completedStepIds.add(instance.stepId);
+
+      // Phase exit gate + boundary marker (spec §5.1-5.2). The gate is
+      // evaluated EXACTLY ONCE, when the phase's last instance completes —
+      // `remainingInstances` counts plan INSTANCES, so a phase spanning a
+      // loop body fires after the loop's final pass, not on every iteration.
+      let phaseBoundary: PhaseBoundaryMarker | undefined;
+      if (phaseState) {
+        const boundaries: Array<'start' | 'end'> = [];
+        if (!phaseState.startAttached) {
+          phaseState.startAttached = true;
+          boundaries.push('start');
+        }
+        phaseState.remainingInstances -= 1;
+        if (phaseState.remainingInstances === 0) {
+          boundaries.push('end');
+          if (phaseState.phase.exitContract) {
+            const gateFileSystem = runContext ? runContext.fileSystem : options.fileSystem;
+            const gateRootDir = runContext ? effectiveRootDir : options.rootDir;
+            // CRITICAL: this guard is not optional. Without it, a run with no
+            // fileSystem would call verifyStepContract(exitContract, {}, {}) —
+            // empty-vs-empty means zero changed files, which trips
+            // `mustWriteFiles` as a FALSE-POSITIVE breach. Same limitation a
+            // per-step contract already has, for the same reason.
+            if (gateFileSystem) {
+              const after = await snapshotWorkspace(gateFileSystem, gateRootDir);
+              const findings = verifyStepContract(phaseState.phase.exitContract, phaseState.before ?? {}, after);
+              if (findings.length > 0) {
+                // Throws BEFORE saveCheckpoint below is reached, so the
+                // breaching instance persists no checkpoint — exactly what
+                // already happens for an uncaught step error. Intentional:
+                // do not "fix" it by moving the checkpoint save earlier.
+                // `exitContract.maxAttempts` is inherited from StepContract's
+                // shape and deliberately ignored — the gate never retries.
+                throw new Error(
+                  `Phase "${phaseState.phase.name}" breached its exit contract: ${findings.map((f) => f.detail).join(' | ')}`,
+                );
+              }
+            }
+          }
+        }
+        phaseBoundary = { phaseId: phaseState.phase.id, phaseName: phaseState.phase.name, boundaries };
+      }
 
       // Feedback mode only: re-read this instance's own assigned context file
       // so the checkpoint can carry a contextFileSnapshot (path + content).
@@ -773,6 +944,7 @@ export async function executeAgenticFlow(
         completedStepIds: [...completedStepIds],
         modelId: effectiveModelId,
         ...(contextFileSnapshot ? { contextFileSnapshot } : {}),
+        ...(phaseBoundary ? { phaseBoundary } : {}),
       });
       harnessEventBus.emitHarnessEvent({
         type: 'CheckpointCreated',

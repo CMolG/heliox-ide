@@ -15,6 +15,7 @@ import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { PublisherGithub } from '@electron-forge/publisher-github';
 import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 // ── Code signing — env-gated, degrades to unsigned builds (audit 1.1) ───────
 // None of these secrets exist in this repo yet, so every branch below is
@@ -108,6 +109,124 @@ const zipOnly = (process.env.FLUXOR_MAKE_ZIP_ONLY ?? legacyZipOnlyEnv) === '1';
 // Squirrel.Mac auto-update consumes, so the mac update path is unaffected.
 const appdmgAvailable = existsSync('node_modules/appdmg/package.json');
 
+/**
+ * Modules that are NOT bundled and therefore have to travel inside the package
+ * as real files.
+ *
+ * `vite.main.config.ts` marks these `external` on purpose:
+ *  - `better-sqlite3` is a native addon — bundling it breaks the resolution of
+ *    its `.node` binary.
+ *  - `jsdom` reads its own on-disk assets via `__dirname`-relative
+ *    `fs.readFileSync`, which bundling rewrites into ENOENT.
+ *  - `playwright` is loaded through a runtime `await import('playwright')` (see
+ *    src/snapshot-engine/runner.ts) and `snapshot-browser-installer.ts` spawns
+ *    `playwright-core/cli.js` *by path*, explicitly assuming that file "lives
+ *    inside app.asar".
+ *
+ * But `@electron-forge/plugin-vite` **does not copy `node_modules` when
+ * packaging**: its own `packageAfterCopy` writes only a `package.json`, and its
+ * `ignore` lets through just `/.vite`, on the assumption that everything is
+ * bundled. Without the hook below the packaged app therefore ships an asar
+ * whose only top-level entries are `/.vite` and `/package.json` — so the main
+ * process runs `require("better-sqlite3")` at startup, throws MODULE_NOT_FOUND
+ * before any handler is installed, and the app never opens a window. **None of
+ * this is visible in development**, where `node_modules` is right there next to
+ * the sources, nor in the E2E suite, which launches the dev bundle from the
+ * repo root (see e2e/global-setup.ts) rather than the packaged binary.
+ */
+const EXTERNAL_MODULES = ['better-sqlite3', 'jsdom', 'playwright', 'node-pty'];
+
+/**
+ * Dependencies that only exist to compile/download a binary at INSTALL time and
+ * are never used at runtime. `better-sqlite3` declares `prebuild-install`,
+ * which drags in ~20 packages (tar-fs, rc, semver…) of pure noise. The whole
+ * branch is pruned, not just its root.
+ */
+const INSTALL_TIME_ONLY = new Set(['prebuild-install']);
+
+/**
+ * Directory a dependency actually resolves to, following npm's own rule: a
+ * nested `<parent>/node_modules/<dep>` wins over the hoisted top-level copy.
+ *
+ * This distinction is not academic. npm leaves `jsdom/node_modules/tr46@6`
+ * nested (the hoisted `tr46` is a different major), and only that nested copy
+ * declares — and requires — `punycode`. A walker that reads the hoisted
+ * manifests only never sees `punycode`, and `require('jsdom')` dies with
+ * "Cannot find module 'punycode/'" in the packaged app while resolving
+ * perfectly in development.
+ */
+function resolveModuleDir(fromDir: string, dependency: string): string | null {
+  // Node's own algorithm: try `<dir>/node_modules/<dep>` for the module's own
+  // directory and then every ancestor, up to the project root. Checking only
+  // the immediate directory would miss the common shape where npm nests a
+  // conflicting major one level up — `jsdom/node_modules/whatwg-url` resolving
+  // `tr46` from `jsdom/node_modules/tr46@6`, not from the hoisted `tr46@5`.
+  let dir = fromDir;
+  for (;;) {
+    const candidate = join(dir, 'node_modules', dependency);
+    if (existsSync(join(candidate, 'package.json'))) return candidate;
+
+    const parent = dirname(dir);
+    if (parent === dir || parent === '.' || parent === '') break;
+    dir = parent;
+  }
+
+  const hoisted = join('node_modules', dependency);
+  if (existsSync(join(hoisted, 'package.json'))) return hoisted;
+
+  return null;
+}
+
+/**
+ * Top-level module names whose trees have to be copied so the external modules
+ * can resolve every `require` they make, computed by walking manifests.
+ *
+ * Deliberately computed rather than hand-listed: `jsdom` alone pulls in 37
+ * transitive packages. A hand-maintained list is a time bomb — forget one
+ * transitive dep, the package still builds without an error, and the installed
+ * app dies the first time it touches that code path.
+ *
+ * Only top-level names are returned: nested `node_modules` travel along with
+ * their parent's recursive copy, but they are still *traversed*, because their
+ * own dependencies may resolve back out to hoisted packages (see
+ * `resolveModuleDir`).
+ */
+function dependencyClosure(roots: string[]): string[] {
+  const topLevel = new Set<string>();
+  const visited = new Set<string>();
+  const pending: string[] = [];
+
+  for (const root of roots) {
+    const dir = join('node_modules', root);
+    if (!existsSync(join(dir, 'package.json'))) continue;
+    topLevel.add(root);
+    pending.push(dir);
+  }
+
+  while (pending.length > 0) {
+    const dir = pending.pop()!;
+    if (visited.has(dir)) continue;
+    visited.add(dir);
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pkg = require(join(process.cwd(), dir, 'package.json')) as {
+      dependencies?: Record<string, string>;
+    };
+
+    for (const dependency of Object.keys(pkg.dependencies ?? {})) {
+      if (INSTALL_TIME_ONLY.has(dependency)) continue;
+
+      const resolved = resolveModuleDir(dir, dependency);
+      if (!resolved) continue;
+
+      if (resolved === join('node_modules', dependency)) topLevel.add(dependency);
+      pending.push(resolved);
+    }
+  }
+
+  return [...topLevel].sort();
+}
+
 const installerMakers = [
   new MakerSquirrel({ name: 'FluxorIDE', authors: 'Fluxor', setupIcon: './assets/icon.ico', ...windowsSigning }),
   ...(appdmgAvailable ? [new MakerDMG({ format: 'ULFO', icon: './assets/icon.icns' })] : []),
@@ -137,8 +256,40 @@ const config: ForgeConfig = {
       // run actually needs it.
       './assets/icon.png',
     ],
-    asar: true,
+    asar: {
+      // The native `.node` addon has to stay OUTSIDE the asar: `dlopen` cannot
+      // load a shared library from inside an archive.
+      //
+      // `spawn-helper` is the same problem wearing no extension: node-pty
+      // `posix_spawn`s that sibling binary for every PTY it opens, and a file
+      // inside an asar has no real path to exec. Left packed, every agent
+      // session would die with `posix_spawnp failed.` in the packaged app only
+      // — invisible in dev and in the e2e suite, both of which run from the
+      // repo root. NOT yet exercised by a packaged run (see the Cockpit F1
+      // task entry).
+      unpack: '{**/*.node,**/node-pty/**/spawn-helper}',
+    },
     ...macSigning,
+  },
+  hooks: {
+    // See EXTERNAL_MODULES above for why this hook has to exist at all.
+    async packageAfterCopy(_forgeConfig, buildPath) {
+      const { cp, mkdir } = await import('node:fs/promises');
+      const destination = join(buildPath, 'node_modules');
+      await mkdir(destination, { recursive: true });
+
+      const modules = dependencyClosure(EXTERNAL_MODULES);
+      for (const moduleName of modules) {
+        await cp(join('node_modules', moduleName), join(destination, moduleName), {
+          recursive: true,
+          // `dereference`: @cmolg/daba-engine comes in through `npm link`
+          // while the private registry has no token, and a symlink inside a
+          // .app does not survive the copy. Harmless for the others.
+          dereference: true,
+        });
+      }
+      console.log(`[forge.config] External modules packaged (${modules.length}): ${modules.join(', ')}`);
+    },
   },
   makers: [
     // Always produced: a portable .zip of the packaged app on every OS — the

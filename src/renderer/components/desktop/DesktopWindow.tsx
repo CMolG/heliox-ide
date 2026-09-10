@@ -13,7 +13,7 @@
  * - UI boundary module in the renderer process (presentation + local interaction).
  */
 // src/renderer/components/desktop/DesktopWindow.tsx — Draggable/resizable window with external attachments
-import React, { useRef, useCallback, useState, useContext, useEffect } from 'react';
+import React, { useRef, useCallback, useMemo, useState, useContext, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useDroppable } from '@dnd-kit/core';
 import { useDesktopStore, GRID_PADDING, GRID_GAP } from '../../store/desktop-store';
@@ -22,8 +22,16 @@ import { useFluxorStore } from '../../store';
 import { LucideIcon } from './LucideIcon';
 import { AttachmentInfoModal } from './AttachmentInfoModal';
 import type { AttachmentModalInfo } from './AttachmentInfoModal';
-import { WindowContextMenu } from './WindowContextMenu';
-import type { ContextMenuItem } from './WindowContextMenu';
+// Window context menu adopted onto @cmolg/daba-engine's unified ContextMenu
+// (adoption plan #20, javadaba-web Core, Task 10 — this used to be its own
+// WindowContextMenu.tsx, deleted). `labelColor` (engine addition, same Task)
+// preserves the per-action semantic colors (orange/blue/purple for role/mod/
+// flow removal) the old component had, independent of `danger` (close).
+import {
+  ContextMenu, useContextMenuState, resolveSnap,
+  type ContextMenuEntry, type ContextMenuProviders, type GridSpec,
+} from '@cmolg/daba-engine';
+import { engineStore } from '../../store/engine-bridge';
 import type { WindowPosition, WindowSize, AttachableType } from '@/types/desktop';
 import { TYPE_META } from './DesktopAttachable';
 import { kebabToTitle } from './attachable-helpers';
@@ -35,6 +43,38 @@ import type { MarketRole, MarketMod, MarketFlow } from '@/types/market';
 const RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const;
 type ResizeDir = typeof RESIZE_DIRS[number];
 const DRAG_ACTIVATION_PX = 4;
+
+/**
+ * Task 13 (adoption plan #20) — snap-to-grid quantization for the window
+ * drag COMMIT only (the live drag itself stays pure-DOM-transform, untouched
+ * — see `startInteraction`'s `onMouseMove` below). Precedence, exactly as
+ * decided (task13-decisiones.md Q5, mirroring the motor's own `resolveSnap`
+ * precedence rule): if Fluxor's OWN `calculateSnapGuides` (desktop-store.ts,
+ * untouched) already magnetized on EITHER axis, its result wins outright —
+ * grid quantization is skipped entirely, on BOTH axes, not just the matched
+ * one. Only when no guide matched at all AND the toggle is on does the
+ * raw/guide-less position get quantized, via the motor's `resolveSnap` with
+ * `guides.enabled: false` (Fluxor's guide system already had its turn above
+ * — this call only ever exercises the grid branch). `width`/`height` are
+ * irrelevant to that branch (`core/grid.ts`'s `pixelsToColRow` only reads
+ * `rect.x`/`rect.y`) so a dummy 0x0 rect is passed instead of `win.size`.
+ *
+ * Pure/exported so it's testable with golden values without simulating a
+ * real pointer drag (same "extract the decision, test it directly" idiom as
+ * `MentalGraphCanvas.tsx`'s `resolveConnectionEdgeType`).
+ */
+export function resolveWindowDropPosition(
+  snappedPos: WindowPosition,
+  guideMatched: boolean,
+  snapGrid: { enabled: boolean; spec: GridSpec },
+): WindowPosition {
+  if (guideMatched || !snapGrid.enabled) return snappedPos;
+  return resolveSnap(
+    { x: snappedPos.x, y: snappedPos.y, width: 0, height: 0 },
+    [],
+    { grid: snapGrid, guides: { enabled: false, threshold: 0 } },
+  ).pos;
+}
 
 interface InteractionState {
   type: 'drag' | `resize-${ResizeDir}` | null;
@@ -97,7 +137,7 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
   const [interacting, setInteracting] = useState(false);
   const dragArmRef = useRef<{ startX: number; startY: number } | null>(null);
   const [attachmentModal, setAttachmentModal] = useState<AttachmentModalInfo | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ items: ContextMenuItem[]; position: { x: number; y: number } } | null>(null);
+  const { state: contextMenuState, open: openContextMenu, close: closeContextMenu } = useContextMenuState();
 
   const isActive = activeWindowId === windowId;
   const isHighlighted = hoveredWindowId === windowId;
@@ -155,57 +195,67 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
     setAttachmentModal(info);
   }, []);
 
-  // Context menu on right-click
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const items: ContextMenuItem[] = [];
+  // Context menu on right-click — entries ported verbatim from the deleted
+  // WindowContextMenu.tsx call site (adoption plan #20, Task 10). testId
+  // mirrors the old component's own slug (`ctx-menu-${label.toLowerCase()
+  // .replace(/\s+/g,'-')}`) so existing e2e selectors keep working.
+  const windowContextMenuProviders: ContextMenuProviders = useMemo(() => {
+    const testIdFor = (label: string) => `ctx-menu-${label.toLowerCase().replace(/\s+/g, '-')}`;
+    const entries: ContextMenuEntry[] = [];
     if (inventoryRole) {
-      items.push({
-        label: `Remove role: ${kebabToTitle(inventoryRole.name)}`,
-        icon: 'UserMinus',
-        color: '#E87040',
-        action: () => detachFromWindow(windowId, 'role', inventoryRole.name),
+      const label = `Remove role: ${kebabToTitle(inventoryRole.name)}`;
+      entries.push({
+        id: 'remove-role', label, testId: testIdFor(label),
+        icon: <LucideIcon name="UserMinus" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+        labelColor: '#E87040',
+        onSelect: () => detachFromWindow(windowId, 'role', inventoryRole.name),
       });
     }
-    if (inventoryMods.length > 0) {
-      for (const mod of inventoryMods) {
-        if (!mod) continue;
-        items.push({
-          label: `Remove mod: ${kebabToTitle(mod.name)}`,
-          icon: 'WrenchIcon',
-          color: '#4285F4',
-          action: () => detachFromWindow(windowId, 'mod', mod.name),
-        });
-      }
+    for (const mod of inventoryMods) {
+      if (!mod) continue;
+      const label = `Remove mod: ${kebabToTitle(mod.name)}`;
+      entries.push({
+        id: `remove-mod-${mod.name}`, label, testId: testIdFor(label),
+        icon: <LucideIcon name="WrenchIcon" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+        labelColor: '#4285F4',
+        onSelect: () => detachFromWindow(windowId, 'mod', mod.name),
+      });
     }
     if (inventoryFlow) {
-      items.push({
-        label: `Remove flow: ${kebabToTitle(inventoryFlow.name)}`,
-        icon: 'GitBranch',
-        color: '#A78BFA',
-        action: () => detachFromWindow(windowId, 'flow', inventoryFlow.name),
+      const label = `Remove flow: ${kebabToTitle(inventoryFlow.name)}`;
+      entries.push({
+        id: 'remove-flow', label, testId: testIdFor(label),
+        icon: <LucideIcon name="GitBranch" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+        labelColor: '#A78BFA',
+        onSelect: () => detachFromWindow(windowId, 'flow', inventoryFlow.name),
       });
     }
     // Always show window actions
-    items.push({
-      label: win!.state === 'maximized' ? 'Restore' : 'Maximize',
-      icon: 'Square',
-      action: () => setWindowState(windowId, win!.state === 'maximized' ? 'normal' : 'maximized'),
+    const maximizeLabel = win?.state === 'maximized' ? 'Restore' : 'Maximize';
+    entries.push({
+      id: 'maximize', label: maximizeLabel, testId: testIdFor(maximizeLabel),
+      icon: <LucideIcon name="Square" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+      onSelect: () => setWindowState(windowId, win?.state === 'maximized' ? 'normal' : 'maximized'),
     });
-    items.push({
-      label: 'Minimize',
-      icon: 'Minus',
-      action: () => setWindowState(windowId, 'minimized'),
+    entries.push({
+      id: 'minimize', label: 'Minimize', testId: testIdFor('Minimize'),
+      icon: <LucideIcon name="Minus" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+      onSelect: () => setWindowState(windowId, 'minimized'),
     });
-    items.push({
-      label: 'Close window',
-      icon: 'X',
-      color: theme.danger,
-      action: () => removeWindow(windowId),
+    entries.push({
+      id: 'close-window', label: 'Close window', testId: testIdFor('Close window'),
+      icon: <LucideIcon name="X" size={13} style={{ opacity: 0.7, flexShrink: 0 }} />,
+      labelColor: theme.danger,
+      onSelect: () => removeWindow(windowId),
     });
-    setContextMenu({ items, position: { x: e.clientX, y: e.clientY } });
-  }, [inventoryRole, inventoryMods, inventoryFlow, windowId, detachFromWindow, setWindowState, removeWindow, win]);
+    return { window: () => entries };
+  }, [inventoryRole, inventoryMods, inventoryFlow, windowId, detachFromWindow, setWindowState, removeWindow, win?.state]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu({ targetKind: 'window', targetId: windowId, worldPos: { x: 0, y: 0 } }, { x: e.clientX, y: e.clientY });
+  }, [openContextMenu, windowId]);
 
   // ─── Grid-aware resize (merge/unmerge adjacent empty cells) ───
 
@@ -369,7 +419,8 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
 
       // ── 1. Commit final drag position instantly (zero transitions) ──
       if (wasDrag && lastDragPos && !isMultiDrag) {
-        const { snappedPos } = calculateSnapGuides(windowId, lastDragPos, win.size);
+        const { snappedPos, guides } = calculateSnapGuides(windowId, lastDragPos, win.size);
+        const finalPos = resolveWindowDropPosition(snappedPos, guides.length > 0, engineStore.getState().snap.grid);
         if (shell) {
           // Force-kill transitions so the position commit is instant.
           // The CSS rule [data-interacting="true"]{transition:none} would
@@ -378,13 +429,13 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
           // transition in the SAME render that changes left/top → bounce.
           shell.style.transition = 'none';
           shell.style.transform = '';
-          shell.style.left = `${snappedPos.x}px`;
-          shell.style.top = `${snappedPos.y}px`;
+          shell.style.left = `${finalPos.x}px`;
+          shell.style.top = `${finalPos.y}px`;
           // Force synchronous reflow — browser paints the final position
           // before anything else runs. No frame can show the old position.
           void shell.offsetHeight;
         }
-        moveWindow(windowId, snappedPos);
+        moveWindow(windowId, finalPos);
       }
 
       if (inter.type?.startsWith('resize-')) {
@@ -740,11 +791,12 @@ export function DesktopWindow({ windowId, children }: DesktopWindowProps) {
       )}
 
       {/* Context menu — portalled to body to escape transform stacking context */}
-      {contextMenu && createPortal(
-        <WindowContextMenu
-          items={contextMenu.items}
-          position={contextMenu.position}
-          onClose={() => setContextMenu(null)}
+      {createPortal(
+        <ContextMenu
+          state={contextMenuState}
+          providers={windowContextMenuProviders}
+          onClose={closeContextMenu}
+          backdropTestId="window-context-menu"
         />,
         document.body,
       )}

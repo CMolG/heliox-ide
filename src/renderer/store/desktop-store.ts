@@ -10,14 +10,19 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { getConnectedComponent } from '../logic/mental-graph';
 import { debouncedLocalStorage } from '../logic/debounced-storage';
-import { MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT } from '../logic/hud-grid';
+// MIN_WIDGET_WIDTH/HEIGHT moved with the HUD widget adoption onto @cmolg/daba-engine
+// (Task 10, #20): logic/hud-grid.ts is gone (its generic math ported to the motor's
+// core/hud-grid); these two constants are Fluxor's own widget-sizing policy, now in
+// logic/hud-widget-policy.ts (a thin adapter over the motor's primitives).
+import { MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT } from '../logic/hud-widget-policy';
 import { normalizeEdgeTypes } from '../logic/normalize-edge-types';
 import type {
   DesktopWindow, WindowPosition, WindowSize, WindowConnection,
   DockItem, Plugin, PluginCategory, SnapGuide, CliProvider, ConnectionPort, CanvasPan,
   DesktopAttachable, AttachableType, DesktopGrid, MentalMode, MentalShape,
   MentalTool, MentalGraphNode, MentalGraphEdge, StepGraphNode, CanvasGraphNode, FrameGraphNode,
-  StepNodeData, FrameNodeData, Board, BoardSnapshot,
+  PhaseGraphNode, PhaseNodeData,
+  StepNodeData, FrameNodeData, Board, BoardSnapshot, AgentSessionMeta,
 } from '@/types/desktop';
 import type { MarketInventory, MarketMod, MarketRole, BacklogCard } from '@/types/market';
 import type { TutorialScenarioId, TutorialProgress } from '@/types/tutorial';
@@ -26,6 +31,7 @@ import { clampLoopIterations, LOOP_DEFAULT_MAX_ITERATIONS } from '@/types/harnes
 import type { AgenticStepType } from '@/types/harness';
 import type { ModelPolicy } from '@/types/ipc-events';
 import { wouldCreateStepCycle } from '../lib/harness-compiler';
+import { cockpitBounds, cockpitLayout, type Rect } from '../lib/cockpit-layout';
 
 
 // ─── Unified z-stack helper ───────────────────────────────────────
@@ -120,6 +126,12 @@ const DEFAULT_DOCK_ITEMS: DockItem[] = [
   { id: 'dock-mental-draw-toggle', type: 'action', label: 'Enable Mental Authoring', iconName: 'PenTool', action: 'mental-draw-toggle' },
   { id: 'dock-new-step', type: 'action', label: 'New Step', iconName: 'SquarePlus', action: 'new-step' },
   { id: 'dock-new-flow', type: 'action', label: 'New Flow', iconName: 'Workflow', action: 'new-flow' },
+  // Cockpit F1 — opens a vendor picker, then an agent-session window on the
+  // open project. Disabled (with the reason) when no project is open.
+  { id: 'dock-new-agent-session', type: 'action', label: 'Agent Session', iconName: 'Terminal', action: 'new-agent-session' },
+  // Cockpit F4 — the preset. Next to the session it arranges, because that is
+  // the order they are used in: open sessions, then lay them out.
+  { id: 'dock-cockpit', type: 'action', label: 'Cockpit', iconName: 'LayoutGrid', action: 'cockpit' },
   { id: 'dock-marketplace', type: 'action', label: 'Marketplace', iconName: 'Store', action: 'marketplace' },
   ...(import.meta.env.DEV ? [
     { id: 'dock-prompt-dev-zone', type: 'action', label: 'Prompt Dev Zone', iconName: 'FlaskConical', action: 'prompt-dev-zone' } satisfies DockItem,
@@ -155,6 +167,10 @@ const BUILTIN_PLUGINS: Plugin[] = [
 // ─── Constants ───────────────────────────────────────────────────
 
 const DEFAULT_WINDOW_SIZE: WindowSize = { width: 480, height: 500 };
+// A terminal needs columns before it needs anything else: at the default 480px
+// an agent CLI's TUI wraps into unreadable ribbons. 720x480 fits ~90 columns at
+// the mono size the session app uses.
+const AGENT_SESSION_WINDOW_SIZE: WindowSize = { width: 720, height: 480 };
 const MIN_WINDOW_SIZE: WindowSize = { width: 320, height: 250 };
 const SNAP_THRESHOLD = 8; // px
 const DEFAULT_MENTAL_WIDTH = 220;
@@ -220,6 +236,18 @@ interface AddFrameNodeInput {
   missingCapabilitiesRequested?: string[];
 }
 
+interface AddPhaseNodeInput {
+  id?: string;
+  /** Owning Frame id — a phase never floats (spec §3.2). */
+  parentId: string;
+  position: WindowPosition;
+  width: number;
+  height: number;
+  title: string;
+  description?: string;
+  childIds?: string[];
+}
+
 interface InsertPipelineAssemblyInput {
   assembly: PipelineAssembly;
   position: WindowPosition;
@@ -252,9 +280,9 @@ export interface HudWidget {
 
 // Default positions (fixed px, not window-relative so they work before mount)
 const DEFAULT_HUD_WIDGETS: HudWidget[] = [
-  { type: 'agent-sessions',   visible: false, position: { x: 900, y: 80 } },
-  { type: 'auto-chat',    visible: true,  position: { x: 360, y: 140 } },
-  { type: 'notifications',    visible: false, position: { x: 900, y: 360 } },
+  { type: 'auto-chat',        visible: true,  position: { x: 24, y: 72 } },
+  { type: 'agent-sessions',   visible: false, position: { x: 368, y: 72 } },
+  { type: 'notifications',    visible: false, position: { x: 728, y: 72 } },
 ];
 
 // ─── Store Interface ─────────────────────────────────────────────
@@ -266,6 +294,12 @@ interface DesktopStore {
   nextZIndex: number;
   _updateWindow: (windowId: string, patch: Partial<DesktopWindow>) => void;
   addWindow: (type: DesktopWindow['type'], opts?: Partial<DesktopWindow>) => string;
+  /**
+   * Merges a patch into an 'agent-session' window's `agentSession` metadata.
+   * A no-op on a window that has none, so a late PTY event arriving after its
+   * window was closed cannot resurrect it as a half-formed session.
+   */
+  updateAgentSession: (windowId: string, patch: Partial<AgentSessionMeta>) => void;
   removeWindow: (windowId: string) => void;
   focusWindow: (windowId: string) => void;
   moveWindow: (windowId: string, position: WindowPosition) => void;
@@ -276,6 +310,16 @@ interface DesktopStore {
   addModifier: (windowId: string, modifierId: string) => boolean;
   removeModifier: (windowId: string, modifierId: string) => void;
   updateWindowTitle: (windowId: string, title: string) => void;
+  /**
+   * Cockpit F4 — lays the desktop out as a cockpit: the board on the left, the
+   * agent sessions tiled on the right, the session list above the board when
+   * one is open, and the camera moved so all of it is on screen.
+   *
+   * Opens a backlog window if there is none, because a cockpit with no board
+   * is just a terminal grid. It never opens a session and never closes
+   * anything: arranging is a view, not an edit.
+   */
+  arrangeCockpit: () => void;
 
   // ── M2 Agent surface linking ───────────────────────────────────
   /**
@@ -311,6 +355,64 @@ interface DesktopStore {
   // Backlog
   backlogCards: BacklogCard[];
   setBacklogCards: (cards: BacklogCard[]) => void;
+  /**
+   * Replaces `backlogCards` wholesale (the main process/watcher is the
+   * source of truth) and live-patches `canvasModalCard` in place if it is
+   * one of the updated cards. Used by the F1 watcher push
+   * (`onBacklogChanged`) and any full-directory refetch. If the modal's card
+   * disappeared from the fresh set, the modal is left as-is (no surprise
+   * auto-close) — F4.
+   */
+  mergeBacklogCards: (cards: BacklogCard[]) => void;
+  /**
+   * Transient (NOT persisted — mirrors `activeBacklogDir`'s own treatment
+   * below), stepId -> owning card, populated by each F3 launcher at launch
+   * time (`launchActions.ts`). Lets harness-store's existing
+   * `StepStatusChanged` handling write the card's status/runState back
+   * without threading card identity through the harness event stream itself
+   * (F4 — card<->run correlation).
+   */
+  backlogRunCorrelation: Record<string, { backlogDir: string; filename: string }>;
+  registerBacklogRunStep: (stepId: string, backlogDir: string, filename: string) => void;
+  clearBacklogRunStep: (stepId: string) => void;
+  /**
+   * The same idea one layer over, for the Cockpit's fourth launcher (F3):
+   * ptySessionId -> the card that opened it. Transient for the same reason as
+   * `backlogRunCorrelation` — a correlation to a process that died with the app
+   * is not worth restoring, and restoring one would make a dead session look
+   * live on the board.
+   *
+   * It is not the ONLY route from a card to its session: the window's own
+   * `agentSession.cardFilename` carries the same fact and survives "Start
+   * again", which mints a fresh sessionId. Both are consulted
+   * (`findCardSessionWindow`) precisely because neither alone is complete —
+   * this map knows about a session whose window metadata was reset, and the
+   * metadata knows about a session this map no longer keys.
+   */
+  backlogSessionCorrelation: Record<string, { backlogDir: string; filename: string; cardId: string }>;
+  registerBacklogSession: (sessionId: string, entry: { backlogDir: string; filename: string; cardId: string }) => void;
+  clearBacklogSession: (sessionId: string) => void;
+  /**
+   * Directory backing the currently-open backlog (set by
+   * BacklogBentoWidget's picker/back navigation — F2 Task 10). Read by
+   * BacklogCardModal (F2 Task 9) to resolve where to persist content edits:
+   * the modal is a canvas-level surface (mounted in SeamlessCanvas.tsx, not
+   * inside the widget's own wrapper) so it has no other route to this path.
+   * Transient, not persisted (mirrors canvasModalCard's own treatment).
+   */
+  activeBacklogDir: string | null;
+  setActiveBacklogDir: (dir: string | null) => void;
+  /**
+   * `activeBacklogDir`'s sibling, for the same reason and set in the same
+   * breath (BacklogBentoWidget's picker). A card knows the directory it lives
+   * in but not which PROJECT that is, nor whether the backlog is external —
+   * and F3's fourth launcher needs both: the project is where an agent session
+   * runs and what the one-attached-session rule is counted per, and an external
+   * backlog cannot be launched in a worktree at all, because a worktree has no
+   * copy of the card to write to.
+   */
+  activeBacklogProject: { projectPath: string; isExternal: boolean } | null;
+  setActiveBacklogProject: (project: { projectPath: string; isExternal: boolean } | null) => void;
 
   // Connections
   connections: WindowConnection[];
@@ -377,11 +479,27 @@ interface DesktopStore {
   cliProvider: CliProvider;
   setCliProvider: (p: CliProvider) => void;
 
-  // Canvas pan + zoom
+  // Canvas pan + zoom — canvasPan/canvasZoom are a mirror of the daba-engine
+  // camera (src/renderer/store/engine-bridge.ts): setCanvasPan/setCanvasZoom
+  // delegate to the engine (which clamps/normalizes and echoes back into
+  // these fields), so every existing READ call-site keeps working untouched.
   canvasPan: CanvasPan;
   setCanvasPan: (pan: CanvasPan) => void;
   canvasZoom: number;
   setCanvasZoom: (zoom: number) => void;
+  /**
+   * Internal seam patched by engine-bridge.ts (undefined until that module
+   * loads — a no-op via the `?.()` call sites below). desktop-store.ts must
+   * NOT import engine-bridge.ts directly: engine-bridge.ts needs
+   * `useDesktopStore.getState()` synchronously at its own module-eval time
+   * to hydrate the engine's initial camera, so a static import in the other
+   * direction would deadlock on load (same class of cycle this file already
+   * avoids with harness-store — see the comment above `switchBoard`).
+   * switchBoard/deleteBoard change canvasPan/canvasZoom via a raw `set()`
+   * (the active-slice board-snapshot swap) and call this afterward so the
+   * incoming board's camera reaches the engine too, not just this mirror.
+   */
+  _pushCameraToEngine?: () => void;
   /** xyflow authoring gate — 'off' = read-only; otherwise the default shape for new nodes. */
   mentalMode: MentalMode;
   setMentalMode: (mode: MentalMode) => void;
@@ -425,6 +543,15 @@ interface DesktopStore {
   addMentalNode: (node: Omit<MentalGraphNode, 'id' | 'createdAt'> & { id?: string }) => string;
   updateMentalNode: (nodeId: string, patch: Partial<Pick<MentalGraphNode, 'position' | 'width' | 'height' | 'text' | 'color'>>) => void;
   addFrameNode: (node: AddFrameNodeInput) => string;
+  /**
+   * Create a Phase node — a named sub-grouping INSIDE a Frame (the second
+   * nesting level, frame > phase > step; spec
+   * docs/superpowers/specs/2026-07-21-agentic-phase-model.md §3.2). Every id
+   * in `childIds` is re-parented from the frame to the new phase, so the
+   * canvas hierarchy and the compiled `AgenticPhase.stepIds` agree from the
+   * moment of creation.
+   */
+  addPhaseNode: (node: AddPhaseNodeInput) => string;
   addStepNode: (node?: AddStepNodeInput) => string;
   insertPipelineAssembly: (input: InsertPipelineAssemblyInput) => InsertPipelineAssemblyResult;
   addModToStep: (stepId: string, modData: MarketMod) => boolean;
@@ -449,6 +576,15 @@ interface DesktopStore {
    * `frameId` doesn't name a Frame node.
    */
   updateFrameData: (frameId: string, patch: Partial<FrameNodeData>) => void;
+  /**
+   * Patch arbitrary fields on a Phase node's `data` (e.g. `title`,
+   * `description`, `childIds`). Mirrors `updateFrameData` one nesting level
+   * deeper — `compileFlowFromCanvas` reads `data.childIds`/`data.title`
+   * directly when assembling `flow.phases`, so edits here feed the compiled
+   * AgenticPhase on the next compile. No-ops if `phaseId` doesn't name a
+   * Phase node.
+   */
+  updatePhaseData: (phaseId: string, patch: Partial<PhaseNodeData>) => void;
   removeMentalNode: (nodeId: string) => void;
   addMentalEdge: (sourceId: string, targetId: string, edgeType?: MentalGraphEdge['type'], sourceHandle?: string, targetHandle?: string, maxIterations?: number) => string | null;
   removeMentalEdge: (edgeId: string) => void;
@@ -542,6 +678,19 @@ interface DesktopStore {
      * rather than truthiness, so old and new state both render the same way.
      */
     showInspector?: boolean;
+    /**
+     * Snap-to-grid for window/mental-node drag commits (Task 13, adoption
+     * plan #20, `engine-bridge.ts` mirrors this into the daba-engine
+     * `snap.grid` slice). Optional + defaulted to OFF by absence — same
+     * default-by-absence convention as `showInspector`, but inverted:
+     * `showInspector !== false` there means "shown by default", while here
+     * `snapToGrid === true` means "enabled" — pre-existing persisted blobs
+     * (and anyone who never opens Settings) get byte-identical drag behavior
+     * to before this feature existed.
+     */
+    snapToGrid?: boolean;
+    /** Grid cell size in px (presets 16/24/32) for `snapToGrid` quantization; defaults to 24 when unset. */
+    snapGridCellSize?: number;
   };
   updateSettings: (patch: Partial<DesktopStore['settings']>) => void;
   /** Set the WS2 smart-routing policy applied to every subsequent harness dispatch. */
@@ -586,7 +735,7 @@ interface DesktopStore {
   // ─── HUD Widgets ───────────────────────────────────────────────
   hudWidgets: HudWidget[];
   setHudWidgetVisible: (type: HudWidgetType, visible: boolean) => void;
-  /** Persists verbatim — caller must pass resolveHudWidgetPlacement's output (logic/hud-grid.ts). */
+  /** Persists verbatim — caller must pass resolveHudWidgetPlacement's output (logic/hud-widget-policy.ts). */
   moveHudWidget: (type: HudWidgetType, position: { x: number; y: number }) => void;
   /** Clamps SIZE only; does not reposition — see the implementation-site comment below. */
   resizeHudWidget: (type: HudWidgetType, size: { width: number; height: number }) => void;
@@ -615,6 +764,10 @@ function getViewportCenteredSpawnPosition(pan: CanvasPan, zoom: number): WindowP
 
 function isStepGraphNode(node: CanvasGraphNode): node is StepGraphNode {
   return node.type === 'step';
+}
+
+function isPhaseGraphNode(node: CanvasGraphNode): node is PhaseGraphNode {
+  return node.type === 'phase';
 }
 
 function isFrameGraphNode(node: CanvasGraphNode): node is FrameGraphNode {
@@ -698,7 +851,7 @@ export const useDesktopStore = create<DesktopStore>()(
         const state = get();
         const id = `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const position = opts?.position ?? getViewportCenteredSpawnPosition(state.canvasPan, state.canvasZoom);
-        const size = opts?.size ?? DEFAULT_WINDOW_SIZE;
+        const size = opts?.size ?? (type === 'agent-session' ? AGENT_SESSION_WINDOW_SIZE : DEFAULT_WINDOW_SIZE);
         const zIndex = globalTopZ(state);
         // 'chat' branch retired alongside DesktopWindow['type'] (F0 decision 2,
         // 2026-07-10) — every remaining type falls through this ternary chain
@@ -711,6 +864,8 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'prompt-dev-zone' ? 'Prompt Dev Zone'
           : type === 'web-preview' ? (opts?.title ?? 'Preview')
           : type === 'arena' ? 'Fluxor Arena'
+          : type === 'agent-session' ? (opts?.title ?? 'Agent session')
+          : type === 'session-list' ? 'Sessions'
           : 'Plugin';
         const defaultIcon = type === 'file-explorer' ? 'FileText'
           : type === 'backlog' ? 'KanbanSquare'
@@ -719,6 +874,8 @@ export const useDesktopStore = create<DesktopStore>()(
           : type === 'prompt-dev-zone' ? 'FlaskConical'
           : type === 'web-preview' ? 'Globe'
           : type === 'arena' ? 'Trophy'
+          : type === 'agent-session' ? 'Terminal'
+          : type === 'session-list' ? 'ListChecks'
           : 'Blocks';
         const win: DesktopWindow = {
           id,
@@ -740,6 +897,8 @@ export const useDesktopStore = create<DesktopStore>()(
           url: opts?.url,
           boundPort: opts?.boundPort,
           agentLinked: opts?.agentLinked,
+          // Cockpit F1 — present only on 'agent-session' windows
+          agentSession: opts?.agentSession,
           createdAt: Date.now(),
         };
         set({
@@ -749,6 +908,14 @@ export const useDesktopStore = create<DesktopStore>()(
         });
         return id;
       },
+
+      updateAgentSession: (windowId, patch) => set((s) => ({
+        windows: s.windows.map((w) =>
+          w.id === windowId && w.agentSession
+            ? { ...w, agentSession: { ...w.agentSession, ...patch } }
+            : w,
+        ),
+      })),
 
       removeWindow: (windowId) => set((s) => {
         const conns = s.connections.filter(
@@ -968,6 +1135,36 @@ export const useDesktopStore = create<DesktopStore>()(
       // ─── Backlog ───────────────────────────────────────
       backlogCards: [],
       setBacklogCards: (cards) => set({ backlogCards: cards }),
+      mergeBacklogCards: (cards) => set((s) => {
+        const byFilename = new Map(cards.map((c) => [c.filename, c]));
+        const nextModalCard = s.canvasModalCard && byFilename.has(s.canvasModalCard.filename)
+          ? byFilename.get(s.canvasModalCard.filename)!
+          : s.canvasModalCard;
+        return { backlogCards: cards, canvasModalCard: nextModalCard };
+      }),
+
+      backlogRunCorrelation: {},
+      registerBacklogRunStep: (stepId, backlogDir, filename) => set((s) => ({
+        backlogRunCorrelation: { ...s.backlogRunCorrelation, [stepId]: { backlogDir, filename } },
+      })),
+      clearBacklogRunStep: (stepId) => set((s) => {
+        const { [stepId]: _removed, ...rest } = s.backlogRunCorrelation;
+        return { backlogRunCorrelation: rest };
+      }),
+
+      backlogSessionCorrelation: {},
+      registerBacklogSession: (sessionId, entry) => set((s) => ({
+        backlogSessionCorrelation: { ...s.backlogSessionCorrelation, [sessionId]: entry },
+      })),
+      clearBacklogSession: (sessionId) => set((s) => {
+        const { [sessionId]: _removed, ...rest } = s.backlogSessionCorrelation;
+        return { backlogSessionCorrelation: rest };
+      }),
+
+      activeBacklogDir: null,
+      setActiveBacklogDir: (dir) => set({ activeBacklogDir: dir }),
+      activeBacklogProject: null,
+      setActiveBacklogProject: (project) => set({ activeBacklogProject: project }),
 
       // ─── Connections ───────────────────────────────────
       connections: [],
@@ -1613,6 +1810,10 @@ export const useDesktopStore = create<DesktopStore>()(
             mentalZ: {},
           };
         });
+        // Push the ENTERING board's camera (just written above) to the
+        // engine — the bridge's own onChange reflects it back into this
+        // mirror, so both end up consistent with the new active board.
+        get()._pushCameraToEngine?.();
       },
 
       renameBoard: (id, name) => {
@@ -1656,8 +1857,17 @@ export const useDesktopStore = create<DesktopStore>()(
             mentalZ: {},
           };
         });
+        // Only this branch (deleting the ACTIVE board) changes canvasPan/
+        // canvasZoom — the `id !== state.activeBoardId` branch above already
+        // returned, so it never reaches here (it must NOT push: it never
+        // touches the active camera). Same reasoning as switchBoard above.
+        get()._pushCameraToEngine?.();
       },
 
+      // duplicateBoard intentionally does NOT push to the engine: it never
+      // changes activeBoardId/canvasPan/canvasZoom — it only clones a
+      // snapshot into a NEW, inactive board entry (see sourceSnapshot below,
+      // read-only against the active slice when id === activeBoardId).
       duplicateBoard: (id) => {
         const state = get();
         const orig = state.boards.find((b) => b.id === id);
@@ -1753,6 +1963,46 @@ export const useDesktopStore = create<DesktopStore>()(
           createdAt: Date.now(),
         };
         set((s) => ({ mentalNodes: [...s.mentalNodes, node] }));
+        return id;
+      },
+
+      addPhaseNode: (input) => {
+        const id = input.id ?? `phase-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const node: PhaseGraphNode = {
+          id,
+          type: 'phase',
+          parentId: input.parentId,
+          position: input.position,
+          width: input.width,
+          height: input.height,
+          text: input.title,
+          color: '#7C3AED',
+          shape: 'square',
+          data: {
+            title: input.title,
+            description: input.description,
+            childIds: [...(input.childIds ?? [])],
+          },
+          createdAt: Date.now(),
+        };
+        set((s) => {
+          // Re-parent every named child step from the frame to this new
+          // phase node (parentId: input.parentId -> id) — mirrors how
+          // insertPipelineAssembly assigns parentId: frameId at creation
+          // time, one level deeper (spec §3.2's second nesting level).
+          const childSet = new Set(input.childIds ?? []);
+          const reparented = s.mentalNodes.map((n) => (childSet.has(n.id) && n.type === 'step' ? { ...n, parentId: id } : n));
+
+          // Splice the phase in directly AFTER its owning frame rather than
+          // appending. React Flow resolves `parentId` positionally and
+          // requires a parent to precede its children in the nodes array —
+          // the same invariant insertPipelineAssembly already honors by
+          // emitting [frame, ...steps]. Appending would put the phase after
+          // the very steps it now parents, so they would render detached.
+          const frameIndex = reparented.findIndex((n) => n.id === input.parentId);
+          if (frameIndex === -1) return { mentalNodes: [...reparented, node] };
+          return { mentalNodes: [...reparented.slice(0, frameIndex + 1), node, ...reparented.slice(frameIndex + 1)] };
+        });
         return id;
       },
 
@@ -2030,20 +2280,52 @@ export const useDesktopStore = create<DesktopStore>()(
         }),
       })),
 
+      updatePhaseData: (phaseId, patch) => set((s) => ({
+        mentalNodes: s.mentalNodes.map((n) => {
+          if (n.id !== phaseId || n.type !== 'phase') return n;
+          return { ...n, data: { ...n.data, ...patch } };
+        }),
+      })),
+
       removeMentalNode: (nodeId) => set((s) => {
         const target = s.mentalNodes.find((n) => n.id === nodeId);
         const idsToRemove = new Set<string>([nodeId]);
         if (target && isFrameGraphNode(target)) {
           for (const childId of target.data.childIds) idsToRemove.add(childId);
-          for (const node of s.mentalNodes) {
-            if ('parentId' in node && node.parentId === nodeId) idsToRemove.add(node.id);
+          // Descend to a fixpoint rather than one level. A Frame may now own
+          // Phase nodes, which in turn own Steps (frame > phase > step), and
+          // addStepNode never registers a step in the frame's own childIds —
+          // so a single `parentId === nodeId` pass would delete the phase and
+          // strand its steps pointing at a node that no longer exists. With no
+          // phases on the canvas this converges after the first pass, giving
+          // byte-identical behavior to the single-level scan it replaces.
+          let grew = true;
+          while (grew) {
+            grew = false;
+            for (const node of s.mentalNodes) {
+              if (idsToRemove.has(node.id)) continue;
+              if ('parentId' in node && node.parentId && idsToRemove.has(node.parentId)) {
+                idsToRemove.add(node.id);
+                grew = true;
+              }
+            }
           }
         }
+        // Phase nodes dissolve rather than cascade-delete (spec §1.1: a
+        // phase is pure grouping — deleting the label must never delete the
+        // work inside it). Re-parent every step whose parentId === nodeId up
+        // to the phase's OWN parentId (the owning Frame) instead of adding
+        // them to idsToRemove, so no step is left pointing at a parentId
+        // that is about to stop existing.
+        const reparentToFrameId = target && isPhaseGraphNode(target) ? target.parentId : undefined;
 
         return {
           mentalNodes: s.mentalNodes
             .filter((n) => !idsToRemove.has(n.id))
             .map((n) => {
+              if (reparentToFrameId && 'parentId' in n && (n as StepGraphNode).parentId === nodeId) {
+                return { ...n, parentId: reparentToFrameId };
+              }
               if (!isFrameGraphNode(n)) return n;
               const nextChildIds = n.data.childIds.filter((childId) => !idsToRemove.has(childId));
               return nextChildIds.length === n.data.childIds.length
@@ -2276,6 +2558,67 @@ export const useDesktopStore = create<DesktopStore>()(
       activeTutorial: null,
       setActiveTutorial: (id) => set({ activeTutorial: id }),
 
+      /**
+       * The Cockpit preset. See the interface declaration for what it promises.
+       *
+       * Ordering the sessions by `launchedAt` rather than by store order is
+       * what makes this idempotent-looking to a person: arrange twice and the
+       * same session is in the same cell, so the grid is a place you learn
+       * rather than a shuffle you re-read (interface-psychology, point 8).
+       */
+      arrangeCockpit: () => {
+        const container = typeof document !== 'undefined'
+          ? document.querySelector('.mental-graph-canvas-container')
+          : null;
+        const viewW = container?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1440);
+        const viewH = container?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 900);
+
+        // A cockpit with no board is a terminal grid. If there is none, this
+        // is the one thing the preset creates.
+        const existingBacklog = get().windows.find((w) => w.type === 'backlog');
+        const backlogId = existingBacklog?.id ?? get().addWindow('backlog', { title: 'Backlog' });
+
+        const state = get();
+        const listWindow = state.windows.find((w) => w.type === 'session-list');
+        const sessions = state.windows
+          .filter((w) => w.type === 'agent-session' && w.state !== 'minimized')
+          .sort((a, b) =>
+            (a.agentSession?.launchedAt ?? a.createdAt) - (b.agentSession?.launchedAt ?? b.createdAt));
+
+        const layout = cockpitLayout(
+          { width: viewW, height: viewH },
+          sessions.length,
+          { hasSessionList: !!listWindow },
+        );
+
+        // 'normal' with the rect: a maximized or minimized window ignores its
+        // position, so placing one without restoring it would leave a hole in
+        // the grid that the arithmetic says is filled.
+        const place = (windowId: string, rect: Rect) => get()._updateWindow(windowId, {
+          position: { x: rect.x, y: rect.y },
+          size: { width: rect.width, height: rect.height },
+          state: 'normal',
+        });
+
+        place(backlogId, layout.backlog);
+        if (listWindow && layout.sessionList) place(listWindow.id, layout.sessionList);
+        sessions.forEach((win, i) => {
+          const rect = layout.sessions[i];
+          if (rect) place(win.id, rect);
+        });
+
+        // Fit, never magnify: an arrangement that already fits stays at 1:1
+        // rather than being blown up to fill the viewport.
+        const bounds = cockpitBounds(layout);
+        const zoom = Math.min(1, viewW / Math.max(1, bounds.width), viewH / Math.max(1, bounds.height));
+        get().setCanvasZoom(zoom);
+        const applied = get().canvasZoom;
+        get().setCanvasPan({
+          x: viewW / 2 - (bounds.x + bounds.width / 2) * applied,
+          y: viewH / 2 - (bounds.y + bounds.height / 2) * applied,
+        });
+      },
+
       navigateToWindow: (windowId) => {
         const state = get();
         const win = state.windows.find(w => w.id === windowId);
@@ -2286,7 +2629,13 @@ export const useDesktopStore = create<DesktopStore>()(
         const zoom = state.canvasZoom;
         const centerX = -(win.position.x * zoom) + (vpW / 2) - (win.size.width * zoom / 2);
         const centerY = -(win.position.y * zoom) + (vpH / 2) - (win.size.height * zoom / 2);
-        set({ canvasPan: { x: centerX, y: centerY } });
+        // Was a raw set({canvasPan:...}) — bypassed setCanvasPan entirely,
+        // which would have silently desynced canvasPan (this mirror) from
+        // the engine's actual camera post-Task-12 (found while auditing every
+        // canvasPan/canvasZoom write site for the bridge; not one of the
+        // call-sites the scout/decisions docs named — see final report).
+        // Routing through the action keeps this a single delegation point.
+        get().setCanvasPan({ x: centerX, y: centerY });
       },
 
       // Project picker
@@ -2311,7 +2660,7 @@ export const useDesktopStore = create<DesktopStore>()(
 
       // ─── HUD Widgets ───────────────────────────────────────────────
       // Positions are stored already-resolved (Phase 4: callers must call
-      // resolveHudWidgetPlacement — logic/hud-grid.ts, which itself snaps +
+      // resolveHudWidgetPlacement — logic/hud-widget-policy.ts, which itself snaps +
       // clamps + dodges the top-right safe zone and other widgets — before
       // moveHudWidget; this setter persists verbatim and does no snapping,
       // clamping, or collision avoidance of its own). HudWidgetLayer is the
@@ -2323,9 +2672,31 @@ export const useDesktopStore = create<DesktopStore>()(
         hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, visible } : w),
       })),
 
-      moveHudWidget: (type, position) => set((s) => ({
-        hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, position } : w),
-      })),
+      moveHudWidget: (type, position) => set((s) => {
+        const widget = s.hudWidgets.find(w => w.type === type);
+        const defaults: Record<string, { width: number; height: number }> = {
+          'agent-sessions': { width: 340, height: 240 },
+          'auto-chat': { width: 320, height: 220 },
+          'notifications': { width: 300, height: 280 },
+        };
+        const defaultSize = defaults[type] ?? { width: 320, height: 220 };
+        const wWidth = widget?.size?.width ?? defaultSize.width;
+        const wHeight = widget?.size?.height ?? defaultSize.height;
+        const vpWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+        const vpHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+
+        const maxX = Math.max(0, vpWidth - wWidth);
+        const maxY = Math.max(0, vpHeight - wHeight);
+
+        const clampedPosition = {
+          x: Math.max(0, Math.min(position.x, maxX)),
+          y: Math.max(0, Math.min(position.y, maxY)),
+        };
+
+        return {
+          hudWidgets: s.hudWidgets.map(w => w.type === type ? { ...w, position: clampedPosition } : w),
+        };
+      }),
 
       // Clamp to a sane minimum (readable content) and the current viewport
       // (a widget can never be resized larger than the screen that hosts it).
@@ -2351,7 +2722,7 @@ export const useDesktopStore = create<DesktopStore>()(
     }),
     {
       name: 'fluxor-desktop',
-      version: 20,
+      version: 23,
       // Debounce localStorage writes: `partialize` below now includes
       // `boards[]` (the full mental graph of EVERY board, not just the one
       // on screen), so persist's default synchronous stringify-and-write on
@@ -2750,6 +3121,57 @@ export const useDesktopStore = create<DesktopStore>()(
           persisted.hudWidgets = persisted.hudWidgets.map((w: any) =>
             w?.type === 'text-to-flow' ? { ...w, type: 'auto-chat' } : w,
           );
+        }
+
+        // v20 → v21: inject the 'new-agent-session' dock action for existing
+        // users. The 'agent-session' WINDOW type needs no migration (a new
+        // type is purely additive and no persisted window can have it), but a
+        // dock item does: `dockItems` is persisted whole, so without this the
+        // Cockpit's only entry point would be invisible to everyone who has
+        // ever opened the app. Same ordered-insert pattern as v3→v4/v15→v16.
+        if (version < 21 && persisted && Array.isArray(persisted.dockItems)) {
+          const hasAgentSession = persisted.dockItems.some((item: { action?: string }) => item?.action === 'new-agent-session');
+          if (!hasAgentSession) {
+            const defaultItem = DEFAULT_DOCK_ITEMS.find((item) => item.action === 'new-agent-session');
+            if (defaultItem) {
+              const flowIdx = persisted.dockItems.findIndex((item: { action?: string }) => item?.action === 'new-flow');
+              const insertAt = flowIdx >= 0 ? flowIdx + 1 : persisted.dockItems.length;
+              persisted.dockItems.splice(insertAt, 0, { ...defaultItem });
+            }
+          }
+        }
+
+        // v21 → v22: `AgentSessionMeta.projectRoot` became required (Cockpit F2
+        // counts the "one attached session per project" rule per project, so a
+        // session with no project cannot be counted). Every window F1 persisted
+        // ran ATTACHED, where the project root and the working directory are
+        // the same path — so `cwd` is not a guess here, it is the right answer.
+        if (version < 22 && persisted && Array.isArray(persisted.windows)) {
+          persisted.windows = persisted.windows.map((w: { agentSession?: { cwd?: string; projectRoot?: string } }) =>
+            w?.agentSession && !w.agentSession.projectRoot
+              ? { ...w, agentSession: { ...w.agentSession, projectRoot: w.agentSession.cwd ?? '' } }
+              : w,
+          );
+        }
+
+        // v22 → v23: inject the 'cockpit' dock action. Same reason v20→v21 had
+        // to inject 'new-agent-session': `dockItems` is persisted whole, so a
+        // new default entry is invisible to everyone who has ever opened the
+        // app. The 'session-list' WINDOW type needs nothing — a new type is
+        // additive and no persisted window can carry it — and neither do the
+        // new `AgentSessionMeta` attention fields, which are all optional and
+        // whose absence reads exactly right on a session that predates hooks
+        // (not armed, nothing seen).
+        if (version < 23 && persisted && Array.isArray(persisted.dockItems)) {
+          const hasCockpit = persisted.dockItems.some((item: { action?: string }) => item?.action === 'cockpit');
+          if (!hasCockpit) {
+            const defaultItem = DEFAULT_DOCK_ITEMS.find((item) => item.action === 'cockpit');
+            if (defaultItem) {
+              const sessionIdx = persisted.dockItems.findIndex((item: { action?: string }) => item?.action === 'new-agent-session');
+              const insertAt = sessionIdx >= 0 ? sessionIdx + 1 : persisted.dockItems.length;
+              persisted.dockItems.splice(insertAt, 0, { ...defaultItem });
+            }
+          }
         }
 
         return persisted ?? {};

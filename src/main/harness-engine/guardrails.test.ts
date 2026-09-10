@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { verifyStepContract, snapshotWorkspace, buildCorrectivePrompt, mergeStepContracts } from './guardrails';
+import { verifyStepContract, snapshotWorkspace, buildCorrectivePrompt, mergeStepContracts, literalizePathPattern } from './guardrails';
 import type { StepContract } from '../../types/harness';
 
 describe('verifyStepContract — model-agnostic definition of done', () => {
@@ -190,6 +190,36 @@ describe('buildCorrectivePrompt', () => {
     expect(prompt).toContain('GUARDRAIL FAILURE');
     expect(prompt).toContain('Add Schema.org JSON-LD to Landing.');
   });
+
+  it('escalates to a blunter, more directive block that still surfaces a literal path', () => {
+    const prompt = buildCorrectivePrompt(
+      [{
+        requirement: 'artifact-missing:review',
+        detail: 'Missing required artifact (review). Create a file whose path matches /REVIEW\\.md$/. Create the file `REVIEW.md`.',
+      }],
+      { escalate: true },
+    );
+    expect(prompt).toContain('ESCALATION');
+    expect(prompt).toContain('REVIEW.md');
+  });
+});
+
+describe('literalizePathPattern', () => {
+  it('reduces a simple extension-alternation pattern to its first alternative', () => {
+    expect(literalizePathPattern('src/App\\.(tsx|jsx)$')).toBe('src/App.tsx');
+  });
+
+  it('reduces a nested-directory extension alternation', () => {
+    expect(literalizePathPattern('src/components/ui/button\\.(tsx|ts)$')).toBe('src/components/ui/button.tsx');
+  });
+
+  it('returns an already-literal path unescaped', () => {
+    expect(literalizePathPattern('REVIEW\\.md$')).toBe('REVIEW.md');
+  });
+
+  it('returns null when top-level alternation / wildcards survive the reduction', () => {
+    expect(literalizePathPattern('\\.test\\.(ts|tsx)$|__tests__/.*\\.(ts|tsx)$')).toBeNull();
+  });
 });
 
 describe('verifyStepContract — dependency coherence', () => {
@@ -220,5 +250,63 @@ describe('verifyStepContract — dependency coherence', () => {
       '/workspace/src/x.tsx': "import { zodResolver } from '@hookform/resolvers/zod';\nimport { createRoot } from 'react-dom/client';",
     };
     expect(verifyStepContract({ requireDeclaredDependencies: true }, {}, after)).toHaveLength(0);
+  });
+});
+
+describe('localeCoverage', () => {
+  it('flags a catalog missing a key used via t() elsewhere in the workspace', () => {
+    const contract: StepContract = {
+      localeCoverage: [{ description: 'en source catalog', catalogPathPattern: 'src/i18n/en\\.ts$' }],
+    };
+    const after = {
+      '/workspace/src/pages/Landing.tsx': "t('landing.hero.title'); t('landing.cta.download');",
+      '/workspace/src/i18n/en.ts': "export const en = { 'landing.hero.title': 'Build agents visually' };",
+    };
+    const findings = verifyStepContract(contract, {}, after);
+    const finding = findings.find((f) => f.requirement.startsWith('locale-coverage:'));
+    expect(finding).toBeDefined();
+    expect(finding?.detail).toContain('landing.cta.download');
+  });
+
+  it('produces no finding when the catalog covers every key used via t()', () => {
+    const contract: StepContract = {
+      localeCoverage: [{ description: 'en source catalog', catalogPathPattern: 'src/i18n/en\\.ts$' }],
+    };
+    const after = {
+      '/workspace/src/pages/Landing.tsx': "t('landing.hero.title');",
+      '/workspace/src/i18n/en.ts': "export const en = { 'landing.hero.title': 'Build agents visually' };",
+    };
+    expect(verifyStepContract(contract, {}, after)).toHaveLength(0);
+  });
+
+  it('flags an es value identical to the en source as untranslated when requireTranslated is set', () => {
+    const contract: StepContract = {
+      localeCoverage: [{
+        description: 'es catalog',
+        catalogPathPattern: 'src/i18n/es\\.ts$',
+        sourcePathPattern: 'src/i18n/en\\.ts$',
+        requireTranslated: true,
+      }],
+    };
+    const after = {
+      '/workspace/src/i18n/en.ts': "export const en = { 'auth.login.cta': 'Log in' };",
+      '/workspace/src/i18n/es.ts': "export const es = { 'auth.login.cta': 'Log in' };",
+    };
+    const findings = verifyStepContract(contract, {}, after);
+    const finding = findings.find((f) => f.requirement.startsWith('locale-untranslated:'));
+    expect(finding).toBeDefined();
+    expect(finding?.detail).toContain('auth.login.cta');
+  });
+
+  it('mergeStepContracts concatenates localeCoverage from a base contract and a mod fragment', () => {
+    const baseReq = { description: 'en source catalog', catalogPathPattern: 'src/i18n/en\\.ts$' };
+    const fragReq = {
+      description: 'es catalog',
+      catalogPathPattern: 'src/i18n/es\\.ts$',
+      sourcePathPattern: 'src/i18n/en\\.ts$',
+      requireTranslated: true,
+    };
+    const merged = mergeStepContracts({ localeCoverage: [baseReq] }, [{ localeCoverage: [fragReq] }]);
+    expect(merged?.localeCoverage).toEqual([baseReq, fragReq]);
   });
 });
